@@ -19,6 +19,173 @@ describe("bundler", () => {
     },
     run: { stdout: "top fn" },
   });
+
+  // A symbol read through a `with` body keeps its original name. The renamer
+  // must not give that name to another symbol the body can see, such as the
+  // parameter of the enclosing function: `function f(obj) { var t = 1; with
+  // (obj) { return t } }` printed as `function f(t) { var t = 1; with (t)
+  // return t }` reads the local instead of `obj.t`. Each `f_` function pins
+  // one of the 54 single-character names the minifier can produce, so
+  // whichever name the (most used) parameter slot gets, one `with` body breaks
+  // without the fix. `hoisted` and `merged` declare the pinned `var` twice, so
+  // the reference that the `with` pins is a link to the function-level symbol,
+  // which has to keep its name too. `braceless` declares the `var` in the
+  // `with` scope itself, which the hoisting walk starts above.
+  const singleCharNames = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
+  const withPinnedNamesSource = [
+    ...singleCharNames.map(n => `function f_${n}(obj) { var ${n} = 1; obj.p; obj.p; with (obj) { return ${n}; } }`),
+    "function hoisted(obj) { var t = 1; obj.p; obj.p; with (obj) { var t = 2; } return [t, obj.t]; }",
+    "function merged(obj) { var t = 1; obj.p; obj.p; { var t = 2; with (obj) { return t; } } }",
+    "function braceless(obj) { obj.p; obj.p; with (obj) var t = 2; return [t, obj.t]; }",
+    "const bad = [];",
+    ...singleCharNames.map(n => `if (f_${n}({}) !== 1 || f_${n}({ ${n}: 9 }) !== 9) bad.push("${n}");`),
+    `if (JSON.stringify([hoisted({}), hoisted({ t: 9 })]) !== "[[2,null],[1,2]]") bad.push("hoisted");`,
+    `if (merged({}) !== 2 || merged({ t: 9 }) !== 9) bad.push("merged");`,
+    `if (JSON.stringify([braceless({}), braceless({ t: 9 })]) !== "[[2,null],[null,2]]") bad.push("braceless");`,
+    "console.log(JSON.stringify(bad));",
+  ].join("\n");
+  itBundled("minify/WithStatementPinnedNameNotReusedByEnclosingScope", {
+    files: {
+      "/entry.js": withPinnedNamesSource,
+    },
+    format: "cjs",
+    minifyIdentifiers: true,
+    run: { stdout: "[]" },
+  });
+  // `bun build --no-bundle` names symbols through the same reserved set.
+  itBundled("minify/WithStatementPinnedNameNotReusedByEnclosingScopeNoBundle", {
+    files: {
+      "/entry.js": withPinnedNamesSource,
+    },
+    bundling: false,
+    format: "cjs",
+    minifyIdentifiers: true,
+    run: { stdout: "[]" },
+  });
+  // The same reserved names without --minify. The parameter "require_dep"
+  // meets the wrapper of dep.cjs, which the function calls, so it is numbered.
+  // It cannot take "require_dep2", the `var` that the `with` body reads.
+  itBundled("minify/WithStatementPinnedNameNotReusedWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        const { read } = require("./sloppy.cjs");
+        console.log(JSON.stringify([read("arg", {}), read("arg", { require_dep2: 9 })]));
+      `,
+      "/sloppy.cjs": /* js */ `
+        module.exports.read = function (require_dep, obj) {
+          var require_dep2 = 1;
+          var seen = require_dep + "," + require("./dep.cjs").value;
+          with (obj) {
+            return [seen, require_dep2];
+          }
+        };
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports.value = "dep";
+      `,
+    },
+    format: "cjs",
+    minifyIdentifiers: false,
+    run: { stdout: `[["arg,dep",1],["arg,dep",9]]` },
+  });
+  // `bun build --no-bundle` keeps the export names. They were pinned after the
+  // reserved names were computed, so a local in a nested function could take
+  // one of them and shadow the export it reads.
+  itBundled("minify/NoBundleExportNameNotReusedByLocal", {
+    files: {
+      "/entry.js": [
+        ...singleCharNames.map(n => `export const ${n} = "${n}";`),
+        "export function check() {",
+        "  let local = 0; local; local;",
+        "  const bad = [];",
+        ...singleCharNames.map(n => `  if (${n} !== "${n}") bad.push("${n}");`),
+        "  return bad;",
+        "}",
+        "console.log(JSON.stringify(check()));",
+      ].join("\n"),
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { stdout: "[]" },
+  });
+  // Every kind of export takes one-character names here, and each test below
+  // declares 54 other names, one for each one-character name the minifier can
+  // produce. So every export name is wanted by one of them, whatever the
+  // character frequency of the file is.
+  const exportKinds: ((n: string) => [declaration: string, read: string])[] = [
+    n => [`export const ${n} = "${n}";`, n],
+    n => [`export let ${n} = "${n}";`, n],
+    n => [`export var ${n} = "${n}";`, n],
+    n => [`export function ${n}() { return "${n}"; }`, `${n}()`],
+    n => [`export class ${n} { static value = "${n}"; }`, `${n}.value`],
+    n => [`const ${n} = "${n}"; export { ${n} };`, n],
+    n => [`export const { ${n} } = { ${n}: "${n}" };`, n],
+  ];
+  const everyExportKind = singleCharNames.map((n, i) => exportKinds[i % exportKinds.length](n));
+  const exportDeclarations = everyExportKind.map(([declaration]) => declaration);
+  const exportChecks = singleCharNames.map((n, i) => `if (${everyExportKind[i][1]} !== "${n}") bad.push("${n}");`);
+  // A parameter, a local and a catch binding of a function that reads the
+  // exports: `export const t = ...; export function label(item) { return
+  // t(item.name) }` printed as `function label(t) { return t(t.name) }`.
+  itBundled("minify/NoBundleExportNameNotReusedInFunction", {
+    files: {
+      "/entry.js": [
+        ...exportDeclarations,
+        `export function check(${singleCharNames.map((_, i) => `param${i} = ${i}`).join(", ")}) {`,
+        "  const bad = [];",
+        `  let local = [${singleCharNames.map((_, i) => `param${i}`).join(", ")}].join();`,
+        `  if (local !== "${singleCharNames.map((_, i) => i).join()}") bad.push("params " + local);`,
+        "  try { throw local.length; } catch (caught) { if (caught !== local.length) bad.push('caught ' + caught); }",
+        ...exportChecks,
+        "  return bad;",
+        "}",
+        "console.log(JSON.stringify(check()));",
+      ].join("\n"),
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { stdout: "[]" },
+  });
+  // An import and a private top-level name: `import { a } from "./x.js";
+  // export const t = a` printed as `import { a as t } from "./x.js"; export
+  // const t = t`, which does not parse.
+  itBundled("minify/NoBundleExportNameNotReusedAtTopLevel", {
+    files: {
+      "/entry.js": [
+        `import fromDefault, { fromNamed } from "./imported.js";`,
+        `import * as fromNamespace from "./imported.js";`,
+        `function privateFunction() { return "function"; }`,
+        `class PrivateClass { static value = "class"; }`,
+        ...singleCharNames.map((_, i) => `const private${i} = ${i};`),
+        ...exportDeclarations,
+        "const bad = [];",
+        `const imports = [fromDefault, fromNamed, fromNamespace.fromNamed, privateFunction(), PrivateClass.value].join();`,
+        `if (imports !== "default,named,named,function,class") bad.push("imports " + imports);`,
+        `const privates = [${singleCharNames.map((_, i) => `private${i}`).join(", ")}].join();`,
+        `if (privates !== "${singleCharNames.map((_, i) => i).join()}") bad.push("privates " + privates);`,
+        ...exportChecks,
+        "console.log(JSON.stringify(bad));",
+      ].join("\n"),
+      "/imported.js": `export const fromNamed = "named"; export default "default";`,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { stdout: "[]" },
+  });
+  // The second `var t` replaces the symbol of the export, which then links to
+  // it. The pin has to follow that link: `export var t = 1; var t = 2` printed
+  // as `export var r = 1; var r = 2` exports no `t`.
+  itBundled("minify/NoBundleExportNameKeptWhenDeclaredAgain", {
+    files: {
+      "/entry.js": `export var t = 1;\nvar t = 2;\nexport function read() { return t; }`,
+    },
+    runtimeFiles: {
+      "/importer.js": `import { t, read } from "./out.js";\nconsole.log(t, read());`,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    run: { file: "/importer.js", stdout: "2 2" },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `
@@ -1857,3 +2024,40 @@ test("runtime transpiler does not collapse single-return arrow bodies", async ()
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// `Bun.Transpiler` prints through the same path as `bun build --no-bundle`.
+// The exports keep their names and take every one-character name the minifier
+// can produce, so the import and the parameter each need a longer name.
+// `label(item)` printed as `function label(t) { return t(t.name) }`.
+test.each(["transformSync", "transform"] as const)(
+  "minify.identifiers: %s gives no import or parameter the name of an export",
+  async method => {
+    const exportNames = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } })[method](
+      [
+        `import { imported } from "./imported.js";`,
+        ...exportNames.map(name => `export const ${name} = "${name}";`),
+        `export function label(item) { return t(item.name) + " #" + item.id + imported; }`,
+      ].join("\n"),
+    );
+    const [, importAlias] = output.match(/import \{ imported as ([\w$]+) \}/)!;
+    const [, parameter] = output.match(/function label\(([\w$]+)\)/)!;
+    expect({
+      importAlias: exportNames.includes(importAlias) ? `${importAlias} is an export` : "ok",
+      parameter: exportNames.includes(parameter) ? `${parameter} is an export` : "ok",
+      body: output.includes(`return t(${parameter}.name) + " #" + ${parameter}.id + ${importAlias};`),
+    }).toEqual({ importAlias: "ok", parameter: "ok", body: true });
+  },
+);
+
+// The second `var t` replaces the symbol of the export, which then links to
+// it, so the export is pinned only if the pin follows that link.
+test.each(["transformSync", "transform"] as const)(
+  "minify.identifiers: %s keeps the name of an export that is declared again",
+  async method => {
+    const output = await new Bun.Transpiler({ loader: "js", minify: { identifiers: true } })[method](
+      "export var t = 1;\nvar t = 2;\nexport function read() { return t; }\n",
+    );
+    expect(output).toBe("export var t = 1;\nvar t = 2;\nexport function read() {\n  return t;\n}\n");
+  },
+);

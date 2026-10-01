@@ -922,9 +922,10 @@ const dir = String(
       import net from "node:net";
       // A server that keeps its connections alive, and counts them.
       const open = new Set();
+      let onClose = () => {};
       const server = net.createServer(socket => {
         open.add(socket);
-        socket.on("close", () => open.delete(socket)).on("error", () => {});
+        socket.on("close", () => { open.delete(socket); onClose(); }).on("error", () => {});
         socket.on("data", () => socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok"));
       });
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -938,7 +939,8 @@ const dir = String(
       await graph.run(() => app.fetchThroughItsOwnSession(url));
       const openBeforeDispose = open.size - theHosts;
       graph.dispose();
-      for (let turns = 0; open.size > theHosts && turns < 500; turns++) await new Promise(resolve => setImmediate(resolve));
+      // The HTTP thread closes it, whenever the system next runs that thread: no number of this thread's turns bounds that.
+      while (open.size > theHosts) await new Promise(resolve => (onClose = resolve));
       console.log(JSON.stringify({ openBeforeDispose, openAfter: open.size - theHosts, theHostsStillThere: theHosts }));
       process.exit(0);
     `,
@@ -1802,7 +1804,9 @@ const dir = String(
         "fs.promises.realpath": () => fs.promises.realpath(dataFile),
         "fs.promises.opendir": () => fs.promises.opendir(import.meta.dir).then(async directory => { for await (const entry of directory) break; }),
         "fs.promises.mkdtemp": () => fs.promises.mkdtemp(dataFile + "-tmp-"),
-        "FileHandle.read": () => fs.promises.open(dataFile).then(handle => handle.read(Buffer.alloc(4), 0, 4, 0).finally(() => handle.close())),
+        // (close() is asked for while the read is under way, and waits for it. Asked for after it, a graph disposed during
+        // the read leaves the FileHandle unclosed: node:fs reports that as an uncaught exception when it is collected.)
+        "FileHandle.read": () => fs.promises.open(dataFile).then(handle => Promise.all([handle.read(Buffer.alloc(4), 0, 4, 0), handle.close()])),
         "Bun.file().slice().text()": () => Bun.file(dataFile).slice(0, 2).text(),
         "Bun.file().delete()": () => Bun.write(dataFile + ".deleted", "x").then(() => Bun.file(dataFile + ".deleted").delete()),
         "Bun.spawn().exited": () => Bun.spawn({ cmd: [process.execPath, "-e", "1"], stdio: ["ignore", "ignore", "ignore"] }).exited,

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
@@ -696,4 +696,313 @@ test("calls second", () => {
   const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(exitCode).toBe(0);
+});
+
+// JSC records coverage per SourceProvider, and a file has one for each time
+// it is loaded. Each case has a subject file of its own. Where a case loads
+// its subject twice, one load runs the `if` branch and the other runs the
+// `return` after it.
+describe("a file loaded more than once counts every load", () => {
+  const esm = `export function covered(n: number): number {
+  if (n > 5) {
+    return n * 2;
+  }
+  return n + 1;
+}
+`;
+  const cjs = `exports.covered = function covered(n) {
+  if (n > 5) {
+    return n * 2;
+  }
+  return n + 1;
+};
+`;
+  const compiledText =
+    Buffer.alloc(12, "\n").toString() +
+    "exports.other = function other(n) {\n  if (n > 5) {\n    return 1;\n  }\n  return 2;\n};\nexports.other(1);\n";
+
+  const files = {
+    "host-and-graph.ts": esm,
+    "two-graphs.ts": esm,
+    "cjs-host-and-graph.cjs": cjs,
+    "query-strings.ts": esm,
+    "overlapping-imports.ts": esm,
+    "require-cache.cjs": cjs,
+    // https://github.com/oven-sh/bun/issues/35345
+    "issue-35345.ts": `export const MODULE_SCOPE = "evaluated";
+
+export function fnA(x: number): number {
+  const a = x + 1;
+  return a * 2;
+}
+
+export function fnB(x: number): number {
+  const b = x + 10;
+  return b * 3;
+}
+`,
+    "functions.ts": `export function first() {
+  return 1;
+}
+export function second() {
+  return 2;
+}
+export function third() {
+  return 3;
+}
+`,
+    "cjs-graph-alone.cjs": cjs,
+    "compile-target.cjs": cjs,
+    "compile.cjs": `
+const Module = require("node:module");
+exports.compileAs = (filename, text) => {
+  const module = new Module(filename);
+  module.filename = filename;
+  module._compile(text, filename);
+  return module.exports;
+};
+`,
+    // With ONE_LOAD=1 the last three cases leave out the load under test, to compare against.
+    "loads.test.ts": `
+import { expect, test } from "bun:test";
+import { codeCoverageForFile } from "bun:jsc";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { covered as hostAndGraph } from "./host-and-graph.ts";
+import { first } from "./functions.ts";
+const cjsHostAndGraph = require("./cjs-host-and-graph.cjs");
+const compileTarget = require("./compile-target.cjs");
+
+const oneLoad = !!process.env.ONE_LOAD;
+// codeCoverageForFile() takes the path as the module loader spells it.
+const here = name => join(import.meta.dir, name);
+
+test("host-and-graph.ts", async () => {
+  expect(hostAndGraph(1)).toBe(2);
+  const hostAlone = codeCoverageForFile(here("host-and-graph.ts"), false);
+  using graph = new Bun.ModuleGraph({});
+  const subject = await graph.import(here("host-and-graph.ts"));
+  expect(graph.run(() => subject.covered(10))).toBe(20);
+  console.log(JSON.stringify({ hostAlone, both: codeCoverageForFile(here("host-and-graph.ts"), false) }));
+  expect(() => codeCoverageForFile(here("never-loaded.ts"), false)).toThrow("No source for file");
+});
+
+test("two-graphs.ts", async () => {
+  using a = new Bun.ModuleGraph({});
+  using b = new Bun.ModuleGraph({});
+  const inA = await a.import(here("two-graphs.ts"));
+  const inB = await b.import(here("two-graphs.ts"));
+  expect(a.run(() => inA.covered(10))).toBe(20);
+  expect(b.run(() => inB.covered(1))).toBe(2);
+});
+
+test("cjs-host-and-graph.cjs", async () => {
+  expect(cjsHostAndGraph.covered(1)).toBe(2);
+  using graph = new Bun.ModuleGraph({});
+  const subject = await graph.import(here("cjs-host-and-graph.cjs"));
+  expect(graph.run(() => subject.covered(10))).toBe(20);
+});
+
+test("query-strings.ts", async () => {
+  const a = await import("./query-strings.ts?a");
+  const b = await import("./query-strings.ts?b");
+  expect(a.covered).not.toBe(b.covered);
+  expect(a.covered(10)).toBe(20);
+  expect(b.covered(1)).toBe(2);
+});
+
+test("overlapping-imports.ts", async () => {
+  const [a, b] = await Promise.all([import("./overlapping-imports.ts"), import("./overlapping-imports.ts")]);
+  expect(a).toBe(b);
+  expect(a.covered(10)).toBe(20);
+  expect(b.covered(1)).toBe(2);
+});
+
+test("issue-35345.ts", async () => {
+  const first = await import("./issue-35345.ts?bun-spec=1");
+  expect(first.fnA(1)).toBe(4);
+  const second = await import("./issue-35345.ts?bun-spec=2");
+  expect(second.fnB(1)).toBe(33);
+});
+
+test("require-cache.cjs", () => {
+  const a = require("./require-cache.cjs");
+  delete require.cache[require.resolve("./require-cache.cjs")];
+  const b = require("./require-cache.cjs");
+  expect(a.covered).not.toBe(b.covered);
+  expect(a.covered(10)).toBe(20);
+  expect(b.covered(1)).toBe(2);
+});
+
+test("functions.ts", async () => {
+  expect(first()).toBe(1);
+  using graph = new Bun.ModuleGraph({});
+  const subject = await graph.import(here("functions.ts"));
+  expect(graph.run(() => subject.second())).toBe(2);
+});
+
+test("cjs-graph-alone.cjs", async () => {
+  if (oneLoad) {
+    expect(require("./cjs-graph-alone.cjs").covered(10)).toBe(20);
+    return;
+  }
+  using graph = new Bun.ModuleGraph({});
+  const subject = await graph.import(here("cjs-graph-alone.cjs"));
+  expect(graph.run(() => subject.covered(10))).toBe(20);
+});
+
+test("compile-target.cjs", async () => {
+  expect(compileTarget.covered(1)).toBe(2);
+  if (oneLoad) return;
+  using graph = new Bun.ModuleGraph({});
+  const { compileAs } = await graph.import(here("compile.cjs"));
+  const compiled = graph.run(() => compileAs(here("compile-target.cjs"), ${JSON.stringify(compiledText)}));
+  expect(compiled.other(10)).toBe(1);
+});
+
+test("changed.ts", async () => {
+  if (!oneLoad) {
+    writeFileSync(here("changed.ts"), ${JSON.stringify(esm)});
+    const before = await import("./changed.ts?before");
+    expect(before.covered(10)).toBe(20);
+  }
+  writeFileSync(here("changed.ts"), ${JSON.stringify("export function unused() {\n  return 0;\n}\n" + esm)});
+  const after = await import("./changed.ts?after");
+  expect(after.covered(1)).toBe(2);
+});
+`,
+  };
+
+  // A plugin's onLoad result gets a new SourceProvider for every load, under --isolate too.
+  // https://github.com/oven-sh/bun/issues/40386
+  const pluginFiles = {
+    "bunfig.toml": `[test]\npreload = ["./plugin.ts"]\n`,
+    "plugin.ts": `
+import { plugin } from "bun";
+
+plugin({
+  name: "passthrough",
+  setup(build) {
+    build.onLoad({ filter: /plugin-loaded\\.ts$/ }, async ({ path }) => {
+      return { contents: await Bun.file(path).text(), loader: "ts" };
+    });
+  },
+});
+`,
+    "plugin-loaded.ts": esm,
+    "a.test.ts": `
+import { expect, test } from "bun:test";
+import { covered } from "./plugin-loaded.ts";
+
+test("a", () => {
+  expect(covered(10)).toBe(20);
+});
+`,
+    "b.test.ts": `
+import { expect, test } from "bun:test";
+import { covered } from "./plugin-loaded.ts";
+
+test("b", () => {
+  expect(covered(1)).toBe(2);
+});
+`,
+  };
+
+  type Row = { functions: string; lines: string; uncovered: string };
+  async function run(fixture: Record<string, string>, args: string[], env: Record<string, string> = {}) {
+    using dir = tempDir("cov-loaded-twice", fixture);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", ...args],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(stderr);
+    const rows: Record<string, Row> = {};
+    for (const line of stderr.split("\n")) {
+      const [file, functions, lines, uncovered] = line.split("|").map(column => column.trim());
+      if (uncovered !== undefined) rows[file] = { functions, lines, uncovered };
+    }
+    const lcov: Record<string, string> = {};
+    for (const record of readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").split(
+      "end_of_record",
+    )) {
+      const file = record.match(/^SF:(.+)$/m)?.[1];
+      if (file) lcov[file] = record;
+    }
+    return { rows, lcov, stdout };
+  }
+
+  let loaded: Awaited<ReturnType<typeof run>>;
+  let oneLoad: Awaited<ReturnType<typeof run>>;
+  let pluginUnderIsolate: Awaited<ReturnType<typeof run>>;
+  beforeAll(async () => {
+    [loaded, oneLoad, pluginUnderIsolate] = await Promise.all([
+      run(files, ["./loads.test.ts"]),
+      run(files, ["./loads.test.ts"], { ONE_LOAD: "1" }),
+      run(pluginFiles, ["--isolate", "./a.test.ts", "./b.test.ts"]),
+    ]);
+  });
+
+  const fullyCovered: Row = { functions: "100.00", lines: "100.00", uncovered: "" };
+
+  describe.each([
+    ["by the host and by a Bun.ModuleGraph", "host-and-graph.ts"],
+    ["by two Bun.ModuleGraphs", "two-graphs.ts"],
+    ["CommonJS, by the host and by a Bun.ModuleGraph", "cjs-host-and-graph.cjs"],
+    ["under two query strings", "query-strings.ts"],
+    ["by two overlapping import()s", "overlapping-imports.ts"],
+    ["again after a require.cache delete", "require-cache.cjs"],
+  ])("%s", (_, file) => {
+    test("is fully covered", () => {
+      expect(loaded.rows[file]).toEqual(fullyCovered);
+    });
+  });
+
+  test("from a plugin's onLoad, by two test files under --isolate", () => {
+    expect(pluginUnderIsolate.rows["plugin-loaded.ts"]).toEqual(fullyCovered);
+  });
+
+  test("lcov has the functions and the lines of both loads (#35345)", () => {
+    expect(loaded.lcov["issue-35345.ts"]).toMatch(/FNF:2\nFNH:2\n/);
+    expect(loaded.lcov["issue-35345.ts"]).not.toMatch(/DA:\d+,0\n/);
+  });
+
+  test("a function counts if any load ran it, and not if none did", () => {
+    // The host runs first(), a graph runs second(). third() spans lines 7 to 9.
+    expect(loaded.rows["functions.ts"]).toEqual({
+      functions: "66.67",
+      lines: expect.any(String),
+      uncovered: expect.stringMatching(/^[789](-[89])?$/),
+    });
+  });
+
+  test("CommonJS, by a Bun.ModuleGraph alone, reports what the host alone reports", () => {
+    expect(oneLoad.rows["cjs-graph-alone.cjs"].uncovered).not.toBe("");
+    expect(loaded.rows["cjs-graph-alone.cjs"]).toEqual(oneLoad.rows["cjs-graph-alone.cjs"]);
+  });
+
+  // module._compile() names a file and brings a text of its own, which no
+  // line table describes. In a graph it runs under a wrapping SourceProvider,
+  // like the graph's load of the file itself, and must not count as one.
+  test("module._compile() in a Bun.ModuleGraph does not count as a load of the file it names", () => {
+    expect(oneLoad.rows["compile-target.cjs"].uncovered).not.toBe("");
+    expect(loaded.rows["compile-target.cjs"]).toEqual(oneLoad.rows["compile-target.cjs"]);
+  });
+
+  // The line table and the source map on record describe one text, so a load
+  // of another text starts the file's coverage over.
+  test("a file that changed between two loads reports the last text alone", () => {
+    expect(oneLoad.rows["changed.ts"].functions).toBe("50.00");
+    expect(loaded.rows["changed.ts"]).toEqual(oneLoad.rows["changed.ts"]);
+  });
+
+  test("bun:jsc codeCoverageForFile()", () => {
+    expect(JSON.parse(loaded.stdout.split("\n").find(line => line.startsWith("{"))!)).toEqual({
+      hostAlone: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +\d+\.\d+ \| \d/),
+      both: expect.stringMatching(/host-and-graph\.ts \| +100\.00 \| +100\.00 \| $/),
+    });
+  });
 });

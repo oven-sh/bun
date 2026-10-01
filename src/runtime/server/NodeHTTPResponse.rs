@@ -707,7 +707,7 @@ impl NodeHTTPResponse {
         true
     }
 
-    pub(crate) fn maybe_stop_reading_body(&self, this_value: JSValue) {
+    fn maybe_stop_reading_body(&self, this_value: JSValue) {
         self.upgrade_context.with_mut(|c| c.reset()); // we can discard the upgrade context now
 
         let flags = self.flags.get();
@@ -819,7 +819,7 @@ impl NodeHTTPResponse {
         self.deref();
     }
 
-    pub(crate) fn mark_request_as_done_if_necessary(&self) {
+    fn mark_request_as_done_if_necessary(&self) {
         if self.flags.get().contains(Flags::IS_REQUEST_PENDING) && !self.should_request_be_pending()
         {
             self.mark_request_as_done();
@@ -834,7 +834,33 @@ impl NodeHTTPResponse {
         self.flags.get().is_requested_completed_or_ended()
     }
 
-    pub(crate) fn set_on_aborted_handler(&self) {
+    /// Runs once per dispatch, after the request handler returned.
+    pub(crate) fn on_dispatch_returned(&self) {
+        let flags = self.flags.get();
+        if !flags.contains(Flags::UPGRADED) {
+            if let Some(raw) = self.reader() {
+                if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
+                    && raw.state().is_response_pending()
+                {
+                    self.set_on_aborted_handler();
+                }
+                // If we ended the response without attaching an ondata handler, we discard the body read stream
+                else {
+                    let this_value = self.get_this_value();
+                    self.maybe_stop_reading_body(this_value);
+                }
+            }
+            if flags.contains(Flags::TUNNELED) {
+                // A raw 'upgrade'/'connect' handoff left HTTP, and a half-open tunnel never closes: release the pending request now.
+                self.mark_request_as_done_if_necessary();
+            }
+        } else if flags.contains(Flags::IS_REQUEST_PENDING) {
+            // The WebSocket context adopted the socket in the handler: no uws abort or end callback follows, so release the IS_REQUEST_PENDING ref now.
+            self.on_request_complete();
+        }
+    }
+
+    fn set_on_aborted_handler(&self) {
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) {
             return;

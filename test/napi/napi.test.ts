@@ -487,6 +487,23 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       );
     });
 
+    // The JS thread parks without heap access during an idle collection, so its end phase runs on the collector thread.
+    it.skipIf(isWindows)(
+      "an idle collection on the collector thread runs the finalizers on the JS thread",
+      async () => {
+        const result = await runOn(bunExe(), "test_external_buffer_finalized_by_idle_collection", [], {
+          BUN_IDLE_GC_SECONDS: "1",
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: undefined,
+          BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+        } as any);
+        expect(result).toStartWith(
+          "experimental: finalized=true finalizedOffThread=0\ndeferred: finalized=true finalizedOffThread=0\n",
+        );
+      },
+      30_000,
+    );
+
     it("a worker's buffers reach the parent as copies and are finalized by the worker's env teardown", async () => {
       const result = await checkSameOutput("test_external_buffer_worker_exit", []);
       const message = JSON.stringify({
@@ -1229,6 +1246,46 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(bunResult).toBe(
         `synchronously threw ReferenceError: message "shouldNotExist is not defined", code undefined`,
       );
+    });
+
+    // main.js reads its arguments with eval(), which the flag refuses, so these load the addon themselves.
+    async function runScriptWith(executable: string, flag: string) {
+      using dir = tempDir("napi-run-script-code-generation", {
+        "fixture.cjs": `
+          const { test_napi_run_script } = require(process.argv[2]);
+          let evaluated, ran;
+          try { evaluated = eval("1 + 1"); } catch (e) { evaluated = e.name; }
+          try { ran = test_napi_run_script(() => {}, "5 * (1 + 2)"); } catch (e) { ran = e.name + ": " + e.message; }
+          console.log(JSON.stringify({ evaluated, ran }));
+        `,
+      });
+      await using proc = spawn({
+        cmd: [executable, flag, "fixture.cjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+    it("is not affected by --disallow-code-generation-from-strings, as in Node.js", async () => {
+      const [node, bun] = await Promise.all([
+        runScriptWith(await nodeExeMatchingAbi(), "--disallow-code-generation-from-strings"),
+        runScriptWith(bunExe(), "--disallow-code-generation-from-strings"),
+      ]);
+      expect(bun).toEqual({ stdout: JSON.stringify({ evaluated: "EvalError", ran: 15 }), stderr: "", exitCode: 0 });
+      expect(bun).toEqual(node);
+    });
+    it("throws with --disallow-code-generation-from-strings=strict", async () => {
+      expect(await runScriptWith(bunExe(), "--disallow-code-generation-from-strings=strict")).toEqual({
+        stdout: JSON.stringify({
+          evaluated: "EvalError",
+          ran: "EvalError: Code generation from strings disallowed for this context",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 

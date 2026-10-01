@@ -1086,6 +1086,9 @@ const dir = String(
     `,
     "response-bodies-of-disposed-graphs.mjs": `
       import { heapStats } from "bun:jsc";
+      const protectedPromises = () => heapStats().protectedObjectTypeCounts.Promise ?? 0;
+      // What the process holds by itself, like the promise of this entry point.
+      const before = protectedPromises();
       // A body that never ends: a chunk per pull, the next one when the host says so.
       let release = () => {};
       const server = Bun.serve({ port: 0, fetch: request => new URL(request.url).pathname === "/turn" ? new Response("turn") : new Response(new ReadableStream({ async pull(controller) { controller.enqueue(new Uint8Array(1024)); await new Promise(resolve => (release = resolve)); } })) });
@@ -1109,7 +1112,7 @@ const dir = String(
       }
       await hostTurn();
       Bun.gc(true);
-      console.log(JSON.stringify({ text: Bun.peek.status(text), protectedPromises: heapStats().protectedObjectTypeCounts.Promise ?? 0 }));
+      console.log(JSON.stringify({ text: Bun.peek.status(text), protectedPromises: protectedPromises() - before }));
       process.exit(0);
     `,
     "errors-of-a-graph-made-by-a-graph.mjs": `

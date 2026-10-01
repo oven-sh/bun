@@ -9,6 +9,7 @@ describe("ptr() returns an address that stays valid", () => {
   const views: Record<string, () => NodeJS.TypedArray> = {
     "Buffer.allocUnsafe(16)": () => Buffer.allocUnsafe(16),
     "Buffer.alloc(16)": () => Buffer.alloc(16),
+    "Buffer.from(string)": () => Buffer.from("abcdefghijklmnop"),
     "Buffer.from(string, 'latin1')": () => Buffer.from("abcdefghijklmnop", "latin1"),
     "new Uint8Array(16)": () => new Uint8Array(16),
     "new Float64Array(2)": () => new Float64Array(2),

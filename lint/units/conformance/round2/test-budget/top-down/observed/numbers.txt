@@ -24,13 +24,20 @@ THE TREE budget (glue with prototype/test-budget.on-the-glue.patch, 107 tests), 
   release warm      107 pass             2.77 s   user 0.94 sys 0.28   load 232   -> best 2.45, median 2.77 (wall 2.79 and 2.92)
   release-ci        107 pass             3.10 s   user 1.04 sys 0.28   load 237
   release-ci-exact  107 pass             4.17 s   user 0.98 sys 0.30   load 243
-  debug             105 pass 2 skip      87.6 s   user 73.9 sys 3.8   load 363   no test at the default time above 1.2 s
+  debug             105 pass 2 skip      87.6 s   user 73.9 sys 3.8   load 363   the longest test at the default time: 0.76 s
   debug-leak        105 pass 2 skip      86.2 s   user 73.9 sys 4.1   load 499   no text of a sanitizer
   debug-ci          105 pass 2 skip     156.7 s   user 117.1 sys 4.6  load 450   none
   sweep.ts --no-run   exit 0            58.3 s   user 2.5 sys 0.7               cold; every case against the list
   ../../typecheck.sh  no type error below test/cli/lint
   lint-leak.sh        bun-debug --lint ok.ts, bad.ts, rule.ts under the leak and exception checks: exit 0, 2, 0, no text of a sanitizer
   The equal tree of ../../release-time-budget/top-down ("after"), six cold runs at load 304 to 660: 2.2 to 7.8 s.
+  After this batch one more test got the time of the others: the test of describe("corpus"), which was at the default time
+  and took 1.2 s in debug-ci. The patches of prototype/ and the trees budget and stack have it; batch3 runs them with it.
+
+THE TREE stack (budget with the patch of default-check-classification laid in), batch3: queued at 16:00:28 behind a sweep of
+  the whole corpus with the debug build (lint-survey, one hold of the lock, about 45 minutes) and seven other waiters. The
+  batch writes batch3.txt, batch3/ and its tables here and saves the notes when it ends; while these lines stand alone it
+  has not ended. ../../typecheck.sh on the tree: no type error below test/cli/lint.
 
 THE LONGEST TEST OF A KIND IN ANY DEBUG RUN ABOVE (the limit that the change gives it)
   a test without a process   11.8 s   the list, debug-ci of glue                      (60 s; the default is 5 s)

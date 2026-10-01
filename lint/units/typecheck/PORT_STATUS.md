@@ -100,12 +100,13 @@ script: `scripts/diagnosticMessages.json` (TypeScript 5848bc5, `src/compiler/`) 
 which the script pins by the sha256 of their parsed content. The extras win by code: 2,130 + 86 - 10 = 2,206 messages.
 The script is the one of `diagnostics-scratch/crate/scripts/` with one change: a constant is upstream's variable name
 in upper case (the 2,206 names stay distinct; the script fails when two collide). Run in the tree, it writes the table
-of the contract byte for byte. Compared with `diagnostics_generated.go` by a script: 2,206 of 2,206 equal in name
-(upper case), code, category, the three flags and text, in upstream's order; the numbers that `tests.rs` asserts (the
-bytes of the keys and their hash, the bytes of the texts, the counts by category, flag and argument count) are the ones
-recomputed from that file. No test of the tree compares the table with what the script writes: the scratch has one
+of the contract byte for byte. Compared with `diagnostics_generated.go` by
+`bun diagnostics-scratch/data/table-against-upstream-go.mjs`: 2,206 of 2,206 equal in name (upper case), code,
+category, the three flags and text, in upstream's order; the numbers that `tests.rs` asserts (the bytes of the keys and
+their hash, the bytes of the texts, the counts by category, flag and argument count) are the ones that the script
+recomputes from that file. No test of the tree compares the table with what the generator writes: the scratch has one
 (`diagnostics-scratch/test/diagnostics-generated.test.ts`, names in mixed case), and until it is under
-`test/cli/lint/typecheck/` the check is the script followed by `git diff --exit-code src/typecheck/diagnostics`.
+`test/cli/lint/typecheck/` the check is the generator followed by `git diff --exit-code src/typecheck/diagnostics`.
 
 | upstream file, lines | Rust module under `src/typecheck/` | state | not ported |
 | --- | --- | --- | --- |

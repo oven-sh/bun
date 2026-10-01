@@ -35,6 +35,8 @@ mod native_test_shims;
 mod Macro {
     pub use bun_js_parser::Macro::MacroRemapEntry;
 }
+#[path = "/workspace/notes/lint/units/cli/d1-rust-tests-topdown/later/dtoa.rs"]
+mod dtoa;
 mod probe_main;
 fn main() {
     probe_main::main();

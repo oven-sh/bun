@@ -1,0 +1,29 @@
+{
+  "_id": "prereleases-5",
+  "name": "prereleases-5",
+  "dist-tags": {
+    "latest": "1.0.0-rc.10+build.20240101"
+  },
+  "versions": {
+    "1.0.0-rc.1": {
+      "name": "prereleases-5",
+      "version": "1.0.0-rc.1",
+      "_id": "prereleases-5@1.0.0-rc.1",
+      "dist": {
+        "integrity": "sha512-FFPR58z8IzSSVWxcxrZKlUeNeFBOeo3nY3qgR1MabfXpg1I9asYcsAJmakWzhDr0xpbVIr++hVNi07haESpx4Q==",
+        "shasum": "32c2558ecbf7492d1cf1e264f2b2cba9fac45fdf",
+        "tarball": "http://localhost:4873/prereleases-5/-/prereleases-5-1.0.0-rc.1.tgz"
+      }
+    },
+    "1.0.0-rc.10+build.20240101": {
+      "name": "prereleases-5",
+      "version": "1.0.0-rc.10+build.20240101",
+      "_id": "prereleases-5@1.0.0-rc.10+build.20240101",
+      "dist": {
+        "integrity": "sha512-JbBfAFI4bjRlnaR5TM5RfF3d9Hhw14sNumVZ1EA4eHYs9OVFpWAZjO0DW53p8E0+7tAzVTYXrPma0XHQdny+7w==",
+        "shasum": "bb2e8bc443d9657d008cf0763c92f79937267a87",
+        "tarball": "http://localhost:4873/prereleases-5/-/prereleases-5-1.0.0-rc.10-build.20240101.tgz"
+      }
+    }
+  }
+}

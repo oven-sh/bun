@@ -8,6 +8,7 @@ import {
   gcTick,
   isASAN,
   isDebug,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -1585,13 +1586,14 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 // end, so the write meets a full pipe. Nothing reads the FIFO before the
 // write is under way.
 (isWindows ? describe.skip : describe.concurrent)("Bun.write to a full pipe", () => {
-  async function run(mode, { fifos = 1, env = {} } = {}) {
-    using dir = tempDir(`bun-write-${mode}`, {});
+  async function run(mode, { fifos = 1, files = {}, env = {} } = {}) {
+    using dir = tempDir(`bun-write-${mode}`, files);
     const paths = [];
     for (let i = 0; i < fifos; i++) {
       paths.push(join(String(dir), `fifo${i}`));
       mkfifo(paths[i], 0o666);
     }
+    for (const name of Object.keys(files)) paths.push(join(String(dir), name));
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "bun-write-blocked-pipe-fixture.js"), mode, ...paths],
       env: { ...bunEnv, ...env },
@@ -1641,6 +1643,79 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         expect(await run("soleWriter", { fifos: 3, env: { UV_THREADPOOL_SIZE: "2" } })).toEqual(
           printed({ writeEnd: "open", write: "exact" }),
         );
+      },
+      timeout,
+    );
+
+    it(
+      "closes the fd it opened for a path when its Worker exits",
+      async () => {
+        expect(await run("workerExit")).toEqual(printed({ left: true, writeEnds: "closed" }));
+      },
+      timeout,
+    );
+  });
+
+  // The write waits on the io thread until the pipe has room. It does not
+  // keep a work pool thread, it can be cancelled, and it ends with the error
+  // of the write. Where a fixture mode runs twice, the second run reads the
+  // destination's `.size` first, so the file store knows that the fd is a
+  // pipe before the write starts: the write behaves the same either way.
+  describe("while it waits", () => {
+    const bothStates = result => printed({ plain: result, sized: result });
+    const twoPoolThreads = { fifos: 2, files: { "small.txt": "hello" }, env: { UV_THREADPOOL_SIZE: "2" } };
+
+    it(
+      "does not keep a work pool thread",
+      async () => {
+        expect(await run("pool", twoPoolThreads)).toEqual(
+          printed({
+            plain: {
+              text: "hello",
+              statusAfterRead: ["pending", "pending"],
+              resolved: [100000, 100000],
+              delivered: [true, true],
+            },
+          }),
+        );
+      },
+      timeout,
+    );
+
+    it(
+      "is cancelled by Worker.terminate()",
+      async () => {
+        expect(await run("terminate")).toEqual(
+          printed({ plain: { terminated: true, partial: true, prefixExact: true } }),
+        );
+      },
+      timeout,
+    );
+
+    // On macOS a kqueue does not tell the writer of a FIFO that its last
+    // reader closed, so there the write does not end.
+    it.skipIf(isMacOS)(
+      "rejects with EPIPE when the reader goes away",
+      async () => {
+        expect(await run("epipe", twoPoolThreads)).toEqual(bothStates({ results: ["EPIPE/write", "EPIPE/write"] }));
+      },
+      timeout,
+    );
+
+    it(
+      "finishes two writes to one fd and leaves no fd open",
+      async () => {
+        expect(await run("sameFd", { files: { "small.txt": "hello" } })).toEqual(
+          bothStates({ resolved: [100000, 100000], a: 100000, b: 100000 }),
+        );
+      },
+      timeout,
+    );
+
+    it(
+      "resolves when its last byte fills the pipe",
+      async () => {
+        expect(await run("lastByte")).toEqual(bothStates({ resolved: 4096 }));
       },
       timeout,
     );

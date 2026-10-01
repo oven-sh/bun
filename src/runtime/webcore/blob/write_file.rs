@@ -126,6 +126,12 @@ pub(crate) struct WriteFile {
 
     #[cfg(not(windows))]
     pub(crate) could_block: bool,
+    /// Wait on a duplicate of the caller's fd that this job owns. The io
+    /// thread keys its interest list by fd number: epoll refuses a second job
+    /// on one number (`EEXIST`, which sets this), and kqueue lets the second
+    /// replace the first, so there it is set from the start.
+    #[cfg(not(windows))]
+    pub(crate) park_on_private_fd: bool,
     pub(crate) close_after_io: bool,
     #[cfg(not(windows))]
     pub(crate) mkdirp_if_not_exists: bool,
@@ -238,8 +244,28 @@ impl WriteFile {
         if !this.io_parking.fire() {
             return;
         }
-        this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-        this.system_error = Some(err.to_system_error().into());
+        // Two refusals from `EPOLL_CTL_ADD` are not failures of the write:
+        // the pool thread takes it back and tries again.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let failed = match err.get_errno() {
+            // Another parked job has this fd number in the epoll set.
+            sys::E::EEXIST if !this.is_allowed_to_close() => {
+                this.park_on_private_fd = true;
+                false
+            }
+            // epoll does not take a regular file, and one is always writable.
+            sys::E::EPERM => {
+                this.could_block = false;
+                false
+            }
+            _ => true,
+        };
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let failed = true;
+        if failed {
+            this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+            this.system_error = Some(err.to_system_error().into());
+        }
         this.task = WorkPoolTask {
             node: Default::default(),
             callback: Self::do_write_loop_task,
@@ -285,6 +311,17 @@ impl WriteFile {
     /// `self` again.
     #[cfg(not(windows))]
     pub(crate) fn wait_for_writable(&mut self) {
+        if self.park_on_private_fd && !self.is_allowed_to_close() {
+            // At 3 or above: `do_close` leaves 0 to 2 open.
+            match sys::dup_at_least(self.opened_fd, 3) {
+                Ok(fd) => self.opened_fd = fd,
+                Err(err) => {
+                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                    self.system_error = Some(err.to_system_error().into());
+                    return self.on_finish();
+                }
+            }
+        }
         if !self.io_parking.park() {
             self.fail_cancelled();
             return self.on_finish();
@@ -321,6 +358,7 @@ impl WriteFile {
             adopted_fd: None,
             truncate_on_finish: false,
             could_block: false,
+            park_on_private_fd: bun_core::Environment::IS_KQUEUE,
             close_after_io: false,
             mkdirp_if_not_exists,
         };
@@ -335,6 +373,7 @@ impl WriteFile {
     pub(crate) fn resume_from(&mut self, written: usize, fd: Option<sys::CloseOnDrop>) {
         self.base_written = written;
         self.adopted_fd = fd;
+        self.could_block = true;
     }
 
     // reshaped for borrowck — take (off, len) here and re-derive the slice
@@ -349,21 +388,21 @@ impl WriteFile {
         //
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
-        loop {
-            match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
-                Ok(wrote) => {
-                    self.total_written += wrote;
-                    return WriteStep::Wrote(wrote);
-                }
-                // regular files cannot use epoll.
-                // this is fine on kqueue, but not on epoll.
-                Err(err) if err.get_errno() == io::RETRY && !self.could_block => continue,
-                Err(err) if err.get_errno() == io::RETRY => return WriteStep::WouldBlock,
-                Err(err) => {
-                    self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                    self.system_error = Some(err.to_system_error().into());
-                    return WriteStep::Failed;
-                }
+        match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+            Ok(wrote) => {
+                self.total_written += wrote;
+                WriteStep::Wrote(wrote)
+            }
+            // Only a pipe, socket or tty returns EAGAIN, whatever the store
+            // knows about the fd.
+            Err(err) if err.get_errno() == io::RETRY => {
+                self.could_block = true;
+                WriteStep::WouldBlock
+            }
+            Err(err) => {
+                self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                self.system_error = Some(err.to_system_error().into());
+                WriteStep::Failed
             }
         }
     }
@@ -410,9 +449,12 @@ impl WriteFile {
         self.get_fd(Self::run_with_fd);
     }
 
+    /// `opened_fd` is this job's to close: it opened the path, or it waits
+    /// on its own duplicate of the caller's fd.
     #[cfg(not(windows))]
     pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file_blob
+        match &self
+            .file_blob
             .store
             .get()
             .as_ref()
@@ -420,7 +462,10 @@ impl WriteFile {
             .data
             .as_file()
             .pathlike
-            .is_path()
+        {
+            PathOrFileDescriptor::Path(_) => true,
+            PathOrFileDescriptor::Fd(fd) => self.opened_fd != *fd,
+        }
     }
 
     #[cfg(not(windows))]
@@ -451,7 +496,7 @@ impl WriteFile {
 
         let fd = self.opened_fd;
 
-        self.could_block = 'brk: {
+        self.could_block |= 'brk: {
             if let Some(store) = self.file_blob.store.get().as_ref() {
                 if let blob::store::Data::File(file) = &store.data {
                     if file.pathlike.is_fd() {
@@ -543,7 +588,9 @@ impl WriteFile {
                 };
 
                 // Do not immediately attempt to write again if it's not a regular file.
+                // After the last byte there is nothing left to wait for.
                 if self.could_block
+                    && wrote < remain_len
                     && bun_core::is_writable(self.opened_fd) == bun_core::Pollable::NotReady
                 {
                     self.wait_for_writable();

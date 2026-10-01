@@ -1746,10 +1746,52 @@ describe("bundler", () => {
   itBundled("ts/ImportCTS", {
     files: {
       "/entry.ts": `require('./required.cjs')`,
-      "/required.cjs": `console.log('works')`,
+      "/required.cts": `console.log('works')`,
     },
     run: {
       stdout: "works",
+    },
+  });
+  // Same table as esbuild's `rewrittenFileExtensions`, plus Bun's `.js` → `.mts`.
+  itBundled("ts/ImportRewrittenExtensions", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { a } from './a.js'
+        import { b } from './b.js'
+        import { c } from './c.jsx'
+        import { d } from './d.jsx'
+        import { e } from './e.mjs'
+        import { f } from './f.cjs'
+        import { g } from './g.js'
+        console.log(a, b, c, d, e, f, g)
+      `,
+      "/a.ts": `export const a = 'a.ts'`,
+      "/b.tsx": `export const b = 'b.tsx'`,
+      "/c.ts": `export const c = 'c.ts'`,
+      "/d.tsx": `export const d = 'd.tsx'`,
+      "/e.mts": `export const e = 'e.mts'`,
+      "/f.cts": `export const f = 'f.cts'`,
+      "/g.mts": `export const g = 'g.mts'`,
+    },
+    run: {
+      stdout: "a.ts b.tsx c.ts d.tsx e.mts f.cts g.mts",
+    },
+  });
+  itBundled("ts/ImportRewrittenExtensionsStayInFamily", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import './a.cjs'
+        import './b.mjs'
+        import './c.js'
+      `,
+      "/a.ts": ``,
+      "/a.mts": ``,
+      "/b.cts": ``,
+      "/b.ts": ``,
+      "/c.cts": ``,
+    },
+    bundleErrors: {
+      "/entry.ts": [`Could not resolve: "./a.cjs"`, `Could not resolve: "./b.mjs"`, `Could not resolve: "./c.js"`],
     },
   });
   itBundled("ts/SideEffectsFalseWarningTypeDeclarations", {

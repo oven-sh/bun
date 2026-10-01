@@ -23,7 +23,7 @@
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Orientation {
+pub(crate) enum Orientation {
     Normal = 1,
     Flop = 2, // mirror horizontal
     Rotate180 = 3,
@@ -102,7 +102,12 @@ pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
     let mut i: usize = 2;
     while i + 4 <= bytes.len() {
         if bytes[i] != 0xFF {
-            return Orientation::Normal;
+            // libjpeg's next_marker() skips to the next 0xFF with a warning, so the decoder accepts this junk too.
+            let Some(skip) = bun_core::strings::index_of_char_usize(&bytes[i..], 0xFF) else {
+                return Orientation::Normal;
+            };
+            i += skip;
+            continue;
         }
         let marker = bytes[i + 1];
         match marker {
@@ -111,7 +116,8 @@ pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
                 i += 1;
                 continue;
             }
-            0xD0..=0xD8 => {
+            // 0xFF00 is a stuffed zero, which next_marker() skips the same way.
+            0x00 | 0xD0..=0xD8 => {
                 i += 2;
                 continue;
             }

@@ -14,14 +14,14 @@ bun build --compile --define BUILD_VERSION='"1.2.3"' --define BUILD_TIME='"2024-
 
 ## Why use build-time constants?
 
-Build-time constants are embedded directly into your compiled code, making them:
+Bun embeds build-time constants directly into your compiled code, making them:
 
 - **Zero runtime overhead** - No environment variable lookups or file reads
 - **Immutable** - Values are baked into the binary at compile time
 - **Optimizable** - Dead code elimination can remove unused branches
 - **Secure** - No external dependencies or configuration files to manage
 
-This is similar to `gcc -D` or `#define` in C/C++, but for JavaScript/TypeScript.
+Build-time constants are similar to `gcc -D` or `#define` in C/C++, but for JavaScript/TypeScript.
 
 ---
 
@@ -202,7 +202,7 @@ console.log(`Built with version ${version.trim()}`);
 
 ### Value format
 
-Values must be valid JSON. Bun parses each value and inlines it as a JavaScript expression:
+Values can be JSON, identifiers, or property paths such as `globalThis` or `console.log`. Bun parses each value and inlines it as a JavaScript expression:
 
 ```sh
 # ✅ Strings must be JSON-quoted
@@ -226,7 +226,7 @@ Values must be valid JSON. Bun parses each value and inlines it as a JavaScript 
 
 ### Property keys
 
-Keys can be property access patterns, not just simple identifiers:
+Keys can be property access patterns as well as plain identifiers:
 
 ```sh
 # ✅ Replace process.env.NODE_ENV with "production"

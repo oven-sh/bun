@@ -15,7 +15,9 @@ const server = require("https").createServer(
         res.writeHead(500, { "Content-Type": "text/plain" });
         res.end("Error");
       } else {
-        res.writeHead(200, { "Content-Type": "text/plain" });
+        // The client certificate the renegotiation asked for, if it came.
+        const peerCN = client.getPeerCertificate()?.subject?.CN ?? "";
+        res.writeHead(200, { "Content-Type": "text/plain", "X-Peer-CN": peerCN });
         res.end("Hello World");
       }
     });

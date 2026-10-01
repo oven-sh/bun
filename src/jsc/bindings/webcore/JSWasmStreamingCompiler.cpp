@@ -35,7 +35,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSWasmStreamingCompilerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSWasmStreamingCompilerPrototype* ptr = new (NotNull, JSC::allocateCell<JSWasmStreamingCompilerPrototype>(vm)) JSWasmStreamingCompilerPrototype(vm, globalObject, structure);
+        JSWasmStreamingCompilerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSWasmStreamingCompilerPrototype))) JSWasmStreamingCompilerPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -49,7 +49,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -75,8 +75,8 @@ const ClassInfo JSWasmStreamingCompilerPrototype::s_info = { "WasmStreamingCompi
 void JSWasmStreamingCompilerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSWasmStreamingCompiler::info(), JSWasmStreamingCompilerPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSWasmStreamingCompiler::info(), JSWasmStreamingCompilerPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSWasmStreamingCompiler::s_info = { "WasmStreamingCompiler"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWasmStreamingCompiler) };
@@ -191,12 +191,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_cancel, (JSGlo
 
 GCClient::IsoSubspace* JSWasmStreamingCompiler::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWasmStreamingCompiler, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWasmStreamingCompiler.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWasmStreamingCompiler = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWasmStreamingCompiler.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWasmStreamingCompiler = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSWasmStreamingCompiler, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWasmStreamingCompiler, m_subspaceForWasmStreamingCompiler));
 }
 
 void JSWasmStreamingCompiler::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -204,18 +199,6 @@ void JSWasmStreamingCompiler::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = uncheckedDowncast<JSWasmStreamingCompiler>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSWasmStreamingCompilerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor&, ASCIILiteral*)
-{
-    return false;
-}
-
-void JSWasmStreamingCompilerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsWasmStreamingCompiler = static_cast<JSWasmStreamingCompiler*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsWasmStreamingCompiler->wrapped(), jsWasmStreamingCompiler);
 }
 
 JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Wasm::StreamingCompiler>&& impl)

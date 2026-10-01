@@ -6,7 +6,7 @@ mode: center
 
 Bun implements the `node:fs` module, including the `fs.watch` function for listening for file system changes.
 
-The following code listens for changes to files in the current directory. By default the watch is _shallow_: changes to files in subdirectories are not detected.
+The following code listens for changes to files in the current directory. By default the watch is _shallow_: it does not detect changes to files in subdirectories.
 
 ```ts
 import { watch } from "fs";

@@ -309,6 +309,10 @@ describe.concurrent("AbortSignal.timeout() still fires after its observers go aw
       const { heapStats } = require("bun:jsc");
       const wrappers = () => heapStats().objectTypeCounts.AbortSignal ?? 0;
       const N = 32;
+      // Nothing has collected yet in a fresh process, and heapStats() collects
+      // itself in that case, which would collect the wrappers in the middle of
+      // counting them. Collect up front so the two counts below are comparable.
+      Bun.gc(true);
       // A full GC of the debug heap takes ~100ms under ASAN; the deadline only
       // has to come after it.
       const deadline = 1000;

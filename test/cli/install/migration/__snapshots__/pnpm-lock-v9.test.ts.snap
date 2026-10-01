@@ -1,0 +1,51 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`pnpm-lock.yaml v9 v9 git and userinfo-tarball references migrate: bun.lock 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "v9-git-references",
+      "dependencies": {
+        "hue": "github:org/hue#ec3d1d1",
+        "pkg-a": "git+ssh://git@example.com/org/pkg-a.git#v1",
+        "priv": "https://token@tarballs.example.com/priv-1.0.0.tgz",
+      },
+    },
+  },
+  "packages": {
+    "hue": ["hue@git+ssh://git@example.com:org/hue.git#ec3d1d18f73ab023b1fa3e31e1f4316f476566a5", { "dependencies": { "priv": "https://token@tarballs.example.com/priv-1.0.0.tgz" } }, ""],
+
+    "pkg-a": ["pkg-a@git+ssh://git@example.com/org/pkg-a.git#0123456789abcdef0123456789abcdef01234567", { "dependencies": { "pkg-b": "git+ssh://git@example.com/org/pkg-b.git#89abcdef0123456789abcdef0123456789abcdef" } }, ""],
+
+    "pkg-b": ["pkg-b@git+ssh://git@example.com/org/pkg-b.git#89abcdef0123456789abcdef0123456789abcdef", {}, ""],
+
+    "priv": ["priv@https://token@tarballs.example.com/priv-1.0.0.tgz", {}],
+  }
+}
+"
+`;
+
+exports[`pnpm-lock.yaml v9 snapshot alias whose dep-path version is a file: directory or tarball: bun.lock 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "v9-alias-non-registry-dep-path",
+      "dependencies": {
+        "outer": "file:outer",
+      },
+    },
+  },
+  "packages": {
+    "fork": ["bar@github:o/bar#aeb6b15f9c9957c8fa56f9731e914c4d8a6d2f2b", {}, ""],
+
+    "outer": ["outer@file:outer", { "dependencies": { "config": "file:shared/config", "fork": "https://codeload.github.com/o/bar/tar.gz/aeb6b15f9c9957c8fa56f9731e914c4d8a6d2f2b" } }],
+
+    "outer/config": ["hi2@file:shared/config", {}],
+  }
+}
+"
+`;

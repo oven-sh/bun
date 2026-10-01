@@ -1949,7 +1949,11 @@ impl Checker<'_> {
                     ),
                 };
                 let said = out.len();
+                let is_no_infer = self.is_written_as_no_infer(sig, i);
+                let outer =
+                    std::mem::replace(&mut self.no_infer_parameter, is_no_infer.then_some(wanted));
                 self.check_assignable_with_end(file, given, wanted, at, end, inner, 2345, out);
+                self.no_infer_parameter = outer;
                 let (from, to) = self.error_range_of_expr(file, node);
                 let first = out.get(said).copied();
                 self.maybe_add_missing_await_info((file, from, to), given, wanted, first);
@@ -2014,6 +2018,24 @@ impl Checker<'_> {
             }
         }
         Applicable::Yes
+    }
+
+    /// Whether the parameter of `sig` at `index`, no rest parameter, is written as `NoInfer<..>`.
+    fn is_written_as_no_infer(&mut self, sig: SigId, index: usize) -> bool {
+        let declared = self.declared_sig(sig);
+        let Some((file, func, _)) = self.sig_decl(declared) else {
+            return false;
+        };
+        let hir = self.hir(file);
+        let Some(param) = hir[func].params.iter().nth(index) else {
+            return false;
+        };
+        let node = hir[param].ty;
+        if node.is_none() || hir[param].flags.contains(Flags::REST) {
+            return false;
+        }
+        let written = self.type_from_node(file, node);
+        self.is_no_infer(written)
     }
 
     /// `maybeAddMissingAwaitInfo`. `place`: the argument. `said`: the first thing that was said of it.

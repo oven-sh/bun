@@ -1160,8 +1160,16 @@ impl<'p> Checker<'p> {
                 break self.intern(TypeData::Cond { file, node, mapper });
             }
             let extends_is_top = extends_ty == TypeId::ANY || extends_ty == TypeId::UNKNOWN;
+            // `getPermissiveInstantiation` leaves a type without type variables as it is. `Relation::Permissive` would take the type
+            // parameters of a generic signature in it for the wildcard.
+            let permissive =
+                if self.has_type_variables(check_ty) || self.has_type_variables(extends_ty) {
+                    Relation::Permissive
+                } else {
+                    Relation::Assignable
+                };
             let (branch, branch_mapper, is_false_branch) = if !extends_is_top
-                && (check_ty == TypeId::ANY || !self.is_assignable_permissive(check_ty, extends_ty))
+                && (check_ty == TypeId::ANY || !self.related(check_ty, extends_ty, permissive))
             {
                 // `any` may pass. So may what extends `check_ty`, if something that passes is one of the things `check_ty` can be.
                 let with_true = check_ty == TypeId::ANY

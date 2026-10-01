@@ -1683,7 +1683,7 @@ fn check_right_operand_of_in(
         return;
     }
     let there = non_null_type(c, ty);
-    if c.is_assignable(there, TypeId::OBJECT) && has_empty_object_intersection(c, file, right, ty) {
+    if c.is_assignable(there, TypeId::OBJECT) && has_empty_object_intersection(c, ty) {
         let start = error_start(c, file, right);
         out.push(Diagnostic { start, code: 2638 });
         let end = c.error_end_of(file, right);
@@ -1691,23 +1691,12 @@ fn check_right_operand_of_in(
     }
 }
 
-/// `hasEmptyObjectIntersection`, of the type `ty` of `e`.
-fn has_empty_object_intersection(c: &mut Checker<'_>, file: FileId, e: ExprId, ty: TypeId) -> bool {
-    let hir = c.hir(file);
+/// `hasEmptyObjectIntersection`
+fn has_empty_object_intersection(c: &mut Checker<'_>, ty: TypeId) -> bool {
     for &part in c.parts(ty) {
-        // `unknownEmptyObjectType`: the `{}` that is left of `unknown`, as opposed to one that is written.
-        if part == TypeId::EMPTY_OBJECT {
-            let mut reference = e;
-            while let ExprKind::NonNull(inner) = hir[reference].kind {
-                reference = inner;
-            }
-            if matches!(
-                hir[reference].kind,
-                ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }
-            ) && c.declared_type_of_reference(file, reference) == TypeId::UNKNOWN
-            {
-                return true;
-            }
+        // The `{}` that is left of `unknown`, as opposed to one that is written or stands for instances nothing is known of.
+        if part == TypeId::UNKNOWN_EMPTY_OBJECT {
+            return true;
         }
         let TypeData::Intersection(members) = c.data(part) else {
             continue;

@@ -898,6 +898,8 @@ impl TypeId {
     pub const BOOLEAN: TypeId = TypeId(WELL_KNOWN.len() as u32);
     /// `{}`
     pub const EMPTY_OBJECT: TypeId = TypeId(WELL_KNOWN.len() as u32 + 1);
+    /// `unknownEmptyObjectType`, see `Literalness::OfUnknown`
+    pub const UNKNOWN_EMPTY_OBJECT: TypeId = TypeId(WELL_KNOWN.len() as u32 + 2);
 
     /// `undefined` and `null` come in kinds that flags, facts and relations do not tell apart: the ordinary one of the kind.
     #[inline]
@@ -950,6 +952,13 @@ impl TypeStore {
         assert_eq!(
             store.intern(TypeData::Synth(Box::default())),
             TypeId::EMPTY_OBJECT
+        );
+        assert_eq!(
+            store.intern(TypeData::Synth(Box::new(Shape {
+                literal: Literalness::OfUnknown,
+                ..Shape::default()
+            }))),
+            TypeId::UNKNOWN_EMPTY_OBJECT
         );
         assert_eq!(store.mapper_in_order(&[]), MapperId::IDENTITY);
         store
@@ -1092,7 +1101,8 @@ impl TypeStore {
             | TypeData::Fns { mapper, .. }
             | TypeData::Cond { mapper, .. } => self.mapper_record(*mapper).1,
             TypeData::Synth(shape) => {
-                let mut flags = if shape.literal == Literalness::No {
+                let is_plain = matches!(shape.literal, Literalness::No | Literalness::OfUnknown);
+                let mut flags = if is_plain {
                     TypeFlags::empty()
                 } else {
                     TypeFlags::HAS_OBJECT_LITERAL

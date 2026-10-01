@@ -491,9 +491,9 @@ impl<'p> Checker<'p> {
             if !with_default {
                 return None;
             }
-            // `isESMFormatImportImportingCommonjsFormatFile`
-            let is_commonjs_to_node = is_file_to_node && !files.module(module.file).is_esm;
-            if !is_commonjs_to_node && self.prop_ref(ty, known::default).is_none() {
+            if !files.is_commonjs_to_node(file, module)
+                && self.prop_ref(ty, known::default).is_none()
+            {
                 return None;
             }
         }
@@ -779,10 +779,16 @@ impl<'p> Checker<'p> {
                 return true;
             }
             name.is_some()
-                && name != known::default
                 && self
                     .module_with_known_exports(file, spec, mode)
-                    .is_some_and(|m| files.module_export(m, name).is_none())
+                    .is_some_and(|m| {
+                        // `getTargetOfModuleDefault`
+                        if name == known::default {
+                            files.default_of_module(file, m).is_none()
+                        } else {
+                            files.module_export(m, name).is_none()
+                        }
+                    })
         })
     }
 

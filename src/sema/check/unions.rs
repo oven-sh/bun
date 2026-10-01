@@ -1307,7 +1307,7 @@ impl<'p> Checker<'p> {
             return ty;
         }
         if ty == TypeId::UNKNOWN {
-            return TypeId::EMPTY_OBJECT;
+            return TypeId::UNKNOWN_EMPTY_OBJECT;
         }
         let filtered = self.filter(ty, |c, m| {
             !(m.is_undefined() || m.is_null() || (m == TypeId::VOID && c.is_union(ty)))

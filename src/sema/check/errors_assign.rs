@@ -866,7 +866,7 @@ impl Checker<'_> {
 
     /// `getRegularTypeOfObjectLiteral`: an object literal, and those its properties hold, as ordinary object types. Those in a list or
     /// among alternatives stay as they are written.
-    fn regular_type_of_object_literal(&mut self, ty: TypeId) -> TypeId {
+    pub(super) fn regular_type_of_object_literal(&mut self, ty: TypeId) -> TypeId {
         if !self.is_object_literal_type(ty) {
             return ty;
         }
@@ -3348,7 +3348,7 @@ impl Checker<'_> {
         // `getBestMatchIndexedAccessTypeOrUndefined`
         let wanted = match self.indexed_access_by_name(target, name) {
             Some(wanted) => wanted,
-            None if self.is_union(target) => {
+            None if self.is_union(target) && self.no_infer_parameter != Some(target) => {
                 let Some(best) = self.best_matching_type(source, target) else {
                     return false;
                 };

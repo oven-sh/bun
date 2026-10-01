@@ -641,8 +641,12 @@ impl<'p> Checker<'p> {
         }
         let strict = self.p.files.options.strict_null_checks;
         let reduced = if strict && ty == TypeId::UNKNOWN {
-            // `unknown` is `{} | null | undefined`, and is `unknown` again if none of them goes.
-            let everything = self.union(&[TypeId::EMPTY_OBJECT, TypeId::NULL, TypeId::UNDEFINED]);
+            // `unknownUnionType`: `unknown` is `{} | null | undefined`, and is `unknown` again if none of them goes.
+            let everything = self.union(&[
+                TypeId::UNKNOWN_EMPTY_OBJECT,
+                TypeId::NULL,
+                TypeId::UNDEFINED,
+            ]);
             let rest = self.type_with_facts(everything, include);
             if rest == everything { ty } else { rest }
         } else {
@@ -2922,8 +2926,12 @@ impl<'p> Checker<'p> {
             if check_derived {
                 return self.filter(ty, |c, m| !c.is_type_derived_from(m, candidate));
             }
-            // `unknown` is `{} | null | undefined` for the time being.
-            let everything = self.union(&[TypeId::EMPTY_OBJECT, TypeId::NULL, TypeId::UNDEFINED]);
+            // `unknownUnionType`: `unknown` is `{} | null | undefined` for the time being.
+            let everything = self.union(&[
+                TypeId::UNKNOWN_EMPTY_OBJECT,
+                TypeId::NULL,
+                TypeId::UNDEFINED,
+            ]);
             let ty = if ty == TypeId::UNKNOWN {
                 everything
             } else {
@@ -4702,13 +4710,17 @@ impl<'p> Checker<'p> {
             } else {
                 self.union(types)
             };
-            // The pieces `unknown` was taken apart into, all back together.
+            // `recombineUnknownType`: the pieces `unknown` was taken apart into, all back together.
             if self.walk_declared == TypeId::UNKNOWN
                 && let TypeData::Union(parts) = self.data(union)
                 && parts.len() == 3
-                && [TypeId::EMPTY_OBJECT, TypeId::NULL, TypeId::UNDEFINED]
-                    .iter()
-                    .all(|p| parts.contains(p))
+                && [
+                    TypeId::UNKNOWN_EMPTY_OBJECT,
+                    TypeId::NULL,
+                    TypeId::UNDEFINED,
+                ]
+                .iter()
+                .all(|p| parts.contains(p))
             {
                 return TypeId::UNKNOWN;
             }

@@ -5962,6 +5962,14 @@ impl Checker<'_> {
         }
     }
 
+    /// Whatever is got at through `import * as` can only be read: whether `obj` is the name such an import declares.
+    fn is_namespace_import_name(&self, file: FileId, obj: ExprId) -> bool {
+        matches!(self.hir(file)[obj].kind, ExprKind::Ident(n)
+        if self.symbol_of_identifier(file, obj, n).is_some_and(|s| {
+            self.files().flags(s).contains(SymFlags::ALIAS) && self.files().symbol(s).decls.iter().any(|d| matches!(d, Decl::ImportNamespace(_)))
+        }))
+    }
+
     /// `isAssignmentToReadonlyEntity`: 2540, put at `at`, if `e` is written to and the property `name` of `obj`, which is what `e` is,
     /// can only be read.
     pub(super) fn check_property_write(
@@ -6025,19 +6033,24 @@ impl Checker<'_> {
             if self.symbol_of_identifier(file, obj, n).is_some_and(|s| {
                 self.files().flags(s).contains(SymFlags::MODULE_EXPORTS)
             }));
-            if !is_through_module {
-                for (declared_in, decl) in self.files().decls(sym) {
-                    if let Decl::ExportsProperty(declaration) = decl
-                        && self.is_readonly_assignment_declaration(declared_in, declaration)
-                    {
-                        out.push(Diagnostic {
-                            start: at,
-                            code: 2540,
-                        });
-                        explain_readonly_element(self, file, e, at, Some(prop), name);
-                        break;
-                    }
+            if is_through_module {
+                return;
+            }
+            let mut is_refused = false;
+            for (declared_in, decl) in self.files().decls(sym) {
+                if let Decl::ExportsProperty(declaration) = decl
+                    && self.is_readonly_assignment_declaration(declared_in, declaration)
+                {
+                    is_refused = true;
+                    break;
                 }
+            }
+            if is_refused || self.is_namespace_import_name(file, obj) {
+                out.push(Diagnostic {
+                    start: at,
+                    code: 2540,
+                });
+                explain_readonly_element(self, file, e, at, Some(prop), name);
             }
             return;
         }
@@ -6046,11 +6059,7 @@ impl Checker<'_> {
         } else if self.has_readonly_assignment_declaration(prop) {
             true
         } else {
-            // Whatever is got at through `import * as` can only be read.
-            matches!(self.hir(file)[obj].kind, ExprKind::Ident(n)
-            if self.symbol_of_identifier(file, obj, n).is_some_and(|s| {
-                self.files().flags(s).contains(SymFlags::ALIAS) && self.files().symbol(s).decls.iter().any(|d| matches!(d, Decl::ImportNamespace(_)))
-            }))
+            self.is_namespace_import_name(file, obj)
         };
         if is_refused {
             out.push(Diagnostic {

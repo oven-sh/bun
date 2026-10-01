@@ -610,6 +610,7 @@ impl Program {
             skip_binding_patterns: 0,
             discriminated: FxHashMap::default(),
             optional_member: false,
+            no_infer_parameter: None,
             contextual_properties: FxHashMap::default(),
             candidate_holes: Vec::new(),
             trace_cycles: std::env::var_os("BUN_SEMA_TRACE_CYCLES").is_some(),
@@ -900,6 +901,9 @@ pub struct Checker<'p> {
     discriminated: FxHashMap<(FileId, ExprId, TypeId), TypeId>,
     /// The member `infer_from_member` is about to look at may be left out.
     optional_member: bool,
+    /// The type of the parameter that an argument is reported not to fit, if the parameter is written as `NoInfer<..>`. To tsgo
+    /// that is a substitution type whatever it stands for (`getNoInferType`), and no union.
+    no_infer_parameter: Option<TypeId>,
     /// See `contextual_property_of_value`.
     contextual_properties: FxHashMap<(TypeId, Atom), Option<TypeId>>,
     /// For each overloaded call being resolved: the type parameters of its candidates, as holes.
@@ -1515,7 +1519,7 @@ impl<'p> Checker<'p> {
 
     /// `instantiateTypeWithAlias`, `getConditionalType`: an instantiation limit was hit. Reports 2589 at `currentNode` and returns the
     /// error type. Safe to call after any `enter` that refused. Returns `UNRESOLVED` where our recursion is no evidence of tsgo's:
-    /// after a refusal other than `EnterOutcome::Runaway`, and at the depth limit of `instantiate` under a conditional type.
+    /// after a refusal other than `EnterOutcome::Runaway`, and more than 60 levels of `instantiate` deep under a conditional type.
     pub(super) fn excessively_deep(&mut self) -> TypeId {
         // Only the call right after a refused `enter` sees the refusal.
         let is_limit_in_tsgo = match std::mem::replace(&mut self.last_enter, EnterOutcome::Entered)
@@ -1530,6 +1534,16 @@ impl<'p> Checker<'p> {
             }
         };
         if !is_limit_in_tsgo {
+            return TypeId::UNRESOLVED;
+        }
+        self.record_excessive_depth();
+        TypeId::ANY
+    }
+
+    /// `instantiateTypeWithAlias`: `instantiationDepth == 100`. `instantiation_depth` counts what tsgo counts under a conditional type
+    /// too: `resolve_conditional` follows a tail call in a loop, as `getConditionalType` does.
+    pub(super) fn instantiation_too_deep(&mut self) -> TypeId {
+        if std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) == EnterOutcome::Refused {
             return TypeId::UNRESOLVED;
         }
         self.record_excessive_depth();

@@ -4774,8 +4774,8 @@ impl<'p> Checker<'p> {
                 }
                 // Not against another conditional type: what is checked is replaced by what it extends, and too much fits.
                 if !matches!(self.data(target), TypeData::Cond { .. })
-                    && self.has_non_circular_base_constraint(source)
                     && relation != Relation::Restrictive
+                    && self.has_non_circular_base_constraint(source)
                     && let Some(distributive) = self.constraint_of_distributive_conditional(source)
                 {
                     let result = self.is_related_to(r, distributive, target, REC_SOURCE);
@@ -6348,7 +6348,11 @@ impl<'p> Checker<'p> {
         }
         let source_type_params = self.sig_type_params(source);
         if !source_type_params.is_empty() && source_type_params != self.sig_type_params(target) {
-            source = self.instantiate_sig_in_context(source, target, true);
+            // tsgo compares permissive and restrictive instantiations. Here the declared type parameters stand in for theirs.
+            let stand_ins = Some(r.relation).filter(|relation| {
+                matches!(relation, Relation::Permissive | Relation::Restrictive)
+            });
+            source = self.instantiate_sig_in_context_under(source, target, true, stand_ins);
         }
         let sp = self.sig_params(source);
         let source_count = self.parameter_count(&sp);

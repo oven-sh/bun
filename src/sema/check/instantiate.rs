@@ -168,16 +168,9 @@ impl<'p> Checker<'p> {
         }
         self.time_trap();
         self.guard("instantiate");
-        if self.instantiation_depth > 95 {
-            // `getConditionalType` follows a tail call in a loop, at one `instantiationDepth`. `conditional_type` recurses, so
-            // under a conditional type this depth is not comparable with tsgo's: the result is unknown and nothing is reported.
-            if self.stack.iter().any(|q| matches!(q, Query::Cond(..))) {
-                return TypeId::UNRESOLVED;
-            }
-            // `instantiationDepth == 100`: 2589 and the error type, which is cached like any other result.
-            if self.instantiation_depth >= 100 {
-                return self.excessively_deep();
-            }
+        // `instantiationDepth == 100`: 2589 and the error type, which is cached like any other result.
+        if self.instantiation_depth >= 100 {
+            return self.instantiation_too_deep();
         }
         self.instantiation_depth += 1;
         let (cycles_before, events_before) = (self.cycles, self.deep_events);

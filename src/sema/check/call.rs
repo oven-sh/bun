@@ -1088,11 +1088,22 @@ impl<'p> Checker<'p> {
         args: &[Arg],
         this_arg: Option<ExprId>,
     ) -> Option<Option<SigId>> {
-        // A generic function may be left out as well.
-        if args.iter().any(|a| matches!(a, Arg::Spread(..)))
-            || type_args.is_empty() && self.has_generic_function_argument(file, args)
-        {
+        if args.iter().any(|a| matches!(a, Arg::Spread(..))) {
             return None;
+        }
+        // A generic function may be left out as well. An argument that has not been told what is expected of it goes by the first
+        // candidate, which is the first that `chooseOverload` holds it against.
+        if type_args.is_empty()
+            && let Some(&first) = candidates.first()
+        {
+            let params = self.sig_params(first);
+            self.resolving
+                .push(Resolving::trial(file, call, first, params));
+            let has_generic_function = self.has_generic_function_argument(file, args);
+            self.resolving.pop();
+            if has_generic_function {
+                return None;
+            }
         }
         let mut last = None;
         for &candidate in candidates {
@@ -1574,7 +1585,7 @@ impl<'p> Checker<'p> {
             }
             // `getRegularTypeOfObjectLiteral`: properties there are too many of do not count before everything is looked at.
             let ty = if plain_only {
-                self.regular_object(ty)
+                self.regular_type_of_object_literal(ty)
             } else {
                 ty
             };
@@ -2257,6 +2268,38 @@ impl<'p> Checker<'p> {
         args: &[Arg],
         settled_before: usize,
     ) -> (bool, MapperId, MapperId) {
+        // Such an argument may ask what is expected of it all the same: a template, `x as const`, a tagged template. While the call
+        // is resolved that is up to the candidate (`checkExpressionWithContextualType`).
+        let call = args.iter().find_map(|a| match *a {
+            Arg::Expr(e) => match self.bound(file).expr_parent[e.idx()] {
+                Parent::Expr(call) => Some(call),
+                _ => None,
+            },
+            _ => None,
+        });
+        let Some(call) = call else {
+            return self.plain_arguments_say_as_told(file, candidate, params, args, settled_before);
+        };
+        self.resolving.push(Resolving::trial(
+            file,
+            call,
+            candidate,
+            List::Own(params.to_vec()),
+        ));
+        let said = self.plain_arguments_say_as_told(file, candidate, params, args, settled_before);
+        self.resolving.pop();
+        said
+    }
+
+    /// `plain_arguments_say`, with `candidate` there to be asked what it expects.
+    fn plain_arguments_say_as_told(
+        &mut self,
+        file: FileId,
+        candidate: SigId,
+        params: &[SigParam],
+        args: &[Arg],
+        settled_before: usize,
+    ) -> (bool, MapperId, MapperId) {
         let mut plain: SmallVec<[(usize, TypeId); 8]> = SmallVec::new();
         for (i, &a) in args.iter().enumerate() {
             let is_plain = match a {
@@ -2759,6 +2802,19 @@ impl<'p> Checker<'p> {
                     }
                 }
             }
+            // Nor is it one before the first that takes the literals as they are where it alone says what is expected of them.
+            if is_literal && type_args.is_empty() {
+                let standing: SmallVec<[bool; 8]> = plain
+                    .iter()
+                    .map(|said| said.is_none_or(|said| said.0))
+                    .collect();
+                let first = self.first_candidate_to_take_literals(
+                    file, call, candidates, &lists, &standing, args, this_arg, i,
+                );
+                for said in plain.iter_mut().take(first).flatten() {
+                    said.0 = false;
+                }
+            }
             let any_fits = plain.iter().any(|p| p.is_some_and(|p| p.0));
             // A call, and a function that does not wait for the types of its parameters, are worked out once and stay what they came
             // to (`resolvedSignature`, `NodeCheckFlagsContextChecked`): for the first candidate that gets as far as them.
@@ -3101,6 +3157,156 @@ impl<'p> Checker<'p> {
             }
         }
         None
+    }
+
+    /// `chooseOverload` checks an object or array literal anew for each candidate, with what that candidate alone expects of it, so a
+    /// candidate that is rejected leaves no mark on it. Here a literal is looked at once. The index of the first of `candidates` that
+    /// takes the arguments where it alone says what is expected of them: those before it have no say.
+    /// `lists`: what each candidate takes. `standing`: which of them the plain arguments do not rule out. `at`: the argument that is
+    /// about to be told what is expected of it. The answer is worked out for the first such argument, and holds for the others.
+    /// Zero where it cannot be told, and where no candidate takes them.
+    fn first_candidate_to_take_literals(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        candidates: &[SigId],
+        lists: &[List<'p, SigParam>],
+        standing: &[bool],
+        args: &[Arg],
+        this_arg: Option<ExprId>,
+        at: usize,
+    ) -> usize {
+        if candidates.len() < 2
+            || self.provisional > 0
+            || candidates.iter().any(|&c| self.has_const_type_parameter(c))
+        {
+            return 0;
+        }
+        let mut literals: SmallVec<[(usize, ExprId); 8]> = SmallVec::new();
+        for (i, &arg) in args.iter().enumerate() {
+            let e = match arg {
+                Arg::Expr(e) => e,
+                Arg::Type(_) => continue,
+                Arg::Spread(..) => return 0,
+            };
+            if self.is_context_sensitive(file, e) || !self.depends_on_context(file, e) {
+                continue;
+            }
+            if i < at || !self.is_literal_of_plain_values(file, e) {
+                return 0;
+            }
+            literals.push((i, e));
+        }
+        // Nothing is tried unless the first candidate with something to say of a literal does not look like taking it.
+        let mut is_rejected = false;
+        for (k, list) in lists.iter().enumerate() {
+            if !standing[k] {
+                continue;
+            }
+            let (mut says_something, mut fits) = (false, true);
+            self.resolving
+                .push(Resolving::trial(file, call, candidates[k], list.clone()));
+            for &(i, e) in &literals {
+                let Some(param) = self.context_of_arg_at(list, i, Some(args.len())) else {
+                    continue;
+                };
+                let bound = self.widest_parameter_type(candidates[k], param);
+                if self.is_any(bound) || bound == TypeId::UNKNOWN {
+                    says_something = true;
+                } else if self.has_room_for_literal(file, e, bound) {
+                    says_something = true;
+                    fits = fits && self.do_plain_members_fit(file, e, bound, false);
+                } else {
+                    fits = false;
+                }
+            }
+            self.resolving.pop();
+            if says_something {
+                is_rejected = !fits;
+                break;
+            }
+        }
+        if !is_rejected {
+            return 0;
+        }
+        for (k, &candidate) in candidates.iter().enumerate() {
+            if !standing[k] {
+                continue;
+            }
+            // `hold_for_now` holds for as long as the outermost question that is not kept is open, which would outlive the trial.
+            if self.frames.iter().any(|frame| frame.tainted) {
+                return 0;
+            }
+            if self.takes_arguments_alone(file, call, candidate, args, this_arg) {
+                return k;
+            }
+        }
+        0
+    }
+
+    /// Whether `candidate` passes the first round of `chooseOverload` as the only candidate of `call`. In doubt it does. Nothing is
+    /// being tried around. What is expected of the arguments meanwhile, and what comes of that, is not kept.
+    fn takes_arguments_alone(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        candidate: SigId,
+        args: &[Arg],
+        this_arg: Option<ExprId>,
+    ) -> bool {
+        self.provisional_floor = self.stack.len();
+        self.provisional += 1;
+        let forced = std::mem::replace(&mut self.forces_provisional_contexts, true);
+        // What is read of a trial counts as a question that came back to itself. That says nothing about what is worked out around.
+        let (cycles, uncertain) = (self.cycles, self.uncertain);
+        let gave_up = std::mem::replace(&mut self.relation_gave_up, false);
+        let chosen = self.choose_overload(file, call, &[candidate], &[], args, this_arg);
+        let is_sure = !self.relation_gave_up;
+        self.relation_gave_up = gave_up;
+        self.cycles = cycles;
+        self.uncertain = uncertain;
+        self.forces_provisional_contexts = forced;
+        self.provisional -= 1;
+        self.provisional_arg_contexts.clear();
+        self.trials.remove(&(file, call));
+        for &arg in args {
+            if let Arg::Expr(e) = arg {
+                self.set_context_checked(file, e, ContextChecked::No);
+            }
+        }
+        chosen.is_some() || !is_sure
+    }
+
+    /// Whether `e` is an object or array literal in which nothing is worked out once, when it is first looked at, and stays
+    /// (`resolvedSignature`, `NodeCheckFlagsContextChecked`): what it holds does not go by what is expected of it, or is such a literal.
+    fn is_literal_of_plain_values(&self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        let is_plain = |x: ExprId| {
+            x.is_none()
+                || !self.depends_on_context(file, x)
+                || self.is_literal_of_plain_values(file, x)
+        };
+        match hir[e].kind {
+            ExprKind::Object(props) => props.iter().all(|p| is_plain(hir[p].value)),
+            ExprKind::Array(items) => hir.ids(items).all(is_plain),
+            _ => false,
+        }
+    }
+
+    /// `param`, which `candidate` takes, unless it is a type parameter. That comes to no more than what it extends (`getInferredType`),
+    /// with the type parameters of `candidate` in that replaced by what they extend.
+    fn widest_parameter_type(&mut self, candidate: SigId, param: TypeId) -> TypeId {
+        if !matches!(self.data(param), TypeData::TypeParam(..)) {
+            return param;
+        }
+        let own = self.sig_type_params(candidate);
+        let mut widest: Vec<(TypeId, TypeId)> = Vec::with_capacity(own.len());
+        for &p in own.iter() {
+            widest.push((p, self.base_constraint(p)));
+        }
+        let widest = self.p.types.mapper(widest);
+        let bound = self.instantiate(param, widest);
+        self.instantiate(bound, widest)
     }
 
     /// `ty`, which the type parameter `param` extends or defaults to, with what has been filled in around the signature `param`
@@ -4308,6 +4514,7 @@ impl<'p> Checker<'p> {
                     && let Arg::Expr(e) = arg
                     && let Some(param) = self.param_type_at(&params, i)
                     && self.has_type_variables(param)
+                    && !(pass == 0 && self.is_no_infer(param))
                 {
                     self.infer_from_literal(
                         file,
@@ -4666,7 +4873,7 @@ impl<'p> Checker<'p> {
                 }
                 // `getRegularTypeOfObjectLiteral`: properties there are too many of do not count while the parameters may not be
                 // all they come to.
-                let given = self.regular_object(given);
+                let given = self.regular_type_of_object_literal(given);
                 if self.is_known(given) && !self.is_assignable(given, param) {
                     return false;
                 }
@@ -4729,7 +4936,7 @@ impl<'p> Checker<'p> {
                     continue;
                 }
                 let given = self.type_of_literal_prop(file, p);
-                let given = self.regular_object(given);
+                let given = self.regular_type_of_object_literal(given);
                 if self.is_known(given)
                     && self.is_known(wanted)
                     && !self.is_assignable(given, wanted)
@@ -4915,7 +5122,22 @@ impl<'p> Checker<'p> {
         expected: SigId,
         with_result: bool,
     ) -> SigId {
+        self.instantiate_sig_in_context_under(sig, expected, with_result, None)
+    }
+
+    /// `instantiate_sig_in_context`. `stand_ins`: see `Inference::stand_ins`.
+    pub(super) fn instantiate_sig_in_context_under(
+        &mut self,
+        sig: SigId,
+        expected: SigId,
+        with_result: bool,
+        stand_ins: Option<super::relate::Relation>,
+    ) -> SigId {
         let mut inference = Inference::for_params(&self.sig_type_params(sig), Some(sig));
+        if stand_ins.is_some() {
+            inference.stand_ins = stand_ins;
+            inference.own_of_source = SmallVec::from_slice(&self.sig_type_params(expected));
+        }
         // What `expected` takes may really be a type parameter of `sig`, adopted by the call around or in scope there:
         // `inferFromTypes` takes it for a candidate like any other.
         inference.calls_itself = true;
@@ -6282,6 +6504,19 @@ impl<'p> Checker<'p> {
         {
             return;
         }
+        // `checkExpressionForMutableLocation`: in a property a literal stays one only where one is expected.
+        let ty = if !sensitive
+            && self.some_type(ty, |c, m| c.is_unit(m))
+            && !self.in_const_context(file, value)
+            && !matches!(
+                self.hir(file)[value].kind,
+                ExprKind::As { .. } | ExprKind::AsConst(_)
+            ) {
+            let room = self.instantiate_with_expected_result(member_param, return_mapper);
+            self.widen_literal_for_context(ty, Some(room))
+        } else {
+            ty
+        };
         self.note_array_literals(file, value, &mut inference.array_literals);
         let target = if is_optional {
             self.optional(member_param)
@@ -6460,14 +6695,23 @@ impl<'p> Checker<'p> {
             }
             ExprKind::Object(props) => {
                 if sensitive || !self.is_inferred_to_as_a_whole(param) {
-                    self.infer_from_members(
-                        file,
-                        props,
-                        param,
-                        inference,
-                        return_mapper,
-                        sensitive,
-                    );
+                    let target = if sensitive {
+                        Some(param)
+                    } else {
+                        self.targets_of_waiting_literal(file, props, param)
+                    };
+                    match target {
+                        Some(target) => self.infer_from_members(
+                            file,
+                            props,
+                            target,
+                            inference,
+                            return_mapper,
+                            sensitive,
+                        ),
+                        // The functions that wait for nothing are looked at whatever the literal is held against.
+                        None => self.infer_from_annotated_functions(file, e, param, inference),
+                    }
                     return true;
                 }
             }
@@ -6479,6 +6723,160 @@ impl<'p> Checker<'p> {
         let partial = self.with_so_far(file, inference, |c| c.partial_type(file, e));
         self.infer(inference, partial, param, 0);
         true
+    }
+
+    /// What is left of `target` to infer to from the object literal with the members `props`, in the round that leaves out what
+    /// waits. Each member of a union or an intersection is a target of its own (`inferToMultipleTypes`), and
+    /// `inferFromObjectTypes` infers nothing to one that is `typesDefinitelyUnrelated` to the literal. `None`: nothing is left.
+    fn targets_of_waiting_literal(
+        &mut self,
+        file: FileId,
+        props: Span<PropId>,
+        target: TypeId,
+    ) -> Option<TypeId> {
+        if !self.is_object_type(target)
+            && !matches!(
+                self.data(target),
+                TypeData::Union(_) | TypeData::Intersection(_)
+            )
+        {
+            return Some(target);
+        }
+        match self.outline_of_waiting_literal(file, props, target) {
+            // A union spread into it makes a union, of which each member is a source of its own.
+            Some(outline) if self.is_object_type(outline) => {
+                self.targets_not_definitely_unrelated(outline, target)
+            }
+            _ => Some(target),
+        }
+    }
+
+    /// `target` without the object types in it that are `typesDefinitelyUnrelated` to `source`. `None`: nothing is left.
+    fn targets_not_definitely_unrelated(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<TypeId> {
+        let (TypeData::Union(parts) | TypeData::Intersection(parts)) = self.data(target) else {
+            let is_unrelated =
+                self.is_object_type(target) && self.types_definitely_unrelated(source, target);
+            return (!is_unrelated).then_some(target);
+        };
+        let kept: Vec<TypeId> = parts
+            .iter()
+            .filter_map(|&part| self.targets_not_definitely_unrelated(source, part))
+            .collect();
+        if kept[..] == parts[..] {
+            Some(target)
+        } else if kept.is_empty() {
+            None
+        } else if self.is_union(target) {
+            Some(self.union(&kept))
+        } else {
+            Some(self.intersection(&kept))
+        }
+    }
+
+    /// The type of the object literal with the members `props` as far as `typesDefinitelyUnrelated` reads it: which properties it
+    /// has, and what those are for which `target` has a unit type. The others are `UNRESOLVED`, and are not looked at.
+    /// `None`: which properties it has cannot be told.
+    fn outline_of_waiting_literal(
+        &mut self,
+        file: FileId,
+        props: Span<PropId>,
+        target: TypeId,
+    ) -> Option<TypeId> {
+        let hir = self.hir(file);
+        let outline = || Shape {
+            literal: Literalness::Partial,
+            ..Shape::default()
+        };
+        // Without members such a shape is `anyFunctionType`.
+        let close = |c: &mut Self, shape: Shape| {
+            if shape.props.is_empty() {
+                TypeId::EMPTY_OBJECT
+            } else {
+                c.synth(shape)
+            }
+        };
+        let mut shape = outline();
+        // `getSpreadType` of what is written before the properties in `shape`.
+        let mut before: Option<TypeId> = None;
+        for p in props.iter() {
+            let prop = &hir[p];
+            if prop.kind == PropKind::Spread {
+                if self.depends_on_context(file, prop.value) {
+                    return None;
+                }
+                let spread = self.type_of_expr(file, prop.value);
+                if !self.is_known(spread)
+                    || self.is_uncertain(file, prop.value)
+                    || self.has_type_variables(spread)
+                {
+                    return None;
+                }
+                let written = close(self, std::mem::replace(&mut shape, outline()));
+                let left = match before {
+                    Some(left) => self.spread(left, written),
+                    None => written,
+                };
+                before = Some(self.spread(left, spread));
+                continue;
+            }
+            // A name that is only known when it runs makes an index signature, and no property.
+            let Some(name) = self.member_name(file, prop.key) else {
+                continue;
+            };
+            let mut ty = TypeId::UNRESOLVED;
+            if prop.value.is_some()
+                && matches!(prop.kind, PropKind::Init | PropKind::Shorthand)
+                && !self.depends_on_context(file, prop.value)
+                && !matches!(
+                    hir[prop.value].kind,
+                    ExprKind::Template { .. } | ExprKind::TaggedTemplate(_)
+                )
+                && self.nested_generic_function(file, prop.value).is_none()
+                && self.has_required_unit_property(target, name)
+            {
+                let given = self.type_of_expr(file, prop.value);
+                if self.is_known(given) && !self.is_uncertain(file, prop.value) {
+                    ty = given;
+                }
+            }
+            shape.props.retain(|x| x.name != name);
+            shape.props.push(Prop {
+                name,
+                flags: PropFlags::empty(),
+                source: PropSource::Type(ty),
+                mapper: MapperId::IDENTITY,
+            });
+        }
+        let written = close(self, shape);
+        Some(match before {
+            Some(left) => self.spread(left, written),
+            None => written,
+        })
+    }
+
+    /// Whether an object type in `target` has a property `name` that cannot be left out and is of a unit type: what
+    /// `getUnmatchedProperties` compares under `matchDiscriminantProperties`.
+    fn has_required_unit_property(&mut self, target: TypeId, name: Atom) -> bool {
+        if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(target) {
+            return parts
+                .iter()
+                .any(|&part| self.has_required_unit_property(part, name));
+        }
+        if !self.is_object_type(target) {
+            return false;
+        }
+        let Some((prop, mapper)) = self.prop_ref(target, name) else {
+            return false;
+        };
+        if prop.flags.contains(PropFlags::OPTIONAL) {
+            return false;
+        }
+        let ty = self.type_of_prop(prop, mapper);
+        self.is_unit(ty)
     }
 
     /// The same for the functions among the elements of the array literal `e`, given for `param`. `checkArrayLiteral`: an element

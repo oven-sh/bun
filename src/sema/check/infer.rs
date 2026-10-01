@@ -97,6 +97,14 @@ pub struct Inference {
     /// Without a signature, for `infer`: what has been filled in around the conditional type. What the parameters extend may
     /// mention it.
     around: MapperId,
+    /// `getPermissiveInstantiation`, `getRestrictiveInstantiation`: the signatures are parts of such instantiations, compared under
+    /// this relation. The type parameters declared around them stand in for the wildcard, or for type parameters that extend
+    /// nothing: what they are declared to extend is not resolved.
+    pub(super) stand_ins: Option<super::relate::Relation>,
+    /// The type parameters of the signature that is inferred from, which are no stand-ins.
+    pub(super) own_of_source: SmallVec<[TypeId; 4]>,
+    /// `propagationType`: the stand-in for the wildcard that is inferred for every type parameter in the target.
+    propagated: Option<TypeId>,
 }
 
 impl Inference {
@@ -138,6 +146,9 @@ impl Inference {
             any_default: false,
             around_source: MapperId::IDENTITY,
             around: MapperId::IDENTITY,
+            stand_ins: None,
+            own_of_source: SmallVec::new(),
+            propagated: None,
         }
     }
 
@@ -362,7 +373,8 @@ impl<'p> Checker<'p> {
                     n.went_by_flags = true;
                     return;
                 }
-                self.add_candidate(n, index, source, target);
+                let candidate = n.propagated.unwrap_or(source);
+                self.add_candidate(n, index, candidate, target);
                 return;
             }
             // A simpler form may show more type parameters.
@@ -381,6 +393,11 @@ impl<'p> Checker<'p> {
                     }
                 }
             }
+        }
+        // Nothing is inferred to a type parameter that is not inferred for. tsgo finds that out from `getApparentType` of a source
+        // whose type parameters extend nothing.
+        if n.stand_ins.is_some() && self.is_type_param(target) {
+            return;
         }
         match (self.data(source), self.data(target)) {
             // Two that are both put off go by way of `invokeOnce`, or it might never end.
@@ -471,6 +488,24 @@ impl<'p> Checker<'p> {
                 if self.is_generic_mapped(source) && self.is_generic_mapped(target) {
                     self.invoke_once(n, source, target, Self::infer_from_generic_mapped_types);
                 }
+                if let Some(relation) = n.stand_ins
+                    && let Some(others) = self.without_stand_ins(n, source)
+                {
+                    // `source == c.wildcardType`: it is inferred for every type parameter in `target`.
+                    if relation == super::relate::Relation::Permissive {
+                        if n.propagated.is_none() {
+                            n.propagated = Some(source);
+                            self.infer_types(n, target, target);
+                            n.propagated = None;
+                        }
+                        return;
+                    }
+                    // `getApparentType` makes `{}` of a type parameter that extends nothing.
+                    if others.is_empty() {
+                        return;
+                    }
+                    source = self.intersection(&others);
+                }
                 if !(n.priority & PRIORITY_NO_CONSTRAINTS != 0
                     && (matches!(self.data(source), TypeData::Intersection(_))
                         || self.is_instantiable(source)))
@@ -492,6 +527,18 @@ impl<'p> Checker<'p> {
                     self.invoke_once(n, source, target, Self::infer_from_object_types);
                 }
             }
+        }
+    }
+
+    /// The members of `source` that are no stand-ins (`Inference::stand_ins`), if `source` is one or is an intersection with one.
+    fn without_stand_ins(&self, n: &Inference, source: TypeId) -> Option<Parts> {
+        let is_stand_in = |p: TypeId| self.is_type_param(p) && !n.own_of_source.contains(&p);
+        match self.data(source) {
+            TypeData::Intersection(parts) if parts.iter().any(|&p| is_stand_in(p)) => {
+                Some(parts.iter().copied().filter(|&p| !is_stand_in(p)).collect())
+            }
+            _ if is_stand_in(source) => Some(Parts::new()),
+            _ => None,
         }
     }
 
@@ -1443,7 +1490,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `typesDefinitelyUnrelated`
-    fn types_definitely_unrelated(&mut self, source: TypeId, target: TypeId) -> bool {
+    pub(super) fn types_definitely_unrelated(&mut self, source: TypeId, target: TypeId) -> bool {
         if let (TypeData::Tuple { flags: s, .. }, TypeData::Tuple { flags: t, .. }) =
             (self.data(source), self.data(target))
         {
@@ -2376,6 +2423,15 @@ impl<'p> Checker<'p> {
 
     /// `getCommonSupertype`
     pub fn common_supertype(&mut self, types: &[TypeId]) -> TypeId {
+        self.common_supertype_under(types, None)
+    }
+
+    /// `getCommonSupertype`. `stand_ins`: `stand_ins_among` the types.
+    fn common_supertype_under(
+        &mut self,
+        types: &[TypeId],
+        stand_ins: Option<super::relate::Relation>,
+    ) -> TypeId {
         if types.len() == 1 {
             return types[0];
         }
@@ -2393,7 +2449,7 @@ impl<'p> Checker<'p> {
         let supertype = if self.literal_types_with_same_base_type(&primary) {
             self.union(&primary)
         } else {
-            self.single_common_supertype(&primary)
+            self.single_common_supertype(&primary, stand_ins)
         };
         if primary[..] == types[..] {
             return supertype;
@@ -2427,7 +2483,21 @@ impl<'p> Checker<'p> {
     }
 
     /// `getSingleCommonSupertype`
-    fn single_common_supertype(&mut self, types: &[TypeId]) -> TypeId {
+    fn single_common_supertype(
+        &mut self,
+        types: &[TypeId],
+        stand_ins: Option<super::relate::Relation>,
+    ) -> TypeId {
+        // Which is a subtype of which goes by what type parameters extend.
+        if let Some(relation) = stand_ins {
+            let mut candidate = types[0];
+            for &t in &types[1..] {
+                if self.related(candidate, t, relation) {
+                    candidate = t;
+                }
+            }
+            return candidate;
+        }
         let leftmost = |c: &mut Self, relation: fn(&mut Self, TypeId, TypeId) -> bool| {
             let mut candidate = types[0];
             for &t in &types[1..] {
@@ -2447,11 +2517,16 @@ impl<'p> Checker<'p> {
         leftmost(self, Self::is_subtype)
     }
 
-    /// `getCommonSubtype`: the leftmost that nothing to its right is a subtype of.
-    fn common_subtype(&mut self, types: &[TypeId]) -> TypeId {
+    /// `getCommonSubtype`: the leftmost that nothing to its right is a subtype of. `stand_ins`: `stand_ins_among` the types.
+    fn common_subtype(
+        &mut self,
+        types: &[TypeId],
+        stand_ins: Option<super::relate::Relation>,
+    ) -> TypeId {
+        let relation = stand_ins.unwrap_or(super::relate::Relation::Subtype);
         let mut best = types[0];
         for &t in &types[1..] {
-            if self.is_subtype(t, best) {
+            if self.related(t, best, relation) {
                 best = t;
             }
         }
@@ -2469,7 +2544,39 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getCovariantInference`, and what `param` extends.
+    /// `Inference::stand_ins`, if there is a type parameter in `types`.
+    fn stand_ins_among(&self, n: &Inference, types: &[TypeId]) -> Option<super::relate::Relation> {
+        n.stand_ins
+            .filter(|_| types.iter().any(|&t| self.has_type_variables(t)))
+    }
+
+    /// `getUnionType(types, UnionReductionSubtype)` where there are stand-ins. Which member is a subtype of which goes by what type
+    /// parameters extend, so `relation` decides (`Inference::stand_ins`).
+    fn union_reduced_under(
+        &mut self,
+        types: &[TypeId],
+        relation: super::relate::Relation,
+    ) -> TypeId {
+        let union = self.union(types);
+        let TypeData::Union(members) = self.data(union) else {
+            return union;
+        };
+        // `removeSubtypes` goes through the members from the last.
+        let mut kept = Parts::from_slice(members);
+        for i in (0..kept.len()).rev() {
+            let source = kept[i];
+            if (0..kept.len()).any(|j| j != i && self.related(source, kept[j], relation)) {
+                kept.remove(i);
+            }
+        }
+        if kept.len() == members.len() {
+            union
+        } else {
+            self.union(&kept)
+        }
+    }
+
+    /// `getCovariantInference`, and what `param` extends. `stand_ins`: `stand_ins_among` the candidates.
     fn covariant_inference(
         &mut self,
         c: &Candidate,
@@ -2477,6 +2584,7 @@ impl<'p> Checker<'p> {
         sig: SigId,
         is_fixed: bool,
         array_literals: &[TypeId],
+        stand_ins: Option<super::relate::Relation>,
     ) -> (TypeId, Option<TypeId>) {
         // `unionObjectAndArrayLiteralCandidates`: the object and array literals count as one, after the others.
         let mut candidates = c.covariant.clone();
@@ -2510,12 +2618,22 @@ impl<'p> Checker<'p> {
                 *t
             };
         }
-        let unwidened = if c.priority & PRIORITY_IMPLIES_COMBINATION != 0 {
-            self.union_reduced(&candidates)
+        let unwidened = if c.priority & PRIORITY_IMPLIES_COMBINATION == 0 {
+            self.common_supertype_under(&candidates, stand_ins)
+        } else if let Some(relation) = stand_ins {
+            self.union_reduced_under(&candidates, relation)
         } else {
-            self.common_supertype(&candidates)
+            self.union_reduced(&candidates)
         };
         (self.regular_object(unwidened), constraint)
+    }
+
+    /// `context.compareTypes`, and `isTypeAssignableTo` between what is inferred.
+    fn is_inferred_assignable(&mut self, n: &Inference, source: TypeId, target: TypeId) -> bool {
+        let relation = self
+            .stand_ins_among(n, &[source, target])
+            .unwrap_or(super::relate::Relation::Assignable);
+        self.related(source, target, relation)
     }
 
     /// What parameter `index` is, going by what has been seen so far. Does not settle it.
@@ -2556,8 +2674,9 @@ impl<'p> Checker<'p> {
             let covariant = if c.covariant.is_empty() {
                 None
             } else {
+                let stand_ins = self.stand_ins_among(n, &c.covariant);
                 let (covariant, constraint) =
-                    self.covariant_inference(c, param, sig, is_fixed, &n.array_literals);
+                    self.covariant_inference(c, param, sig, is_fixed, &n.array_literals, stand_ins);
                 extended = Some(constraint);
                 Some(covariant)
             };
@@ -2566,7 +2685,8 @@ impl<'p> Checker<'p> {
             } else if c.priority & PRIORITY_IMPLIES_COMBINATION != 0 {
                 Some(self.intersection(&c.contravariant))
             } else {
-                Some(self.common_subtype(&c.contravariant))
+                let stand_ins = self.stand_ins_among(n, &c.contravariant);
+                Some(self.common_subtype(&c.contravariant, stand_ins))
             };
             if covariant.is_some() || contravariant.is_some() {
                 // The covariant one, unless it is `never` or `any`, or is one of several that do not agree, or fits nowhere the
@@ -2577,14 +2697,16 @@ impl<'p> Checker<'p> {
                     (Some(co), Some(_)) => {
                         co != TypeId::NEVER
                             && !self.is_any(co)
-                            && c.contravariant.iter().any(|&t| self.is_assignable(co, t))
+                            && c.contravariant
+                                .iter()
+                                .any(|&t| self.is_inferred_assignable(n, co, t))
                             && (0..n.params.len()).all(|other| {
                                 other != index
                                     && self.constraint_of_type_param(n.params[other]) != Some(param)
                                     || n.candidates[other]
                                         .covariant
                                         .iter()
-                                        .all(|&t| self.is_assignable(t, co))
+                                        .all(|&t| self.is_inferred_assignable(n, t, co))
                             })
                     }
                 };
@@ -2629,12 +2751,12 @@ impl<'p> Checker<'p> {
         in_progress.pop();
         let constraint = self.instantiate(constraint, so_far);
         if let Some(ty) = inferred
-            && !self.is_assignable(ty, constraint)
+            && !self.is_inferred_assignable(n, ty, constraint)
             && !self.fits_through_what_is_around(n, ty, constraint)
         {
             // Going by what is expected of the result alone is a guess anyway: what of it fits will do.
             let filtered = if c.priority == PRIORITY_RETURN {
-                self.filter(ty, |k, m| k.is_assignable(m, constraint))
+                self.filter(ty, |k, m| k.is_inferred_assignable(n, m, constraint))
             } else {
                 TypeId::NEVER
             };
@@ -2643,7 +2765,7 @@ impl<'p> Checker<'p> {
         match inferred {
             Some(ty) => ty,
             None => match fallback {
-                Some(fallback) if self.is_assignable(fallback, constraint) => fallback,
+                Some(fallback) if self.is_inferred_assignable(n, fallback, constraint) => fallback,
                 _ => constraint,
             },
         }
@@ -2660,6 +2782,7 @@ impl<'p> Checker<'p> {
         if n.around_source == MapperId::IDENTITY
             || !matches!(self.data(ty), TypeData::TypeParam(..))
             || self.is_cloned_type_param(ty)
+            || n.stand_ins.is_some() && !n.own_of_source.contains(&ty)
         {
             return false;
         }
@@ -2667,7 +2790,8 @@ impl<'p> Checker<'p> {
             return false;
         };
         let extended = self.instantiate(declared, n.around_source);
-        extended != declared && (extended == constraint || self.is_assignable(extended, constraint))
+        extended != declared
+            && (extended == constraint || self.is_inferred_assignable(n, extended, constraint))
     }
 
     /// `nonFixingMapper`, for the parameters `ty` mentions.

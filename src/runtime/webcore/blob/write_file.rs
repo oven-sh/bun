@@ -112,15 +112,12 @@ pub(crate) struct WriteFile {
     pub(crate) state: AtomicU8, // ClosingState
 
     pub(crate) total_written: usize,
-    /// Bytes of the same write that were on the fd before this job got it.
-    /// See [`WriteFile::resume_from`].
+    /// Bytes of this write that the synchronous attempt wrote before the job (`resume_from`).
     pub(crate) base_written: usize,
-    /// The fd that the synchronous attempt opened, until `run` takes it. If
-    /// the job is released without a run, the fd closes with it.
+    /// The fd the synchronous attempt opened, until `run` takes it. Closes on drop if never run.
     #[cfg(not(windows))]
     pub(crate) adopted_fd: Option<sys::CloseOnDrop>,
-    /// `opened_fd` was opened without `O_TRUNC`: cut the file at the last
-    /// byte written.
+    /// `opened_fd` was opened without `O_TRUNC`: cut the file at the last byte written.
     #[cfg(not(windows))]
     pub(crate) truncate_on_finish: bool,
 
@@ -327,10 +324,7 @@ impl WriteFile {
         Ok(write_file)
     }
 
-    /// Makes this job the rest of a write whose synchronous attempt got
-    /// `EAGAIN` after `written` bytes. The job's bytes are what that attempt
-    /// did not write, and it resolves with the sum. `fd` is the fd the attempt
-    /// opened, if the destination is a path.
+    /// The rest of a write whose synchronous attempt got `EAGAIN` after `written` bytes, on `fd`.
     #[cfg(not(windows))]
     pub(crate) fn resume_from(&mut self, written: usize, fd: Option<sys::CloseOnDrop>) {
         self.base_written = written;
@@ -428,7 +422,7 @@ impl WriteFile {
         bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
 
         let close_after_io = self.close_after_io;
-        if core::mem::take(&mut self.truncate_on_finish) && self.errno.is_none() {
+        if core::mem::take(&mut self.truncate_on_finish) {
             let len = self.base_written + self.total_written;
             let _ = sys::ftruncate(self.opened_fd, i64::try_from(len).expect("int cast"));
         }
@@ -492,7 +486,7 @@ impl WriteFile {
             if !self.could_block && self.bytes_blob.shared_view().len() > 1024 {
                 let _ = sys::preallocate_file(
                     fd.native(),
-                    0,
+                    i64::try_from(self.base_written).expect("int cast"),
                     i64::try_from(self.bytes_blob.shared_view().len()).expect("int cast"),
                 ); // we don't care if it fails.
             }

@@ -4714,7 +4714,7 @@ pub(crate) fn write_file_internal(
                     };
                     match deferred {
                         None => return Ok(result),
-                        Some(Deferred::WouldBlock(resume)) => {
+                        Some(Deferred::Rest(resume)) => {
                             return write_file_after_would_block(
                                 cx,
                                 path_or_blob,
@@ -4722,7 +4722,7 @@ pub(crate) fn write_file_internal(
                                 &options,
                             );
                         }
-                        Some(Deferred::NotOpened) => {}
+                        Some(Deferred::Whole) => {}
                     }
                 }
             } else if let Some(buffer_view) = data.as_array_buffer(cx.global()) {
@@ -4754,7 +4754,7 @@ pub(crate) fn write_file_internal(
                     };
                     match deferred {
                         None => return Ok(result),
-                        Some(Deferred::WouldBlock(resume)) => {
+                        Some(Deferred::Rest(resume)) => {
                             return write_file_after_would_block(
                                 cx,
                                 path_or_blob,
@@ -4762,7 +4762,7 @@ pub(crate) fn write_file_internal(
                                 &options,
                             );
                         }
-                        Some(Deferred::NotOpened) => {}
+                        Some(Deferred::Whole) => {}
                     }
                 }
             }
@@ -5156,28 +5156,24 @@ const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 /// Why the synchronous attempt of `Bun.write` left the write to the async path.
 #[cfg(not(windows))]
 enum Deferred {
-    /// The path does not exist yet. Nothing is open and nothing was written.
-    NotOpened,
-    /// A write returned `EAGAIN`.
-    WouldBlock(Resume),
+    /// Nothing is written and nothing is open: the async path does the whole write.
+    Whole,
+    /// A write returned `EAGAIN` after some bytes: the async path does the rest.
+    Rest(Resume),
 }
 
-/// Where the synchronous attempt stopped. The async path continues from here
-/// and never sees the bytes that are already written.
+/// Where the synchronous attempt stopped. The async path gets only what is not written yet.
 #[cfg(not(windows))]
 struct Resume {
-    /// How many bytes are written.
+    /// How many bytes are written. More than 0.
     written: usize,
     /// The bytes that are not written yet.
     tail: Vec<u8>,
-    /// The fd the attempt opened, if the destination is a path. It stays open
-    /// for the rest: to a FIFO, a close would be the end of the data for its
-    /// reader.
+    /// The fd the attempt opened for a path. It stays open: a close ends a FIFO reader's data.
     fd: Option<bun_sys::CloseOnDrop>,
 }
 
-/// Schedules a [`write_file_mod::WriteFile`] for `resume.tail`. Its promise
-/// resolves with the byte count of the whole write.
+/// Schedules a `WriteFile` for `resume.tail`. Its promise resolves with the whole write's count.
 #[cfg(not(windows))]
 fn write_file_after_would_block(
     cx: &bun_jsc::JsThread<'_>,
@@ -5228,7 +5224,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *deferred = Some(Deferred::NotOpened);
+                    *deferred = Some(Deferred::Whole);
                     return JSValue::ZERO;
                 }
                 return JSPromise::rejected_promise(
@@ -5272,11 +5268,14 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                 bun_sys::Result::Err(err) => {
                     truncate.set(false);
                     if err.get_errno() == bun_sys::E::EAGAIN {
-                        *deferred = Some(Deferred::WouldBlock(Resume {
-                            written: written.get(),
-                            tail: remain.to_vec(),
-                            fd: close.take(),
-                        }));
+                        *deferred = Some(match written.get() {
+                            0 => Deferred::Whole,
+                            written => Deferred::Rest(Resume {
+                                written,
+                                tail: remain.to_vec(),
+                                fd: close.take(),
+                            }),
+                        });
                         return JSValue::ZERO;
                     }
                     let err_js = if !NEEDS_OPEN {
@@ -5317,7 +5316,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *deferred = Some(Deferred::NotOpened);
+                    *deferred = Some(Deferred::Whole);
                     return JSValue::ZERO;
                 }
                 return JSPromise::rejected_promise(
@@ -5347,11 +5346,14 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    *deferred = Some(Deferred::WouldBlock(Resume {
-                        written,
-                        tail: remain.to_vec(),
-                        fd: close.take(),
-                    }));
+                    *deferred = Some(match written {
+                        0 => Deferred::Whole,
+                        written => Deferred::Rest(Resume {
+                            written,
+                            tail: remain.to_vec(),
+                            fd: close.take(),
+                        }),
+                    });
                     return JSValue::ZERO;
                 }
                 let err_js = if !NEEDS_OPEN {

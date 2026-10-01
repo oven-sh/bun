@@ -4,7 +4,7 @@
 // the mode's result.
 //
 // argv: <mode> <fifo path> [<more paths>]
-import { closeSync, constants, openSync, readSync, writeSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readdirSync, readSync, writeSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 const { O_RDONLY, O_WRONLY, O_NONBLOCK } = constants;
@@ -65,6 +65,21 @@ async function drain(end, writes) {
 function count(buf, byte) {
   let n = 0;
   for (let i = 0; i < buf.length; i++) n += buf[i] === byte;
+  return n;
+}
+
+// How many fds of this process are open on the file that `fd` is open on.
+function fdsOn(fd) {
+  const { dev, ino } = fstatSync(fd);
+  let n = 0;
+  for (const name of readdirSync("/dev/fd")) {
+    try {
+      const stat = fstatSync(Number(name));
+      n += stat.dev === dev && stat.ino === ino;
+    } catch {
+      // The fd that listed the directory is closed by now.
+    }
+  }
   return n;
 }
 
@@ -190,6 +205,27 @@ const modes = {
     if (!rest) return { writeEnd };
     const received = Buffer.concat([...chunks, await rest]);
     return { writeEnd, write: compare(payload, received, await write, left) };
+  },
+
+  // Writes to the path of a FIFO that has no room: the first try of each one
+  // writes nothing. Both threads of the work pool are held, so none of them
+  // goes on. A write in that state may not keep a fd: a burst of them would
+  // use up the fds of the process.
+  async burst(fifo, blockerA, blockerB) {
+    const end = open(fifo);
+    const { left } = leaveRoom(end, 0);
+    const release = [await holdPoolThread(blockerA), await holdPoolThread(blockerB)];
+
+    const before = fdsOn(end.rfd);
+    const writes = Array.from({ length: 16 }, (_, i) =>
+      Bun.write(fifo, Buffer.alloc(1000, 0x61 + i)).catch(e => `${e.code}/${e.syscall}`),
+    );
+    const fdsHeld = fdsOn(end.rfd) - before;
+
+    const done = release.map(letGo => letGo());
+    const { resolved, received } = await drain(end, writes);
+    await Promise.all(done);
+    return { fdsHeld, resolved: resolved.filter(n => n === 1000).length, bytes: received.length - left };
   },
 
   // The headline case: a child whose stdout is a pipe uses process.stdout,

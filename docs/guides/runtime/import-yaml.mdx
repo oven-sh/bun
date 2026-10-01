@@ -80,7 +80,7 @@ console.log(data.hobbies); // => ["reading", "coding"]
 To add TypeScript support for your YAML imports, create a declaration file with `.d.ts` appended to the YAML filename (for example, `config.yaml` → `config.yaml.d.ts`):
 
 ```ts config.yaml.d.ts icon="/icons/typescript.svg"
-const contents: {
+declare const contents: {
   database: {
     host: string;
     port: number;

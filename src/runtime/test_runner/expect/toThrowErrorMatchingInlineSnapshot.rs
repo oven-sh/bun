@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
 
 use super::throw;
 use super::Expect;
@@ -28,14 +27,12 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
         );
     }
 
-    let mut has_expected = false;
-    let mut expected_string: ZigString = ZigString::EMPTY;
+    let mut expected_string = None;
     match arguments.len() {
         0 => {}
         1 => {
             if arguments[0].is_string() {
-                has_expected = true;
-                arguments[0].to_zig_string(&mut expected_string, global)?;
+                expected_string = Some(arguments[0].to_js_string_view(global)?);
             } else {
                 return throw!(
                     this,
@@ -55,10 +52,9 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
         }
     }
 
-    // The returned slice owns its buffer and frees on Drop.
-    let expected = expected_string.to_slice();
+    let expected = expected_string.as_ref().map(|s| s.to_utf8());
 
-    let expected_slice: Option<&[u8]> = if has_expected { Some(expected.slice()) } else { None };
+    let expected_slice = expected.as_ref().map(|s| s.slice());
 
     // reshaped for borrowck — hoist get_value out so the two &mut self
     // receivers don't overlap.

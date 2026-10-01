@@ -28,26 +28,24 @@ mod _impl {
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
-    // `mod js { write_callback_*, error_callback_*, dictionary_* }` is emitted by
+    // `mod js { write_callback_*, error_callback_*, ... }` is emitted by
     // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
 
-    /// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
-    /// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<NativeZlib>`; when the count hits
-    /// zero it invokes [`NativeZlib::deinit`].
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
-    #[ref_count(destroy = Self::deinit)]
-    pub struct NativeZlib {
+    pub(crate) struct NativeZlib {
         pub(crate) ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
-        pub loop_handle: bun_jsc::LoopHandle,
+        pub ticket: Cell<Option<bun_jsc::Ticket>>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
+        /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
+        pub pinned_buffers: Cell<u8>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
@@ -97,11 +95,12 @@ mod _impl {
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 global_this: bun_ptr::BackRef::new(global),
-                loop_handle: global.bun_vm().loop_handle(),
+                ticket: Cell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
+                pinned_buffers: Cell::new(0),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 task: JsCell::new(WorkPoolTask {
@@ -256,19 +255,12 @@ mod _impl {
             }
             Ok(JSValue::UNDEFINED)
         }
+    }
 
-        /// RefCount destroy callback. Invoked when `ref_count` reaches zero.
-        /// Not `Drop` because this is an intrusive-refcounted `m_ctx` payload whose
-        /// box is freed here.
-        fn deinit(this: *mut Self) {
-            // SAFETY: called exactly once by IntrusiveRc when refcount hits 0; `this`
-            // is the heap::alloc pointer produced at construction. `this_value`
-            // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
-            // heap::take below.
-            unsafe {
-                (*this).stream.with_mut(|s| s.close());
-                drop(bun_core::heap::take(this));
-            }
+    // `poll_ref` and `this_value` (Strong) clean up via their own Drop impls.
+    impl Drop for NativeZlib {
+        fn drop(&mut self) {
+            self.stream.with_mut(|s| s.close());
         }
     }
 
@@ -276,11 +268,11 @@ mod _impl {
     crate::__compression_stream_mixin_reexports!(NativeZlib);
 } // mod _impl
 
-pub use _impl::NativeZlib;
+pub(crate) use _impl::NativeZlib;
 
 // ─── non-JSC body (real): zlib stream Context ─────────────────────────────
 
-pub struct Context {
+pub(crate) struct Context {
     pub(crate) mode: c::NodeMode,
     pub(crate) state: c::z_stream,
     pub(crate) err: c::ReturnCode,
@@ -446,7 +438,7 @@ impl Context {
         }
     }
 
-    pub fn reset(&mut self) -> Error {
+    pub(crate) fn reset(&mut self) -> Error {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
         match self.mode {
@@ -466,7 +458,7 @@ impl Context {
         self.set_dictionary()
     }
 
-    pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
+    pub(crate) fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
         self.state.avail_in = match &in_ {
             Some(p) => u32::try_from(p.len()).expect("int cast"),
             None => 0,
@@ -485,11 +477,11 @@ impl Context {
         };
     }
 
-    pub fn flush_value_is_valid(flush: u32) -> bool {
+    pub(crate) fn flush_value_is_valid(flush: u32) -> bool {
         flush <= 6
     }
 
-    pub fn set_flush(&mut self, flush: c_int) {
+    pub(crate) fn set_flush(&mut self, flush: c_int) {
         // Checked conversion;
         // transmuting an arbitrary c_int into a Rust enum is UB.
         self.flush = match flush {
@@ -504,7 +496,7 @@ impl Context {
         };
     }
 
-    pub fn do_work(&mut self) {
+    pub(crate) fn do_work(&mut self) {
         use c::NodeMode::*;
         let mut next_expected_header_byte: Option<*const u8> = None;
 
@@ -606,12 +598,12 @@ impl Context {
         }
     }
 
-    pub fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
+    pub(crate) fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
         *avail_in = self.state.avail_in;
         *avail_out = self.state.avail_out;
     }
 
-    pub fn get_error_info(&self) -> Error {
+    pub(crate) fn get_error_info(&self) -> Error {
         match self.err {
             c::ReturnCode::Ok | c::ReturnCode::BufError => {
                 if self.state.avail_out != 0 && self.flush == c::FlushValue::Finish {
@@ -633,7 +625,7 @@ impl Context {
         Error::ok()
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         use c::NodeMode::*;
         let mut status = c::ReturnCode::Ok;
         match self.mode {

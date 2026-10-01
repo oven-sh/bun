@@ -44,17 +44,12 @@ JSPullIntoDescriptor* JSPullIntoDescriptor::create(VM& vm, Structure* structure)
 
 Structure* JSPullIntoDescriptor::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSPullIntoDescriptor::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPullIntoDescriptor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPullIntoDescriptor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPullIntoDescriptor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPullIntoDescriptor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPullIntoDescriptor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPullIntoDescriptor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPullIntoDescriptor, m_subspaceForPullIntoDescriptor));
 }
 
 } // namespace WebCore

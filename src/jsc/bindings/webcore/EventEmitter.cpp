@@ -1,4 +1,5 @@
 #include "EventEmitter.h"
+#include "BunClientData.h"
 
 #include "Event.h"
 
@@ -246,6 +247,8 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         if (!jsFunction) [[unlikely]]
             continue;
+        if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+            break;
 
         JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
         auto callData = JSC::getCallData(jsFunction);
@@ -262,7 +265,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
                 // If the event type is error, report the exception to the console.
-                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
+                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
             } else if (hasErrorListener) {
                 MarkedArgumentBuffer expcep;
                 JSValue errorValue = exception->value();
@@ -276,21 +279,6 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     }
 
     return fired;
-}
-
-Vector<Identifier> EventEmitter::eventTypes()
-{
-    if (auto* data = eventTargetData())
-        return data->eventListenerMap.eventTypes();
-    return {};
-}
-
-const SimpleEventListenerVector& EventEmitter::eventListeners(const Identifier& eventType)
-{
-    auto* data = eventTargetData();
-    auto* listenerVector = data ? data->eventListenerMap.find(eventType) : nullptr;
-    static NeverDestroyed<SimpleEventListenerVector> emptyVector;
-    return listenerVector ? *listenerVector : emptyVector.get();
 }
 
 } // namespace WebCore

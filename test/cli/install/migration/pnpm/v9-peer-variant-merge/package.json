@@ -1,0 +1,10 @@
+{
+  "name": "v9-peer-variant-merge",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "has-peer": "file:vendor/has-peer"
+  }
+}

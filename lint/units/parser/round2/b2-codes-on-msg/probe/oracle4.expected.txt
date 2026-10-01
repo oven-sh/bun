@@ -1,0 +1,21 @@
+"let a = <b c=\"d\n" [tsx]
+   tsc  @16+0 TS1002 Unterminated string literal.
+   tsgo @16+0 TS1002 Unterminated string literal.
+"let a = <b c=\"d\ne" [tsx]
+   tsc  @17+0 TS1002 Unterminated string literal.
+   tsgo @17+0 TS1002 Unterminated string literal.
+"let a = <b c='d\\" [tsx]
+   tsc  @16+0 TS1002 Unterminated string literal.
+   tsgo @16+0 TS1002 Unterminated string literal.
+"<b c=\"d" [tsx]
+   tsc  @7+0 TS1002 Unterminated string literal.
+   tsgo @7+0 TS1002 Unterminated string literal.
+"let a = <b c=\"d\n\" />;" [tsx]
+   tsc  parses
+   tsgo parses
+"let a = <b c=\"d\n" [jsx]
+   tsc  @16+0 TS1002 Unterminated string literal.
+   tsgo @16+0 TS1002 Unterminated string literal.
+"let a = <b>{\"d\n}</b>" [tsx]
+   tsc  @14+0 TS1002 Unterminated string literal.
+   tsgo @14+0 TS1002 Unterminated string literal.

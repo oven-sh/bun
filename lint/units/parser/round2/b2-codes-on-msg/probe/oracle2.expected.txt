@@ -1,0 +1,66 @@
+"let x: ( ;" [ts]
+   tsc  @9+1 TS1110 Type expected.
+   tsgo @9+1 TS1110 Type expected.
+"let x: (;" [ts]
+   tsc  @8+1 TS1110 Type expected.
+   tsgo @8+1 TS1110 Type expected.
+"let x: (a, ;" [ts]
+   tsc  @11+1 TS1138 Parameter declaration expected.
+   tsgo @11+1 TS1138 Parameter declaration expected.
+"let x: (A | ) ;" [ts]
+   tsc  @12+1 TS1110 Type expected.
+   tsgo @12+1 TS1110 Type expected.
+"let x: (A | ;" [ts]
+   tsc  @12+1 TS1110 Type expected.
+   tsgo @12+1 TS1110 Type expected.
+"let x: (a: ) ;" [ts]
+   tsc  @11+1 TS1110 Type expected. | @13+1 TS1005 '=>' expected.
+   tsgo @11+1 TS1110 Type expected. | @13+1 TS1005 '=>' expected.
+"type T = { [a + ]: b };" [ts]
+   tsc  @16+1 TS1109 Expression expected.
+   tsgo @16+1 TS1109 Expression expected.
+"type T = { [a: ]: b };" [ts]
+   tsc  @15+1 TS1110 Type expected.
+   tsgo @15+1 TS1110 Type expected.
+"type T = { [: string]: b };" [ts]
+   tsc  @12+1 TS1109 Expression expected. | @20+1 TS1005 ';' expected. | @21+1 TS1131 Property or signature expected.
+   tsgo @12+1 TS1109 Expression expected. | @20+1 TS1005 ';' expected. | @21+1 TS1131 Property or signature expected.
+"type T = { [ ]: b };" [ts]
+   tsc  parses
+   tsgo parses
+"class C implements a.b( {}" [ts]
+   tsc  @26+0 TS1005 ')' expected.
+   tsgo @26+0 TS1005 ')' expected.
+"class C implements ; {}" [ts]
+   tsc  @19+1 TS1109 Expression expected.
+   tsgo @19+1 TS1109 Expression expected.
+"interface I extends ; {}" [ts]
+   tsc  @20+1 TS1109 Expression expected.
+   tsgo @20+1 TS1109 Expression expected.
+"interface I extends A< {}" [ts]
+   tsc  @25+0 TS1005 '>' expected.
+   tsgo @25+0 TS1005 '>' expected.
+"let x: import(\"a\", { with: ; });" [ts]
+   tsc  @27+1 TS1005 '{' expected. | @29+1 TS1128 Declaration or statement expected. | @30+1 TS1128 Declaration or statement expected.
+   tsgo @27+1 TS1005 '{' expected. | @29+1 TS1128 Declaration or statement expected. | @30+1 TS1128 Declaration or statement expected.
+"let x: import(\"a\", { ; });" [ts]
+   tsc  @21+1 TS1005 'with' expected. | @23+1 TS1128 Declaration or statement expected. | @24+1 TS1128 Declaration or statement expected.
+   tsgo @21+1 TS1005 'with' expected. | @23+1 TS1128 Declaration or statement expected. | @24+1 TS1128 Declaration or statement expected.
+"let x: (A &) ;" [ts]
+   tsc  @11+1 TS1110 Type expected.
+   tsgo @11+1 TS1110 Type expected.
+"let x: (keyof ) ;" [ts]
+   tsc  @14+1 TS1110 Type expected.
+   tsgo @14+1 TS1110 Type expected.
+"let x: (a: string, ;) ;" [ts]
+   tsc  @19+1 TS1138 Parameter declaration expected. | @20+1 TS1128 Declaration or statement expected.
+   tsgo @19+1 TS1138 Parameter declaration expected. | @20+1 TS1128 Declaration or statement expected.
+"x as ( ;" [ts]
+   tsc  @7+1 TS1110 Type expected.
+   tsgo @7+1 TS1110 Type expected.
+"x as (A | ) ;" [ts]
+   tsc  @10+1 TS1110 Type expected.
+   tsgo @10+1 TS1110 Type expected.
+"let x: (\n" [ts]
+   tsc  @8+0 TS1110 Type expected. | @9+0 TS1005 ')' expected.
+   tsgo @8+0 TS1110 Type expected. | @9+0 TS1005 ')' expected.

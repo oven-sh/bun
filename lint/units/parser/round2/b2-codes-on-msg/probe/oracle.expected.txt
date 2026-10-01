@@ -1,0 +1,123 @@
+"\"abc" [ts]
+   tsc  @4+0 TS1002 Unterminated string literal.
+   tsgo @4+0 TS1002 Unterminated string literal.
+"'abc\n x" [ts]
+   tsc  @4+0 TS1002 Unterminated string literal.
+   tsgo @4+0 TS1002 Unterminated string literal.
+"`abc " [ts]
+   tsc  @5+0 TS1160 Unterminated template literal.
+   tsgo @5+0 TS1160 Unterminated template literal.
+"`abc ${x" [ts]
+   tsc  @8+0 TS1005 '}' expected.
+   tsgo @8+0 TS1005 '}' expected.
+"/* abc" [ts]
+   tsc  @6+0 TS1010 '*/' expected.
+   tsgo @6+0 TS1010 '*/' expected.
+"// c\n/* abc" [ts]
+   tsc  @11+0 TS1010 '*/' expected.
+   tsgo @11+0 TS1010 '*/' expected.
+"\u0001" [ts]
+   tsc  @0+1 TS1127 Invalid character.
+   tsgo @0+1 TS1127 Invalid character.
+"#!/usr/bin/env bun\n\"abc" [ts]
+   tsc  @23+0 TS1002 Unterminated string literal.
+   tsgo @23+0 TS1002 Unterminated string literal.
+"#!/usr/bin/env bun\n/* abc" [ts]
+   tsc  @25+0 TS1010 '*/' expected.
+   tsgo @25+0 TS1010 '*/' expected.
+"0b2" [ts]
+   tsc  @2+0 TS1177 Binary digit expected.
+   tsgo @2+0 TS1177 Binary digit expected.
+"1_" [ts]
+   tsc  @1+1 TS6188 Numeric separators are not allowed here.
+   tsgo @1+1 TS6188 Numeric separators are not allowed here.
+"'\\" [ts]
+   tsc  @2+0 TS1126 Unexpected end of text.
+   tsgo @2+0 TS1126 Unexpected end of text.
+"\\u{110000}" [ts]
+   tsc  @0+0 TS1127 Invalid character. | @1+1 TS1434 Unexpected keyword or identifier.
+   tsgo @0+1 TS1127 Invalid character. | @1+1 TS1434 Unexpected keyword or identifier.
+"\\x" [ts]
+   tsc  @0+0 TS1127 Invalid character.
+   tsgo @0+1 TS1127 Invalid character.
+"08n" [ts]
+   tsc  @0+2 TS1489 Decimals with leading zeros are not allowed. | @2+1 TS1005 ';' expected.
+   tsgo @0+2 TS1489 Decimals with leading zeros are not allowed. | @2+1 TS1005 ';' expected.
+"1e" [ts]
+   tsc  @2+0 TS1124 Digit expected.
+   tsgo @2+0 TS1124 Digit expected.
+"@" [ts]
+   tsc  @1+0 TS1109 Expression expected.
+   tsgo @1+0 TS1109 Expression expected.
+"#" [ts]
+   tsc  @0+1 TS1127 Invalid character.
+   tsgo @0+1 TS1127 Invalid character.
+"-->\n\"abc" [ts]
+   tsc  @2+1 TS1109 Expression expected. | @8+0 TS1002 Unterminated string literal.
+   tsgo @2+1 TS1109 Expression expected. | @8+0 TS1002 Unterminated string literal.
+"<!-- x\n\"abc" [ts]
+   tsc  @2+2 TS1110 Type expected. | @11+0 TS1002 Unterminated string literal.
+   tsgo @2+2 TS1110 Type expected. | @11+0 TS1002 Unterminated string literal.
+"\"abc" [js]
+   tsc  @4+0 TS1002 Unterminated string literal.
+   tsgo @4+0 TS1002 Unterminated string literal.
+"\"abc" [tsx]
+   tsc  @4+0 TS1002 Unterminated string literal.
+   tsgo @4+0 TS1002 Unterminated string literal.
+"\"abc\\\n" [ts]
+   tsc  @6+0 TS1002 Unterminated string literal.
+   tsgo @6+0 TS1002 Unterminated string literal.
+"  \"abc\r\nx" [ts]
+   tsc  @6+0 TS1002 Unterminated string literal.
+   tsgo @6+0 TS1002 Unterminated string literal.
+"'a\\\r\nb" [ts]
+   tsc  @6+0 TS1002 Unterminated string literal.
+   tsgo @6+0 TS1002 Unterminated string literal.
+"x = \"abc" [ts]
+   tsc  @8+0 TS1002 Unterminated string literal.
+   tsgo @8+0 TS1002 Unterminated string literal.
+"x = `abc" [ts]
+   tsc  @8+0 TS1160 Unterminated template literal.
+   tsgo @8+0 TS1160 Unterminated template literal.
+"x = /* abc" [ts]
+   tsc  @10+0 TS1010 '*/' expected. | @3+0 TS1109 Expression expected.
+   tsgo @10+0 TS1010 '*/' expected. | @3+0 TS1109 Expression expected.
+"let x = 1 1;" [ts]
+   tsc  @10+1 TS1005 ',' expected.
+   tsgo @10+1 TS1005 ',' expected.
+")" [ts]
+   tsc  @0+1 TS1128 Declaration or statement expected.
+   tsgo @0+1 TS1128 Declaration or statement expected.
+"default" [ts]
+   tsc  @0+7 TS1005 'export' expected.
+   tsgo @0+7 TS1005 'export' expected.
+"let x: ;" [ts]
+   tsc  @7+1 TS1110 Type expected.
+   tsgo @7+1 TS1110 Type expected.
+"x as A | () => void;" [ts]
+   tsc  @8+11 TS1385 Function type notation must be parenthesized when used in a union type.
+   tsgo @8+11 TS1385 Function type notation must be parenthesized when used in a union type.
+"import * ass x from 'y'" [ts]
+   tsc  @9+3 TS1005 'as' expected. | @13+1 TS1005 'from' expected. | @15+4 TS1005 ';' expected.
+   tsgo @9+3 TS1005 'as' expected. | @13+1 TS1005 'from' expected. | @15+4 TS1005 ';' expected.
+" \"abc" [ts]
+   tsc  @6+0 TS1002 Unterminated string literal.
+   tsgo @6+0 TS1002 Unterminated string literal.
+"﻿\"abc" [ts]
+   tsc  @7+0 TS1002 Unterminated string literal.
+   tsgo @7+0 TS1002 Unterminated string literal.
+"1a" [ts]
+   tsc  @1+1 TS1351 An identifier or keyword cannot immediately follow a numeric literal.
+   tsgo @1+1 TS1351 An identifier or keyword cannot immediately follow a numeric literal.
+"0x" [ts]
+   tsc  @1+1 TS1351 An identifier or keyword cannot immediately follow a numeric literal.
+   tsgo @2+0 TS1125 Hexadecimal digit expected.
+"'\\u{zz}'" [ts]
+   tsc  @4+0 TS1125 Hexadecimal digit expected.
+   tsgo @4+0 TS1125 Hexadecimal digit expected.
+"`\\u{zz}`" [ts]
+   tsc  @4+0 TS1125 Hexadecimal digit expected.
+   tsgo @4+0 TS1125 Hexadecimal digit expected.
+" \"abc" [ts]
+   tsc  @7+0 TS1002 Unterminated string literal.
+   tsgo @7+0 TS1002 Unterminated string literal.

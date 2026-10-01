@@ -1,0 +1,48 @@
+"'\\" [ts]
+   tsc  @2+0 TS1126 Unexpected end of text.
+   tsgo @2+0 TS1126 Unexpected end of text.
+"x = '\\" [ts]
+   tsc  @6+0 TS1126 Unexpected end of text.
+   tsgo @6+0 TS1126 Unexpected end of text.
+"`\\" [ts]
+   tsc  @2+0 TS1126 Unexpected end of text.
+   tsgo @2+0 TS1126 Unexpected end of text.
+"x = `a\\" [ts]
+   tsc  @7+0 TS1126 Unexpected end of text.
+   tsgo @7+0 TS1126 Unexpected end of text.
+"'a\\\\" [ts]
+   tsc  @4+0 TS1002 Unterminated string literal.
+   tsgo @4+0 TS1002 Unterminated string literal.
+"x = 'a\\\\" [ts]
+   tsc  @8+0 TS1002 Unterminated string literal.
+   tsgo @8+0 TS1002 Unterminated string literal.
+"\"\\\n" [ts]
+   tsc  @3+0 TS1002 Unterminated string literal.
+   tsgo @3+0 TS1002 Unterminated string literal.
+"'\\u" [ts]
+   tsc  @3+0 TS1125 Hexadecimal digit expected.
+   tsgo @3+0 TS1125 Hexadecimal digit expected.
+"'\\x" [ts]
+   tsc  @3+0 TS1125 Hexadecimal digit expected.
+   tsgo @3+0 TS1125 Hexadecimal digit expected.
+"x = 'abc\\" [ts]
+   tsc  @9+0 TS1126 Unexpected end of text.
+   tsgo @9+0 TS1126 Unexpected end of text.
+"x = \"a\\\r\n" [ts]
+   tsc  @9+0 TS1002 Unterminated string literal.
+   tsgo @9+0 TS1002 Unterminated string literal.
+"x = 'a\\\nb" [ts]
+   tsc  @9+0 TS1002 Unterminated string literal.
+   tsgo @9+0 TS1002 Unterminated string literal.
+"x = `a${b}c\\" [ts]
+   tsc  @12+0 TS1126 Unexpected end of text.
+   tsgo @12+0 TS1126 Unexpected end of text.
+"x = `a${b}c" [ts]
+   tsc  @11+0 TS1160 Unterminated template literal.
+   tsgo @11+0 TS1160 Unterminated template literal.
+"`a${" [ts]
+   tsc  @4+0 TS1109 Expression expected.
+   tsgo @4+0 TS1109 Expression expected.
+"x = '\\\\\\" [ts]
+   tsc  @8+0 TS1126 Unexpected end of text.
+   tsgo @8+0 TS1126 Unexpected end of text.

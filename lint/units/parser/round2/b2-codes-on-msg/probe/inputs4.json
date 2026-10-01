@@ -1,0 +1,30 @@
+[
+ [
+  "tsx",
+  "let a = <b c=\"d\n"
+ ],
+ [
+  "tsx",
+  "let a = <b c=\"d\ne"
+ ],
+ [
+  "tsx",
+  "let a = <b c='d\\"
+ ],
+ [
+  "tsx",
+  "<b c=\"d"
+ ],
+ [
+  "tsx",
+  "let a = <b c=\"d\n\" />;"
+ ],
+ [
+  "jsx",
+  "let a = <b c=\"d\n"
+ ],
+ [
+  "tsx",
+  "let a = <b>{\"d\n}</b>"
+ ]
+]

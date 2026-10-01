@@ -13868,3 +13868,958 @@ popLoopContext
 F
 F
 end
+== own--remove-missing-1.js
+| function top(a, b, c, d, e, f, g) { function* gn0() { for (k in 1n) { ; { let u1 = false; } return;  } `x${(e)}y`; for (let j = 0; ; 0) ; switch (({ a, d: (yield 1), [(yield 0)]: 1 })) { default: case /r/: function* gn3() { debugger;  }  }  }  }
+> initial->s4_1->final;
+>>
+> initial->s3_1->s3_3->s3_2->s3_4->s3_5->s3_2;
+> s3_3->s3_6->s3_8->s3_7->s3_8;
+> s3_5->s3_6;
+> s3_8->s3_9->s3_10->s3_12->s3_13;
+> s3_4->final;
+>>
+> initial->s2_1->final;
+>>
+> initial->s1_1->final;
+>>
+start program
+F
+start function
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+start function
+F
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForInOfRight
+F
+F
+makeForInOfBody
+F
+F
+F
+F
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeReturn
+F
+popLoopContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForUpdate
+F
+F
+makeForBody
+F
+F
+popLoopContext
+F
+pushSwitchContext [true,null]
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+makeYield
+F
+F
+F
+F
+F
+F
+makeYield
+F
+F
+F
+F
+F
+F
+makeSwitchCaseBody [true,true]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+start function
+F
+F
+F
+F
+F
+F
+end
+F-unless-reachable
+popSwitchContext
+F
+F
+F
+end
+F
+F
+end
+F
+end
+== own--remove-missing-2.js
+| function top(a, b, c, d, e, f, g) { { function* gn0() { while ((yield ({ b, d: d, [false]: 1 }))) return; for (const { k, l: m = 2 } of 0) continue;  } for (; true; i++) null;  } switch (import((g ||= 's'))) { default: case 1n: L1: while (((0 ?? 0) + [/r/, ...b])) for (; ; ) break;  }  }
+> initial->s3_1->s3_2->s3_3->s3_4->s3_5->s3_2;
+> s3_3->s3_6->s3_10->s3_7->s3_8->s3_9->s3_11->s3_7;
+> s3_10->s3_13;
+> s3_7->s3_9;
+> s3_11->s3_12->s3_7;
+> s3_11->s3_13;
+> s3_12->s3_13;
+> s3_2->final;
+> s3_4->final;
+> s3_13->final;
+> s3_2->thrown;
+>>
+> initial->s2_1->s2_2->s2_3->s2_4->s2_2;
+> s2_3->s2_5->s2_6->s2_7->s2_8->s2_10->s2_11->s2_12->s2_13->s2_14->s2_15->s2_15;
+> s2_5->s2_7;
+> s2_11->s2_13->s2_17->s2_18;
+> s2_15->s2_16->s2_11;
+>>
+> initial->s1_1->final;
+>>
+start program
+F
+start function
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+start function
+F
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+F
+F
+F
+makeYield
+F
+makeWhileBody
+F
+F
+makeReturn
+popLoopContext
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+pushForkContext
+forkBypassPath
+forkPath
+F
+F
+popForkContext
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+F
+makeForInOfBody
+F
+F
+makeContinue [null]
+popLoopContext
+F
+F
+F
+end
+pushLoopContext ["ForStatement",null]
+F
+makeForTest [true]
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+F
+F
+F
+popLoopContext
+F
+F
+pushSwitchContext [true,null]
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+F
+popChoiceContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeSwitchCaseBody [true,true]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+pushLoopContext ["WhileStatement","L1"]
+F
+makeWhileTest [null]
+F
+pushChoiceContext ["??",false]
+F
+F
+F
+makeLogicalRight
+F
+F
+popChoiceContext
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeWhileBody
+pushLoopContext ["ForStatement",null]
+F
+makeForBody
+F
+F
+makeBreak [null]
+popLoopContext
+F
+popLoopContext
+F
+F
+F-unless-reachable
+popSwitchContext
+F
+F
+F
+end
+F
+end
+== own--remove-missing-3.js
+| function top(a, b, c, d, e, f, g) { { let u0 = (-(undefined || /r/)); } for (i = `x${1}y`; true; i++) try { var a = d;  } finally { do var c = `t`; while (true); { { let u1 = 's' && this; } 0;  } while ((g => `x${1}y`)) var g = null; switch ((c?.a)?.c) { default: case f.e: debugger; case false: continue; undefined; var c; ;  }  } b?.e.c(d?.(1n))?.a; ;  }
+> initial->s3_1->final;
+>>
+> initial->s2_1->s2_2->s2_3->s2_4->s2_5->s2_7->s2_8->s2_10->s2_10;
+> s2_1->s2_3;
+> s2_5->s2_9->s2_11->s2_11;
+> s2_7->s2_9;
+> s2_10->s2_12->s2_14->s2_16->s2_18->s2_20->s2_18;
+> s2_11->s2_13->s2_15->s2_17->s2_19->s2_21->s2_19;
+> s2_12->s2_16;
+> s2_18->s2_22->s2_24->s2_26->s2_28->s2_30->s2_32->s2_36->s2_40->s2_42->s2_6->s2_4;
+> s2_13->s2_17;
+> s2_19->s2_23->s2_25->s2_27->s2_29->s2_31->s2_33->s2_37->s2_41->s2_43;
+> s2_22->s2_26->s2_30;
+> s2_42->s2_44->s2_45->s2_46->s2_47->s2_48->s2_50;
+> s2_23->s2_27->s2_31;
+> s2_44->s2_50;
+> s2_45->s2_47->s2_50;
+> s2_43->thrown;
+>>
+> initial->s1_1->final;
+>>
+start program
+F
+start function
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+F
+F
+pushChoiceContext ["||",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeLogicalRight
+F
+F
+popChoiceContext
+F
+F
+F
+F
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+makeForTest [true]
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+pushTryContext [true]
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeFinallyBlock
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+F
+F
+F
+F
+makeDoWhileTest [true]
+F
+F
+popLoopContext
+F
+F
+F
+F
+F
+F
+F
+pushChoiceContext ["&&",false]
+F
+F
+F
+makeLogicalRight
+F
+F
+popChoiceContext
+F
+F
+F
+F
+F
+F
+F
+F
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+start function
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+end
+makeWhileBody
+F
+F
+F
+F
+F
+F
+F
+F
+popLoopContext
+F
+pushSwitchContext [true,null]
+F
+pushChainContext
+F
+makeOptionalNode
+F
+pushChainContext
+F
+makeOptionalNode
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+F
+makeSwitchCaseBody [true,true]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+makeContinue [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+F
+F
+F
+F
+F-unless-reachable
+popSwitchContext
+F
+F
+popTryContext
+F
+popLoopContext
+F
+F
+pushChainContext
+F
+makeOptionalNode
+F
+F
+F
+makeOptionalNode
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+pushChainContext
+F
+makeOptionalNode
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeOptionalRight
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeOptionalRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+popChainContext
+F
+F
+F
+F
+end
+F
+end
+== own--finally-in-finally.js
+| function f() { try { a(); } finally { try { b(); } finally { try { c(); } finally { d(); } } } }
+> initial->s2_1->s2_2->s2_3->s2_5->s2_7->s2_11->s2_15;
+> s2_1->s2_4->s2_6->s2_8->s2_12->s2_16;
+> s2_2->s2_4;
+> s2_3->s2_9->s2_13->s2_17;
+> s2_5->s2_9;
+> s2_7->s2_19;
+> s2_11->s2_19;
+> s2_4->s2_10->s2_14->s2_18;
+> s2_6->s2_10;
+> s2_8->s2_20;
+> s2_12->s2_20;
+> s2_9->s2_21;
+> s2_13->s2_21;
+> s2_10->s2_22;
+> s2_14->s2_22;
+> s2_15->final;
+> s2_19->thrown;
+> s2_20->thrown;
+> s2_21->thrown;
+> s2_22->thrown;
+> s2_17->thrown;
+> s2_18->thrown;
+> s2_16->thrown;
+>>
+> initial->s1_1->final;
+>>
+start program
+F
+start function
+F
+F
+pushTryContext [true]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeFinallyBlock
+F
+pushTryContext [true]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeFinallyBlock
+F
+pushTryContext [true]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeFinallyBlock
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popTryContext
+F
+F
+popTryContext
+F
+F
+popTryContext
+F
+F
+F
+end
+F
+end
+== own--finally-leaving-paths.js
+| function f() { try { return a; } finally { try { throw b; } catch (e) { c(); } finally { while (d) { if (e) break; continue; } } } }
+> initial->s2_1->s2_2->s2_3->s2_4->s2_6->s2_8->s2_10->s2_12->s2_16->s2_20->s2_24->s2_28->s2_32->s2_36->s2_20;
+> s2_1->s2_5->s2_7->s2_9->s2_11->s2_13->s2_17->s2_21->s2_25->s2_29->s2_33->s2_37->s2_21;
+> s2_2->s2_5;
+> s2_3->s2_5;
+> s2_4->s2_10;
+> s2_6->s2_10;
+> s2_8->s2_16;
+> s2_10->s2_18->s2_22->s2_26->s2_30->s2_34->s2_38->s2_22;
+> s2_12->s2_18;
+> s2_20->s2_44;
+> s2_24->s2_36;
+> s2_28->s2_44;
+> s2_36->s2_40->s2_20;
+> s2_5->s2_11;
+> s2_7->s2_11;
+> s2_9->s2_17;
+> s2_11->s2_19->s2_23->s2_27->s2_31->s2_35->s2_39->s2_23;
+> s2_13->s2_19;
+> s2_21->s2_45;
+> s2_25->s2_37;
+> s2_29->s2_45;
+> s2_37->s2_41->s2_21;
+> s2_22->s2_46;
+> s2_26->s2_38;
+> s2_30->s2_46;
+> s2_38->s2_42->s2_22;
+> s2_23->s2_47;
+> s2_27->s2_39;
+> s2_31->s2_47;
+> s2_39->s2_43->s2_23;
+> s2_45->final;
+> s2_46->thrown;
+> s2_47->thrown;
+> s2_45->thrown;
+>>
+> initial->s1_1->final;
+>>
+start program
+F
+start function
+F
+F
+pushTryContext [true]
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeReturn
+F
+makeFinallyBlock
+F
+pushTryContext [true]
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeThrow
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeFinallyBlock
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+makeBreak [null]
+popChoiceContext
+F
+F
+F
+makeContinue [null]
+F
+popLoopContext
+F
+F
+popTryContext
+F
+F
+popTryContext
+F
+F
+F
+end
+F
+end
+== own--continue-outer-label.js
+| function f() { a: b: while (x) { continue a; } }
+> initial->s2_1->s2_2->s2_3->s2_4->s2_2->s2_5->final;
+>>
+> initial->s1_1->final;
+>>
+start program
+F
+start function
+F
+F
+pushBreakContext [false,"a"]
+F
+F
+pushLoopContext ["WhileStatement","b"]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+F
+F
+makeContinue ["a"]
+F
+popLoopContext
+F
+F
+popBreakContext
+F
+F
+F
+end
+F
+end
+== own--try-catch-return.js
+| function f() { try { return 1; } catch (e) { return 2; } finally { } g(); }
+> initial->s2_1->s2_2->s2_3->s2_5;
+> s2_1->s2_6;
+> s2_2->s2_5;
+> s2_3->s2_6->final;
+>>
+> initial->s1_1->final;
+>>
+start program
+F
+start function
+F
+F
+pushTryContext [true]
+F
+F
+F
+F
+F
+F
+makeReturn
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+F
+makeReturn
+F
+F
+makeFinallyBlock
+F
+F
+popTryContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+end
+F
+end
+== own--finally-break-continue.js
+| function f() { for (;;) { try { if (a) break; } finally { continue; } } }
+> initial->s2_1->s2_2->s2_4->s2_5->s2_6->s2_7->s2_2->s2_6;
+> s2_4->s2_11;
+> s2_6->s2_8->s2_10;
+> s2_7->s2_9->s2_2->s2_8;
+> s2_11->final;
+> s2_10->thrown;
+>>
+> initial->s1_1->final;
+>>
+start program
+F
+start function
+F
+F
+pushLoopContext ["ForStatement",null]
+F
+makeForBody
+F
+pushTryContext [true]
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+makeBreak [null]
+popChoiceContext
+F
+F
+makeFinallyBlock
+F
+F
+F
+makeContinue [null]
+F
+popTryContext
+F
+F
+popLoopContext
+F
+F
+F
+end
+F
+end

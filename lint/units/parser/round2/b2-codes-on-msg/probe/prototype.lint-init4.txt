@@ -1,0 +1,7 @@
+"let a = <b c=\"d\n" [tsx] err bun @13+0 "Syntax Error" msgs=1 | entry code=0 0..0 ""
+"let a = <b c=\"d\ne" [tsx] err bun @13+0 "Syntax Error" msgs=1 | entry code=0 0..0 ""
+"let a = <b c='d\\" [tsx] err bun @13+0 "Syntax Error" msgs=1 | entry code=0 0..0 ""
+"<b c=\"d" [tsx] err bun @5+0 "Syntax Error" msgs=1 | entry code=0 0..0 ""
+"let a = <b c=\"d\n\" />;" [tsx] ok
+"let a = <b c=\"d\n" [jsx] err bun @13+0 "Syntax Error" msgs=1 | entry code=0 0..0 ""
+"let a = <b>{\"d\n}</b>" [tsx] err bun @12+0 "Unterminated string literal" msgs=1 | entry code=1002 14..14 "Unterminated string literal."

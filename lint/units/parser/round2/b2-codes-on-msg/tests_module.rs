@@ -355,93 +355,155 @@ mod tests {
         assert_eq!(errors.entries(), &[expected][..]);
     }
 
+    /// Sources that no parse takes, with the code, the range and the text of the first diagnostic of the reference.
+    const REJECTED: [(&[u8], Loader, u32, u32, u32, &str); 19] = [
+        (b"x = a ? b", Loader::Ts, 1005, 9, 9, "':' expected."),
+        (b"f(1;", Loader::Ts, 1005, 3, 4, "')' expected."),
+        (
+            b"function (",
+            Loader::Ts,
+            1003,
+            9,
+            10,
+            "Identifier expected.",
+        ),
+        (
+            b"function class() {}",
+            Loader::Ts,
+            1359,
+            9,
+            14,
+            "Identifier expected. 'class' is a reserved word that cannot be used here.",
+        ),
+        (
+            b"x = \"abc",
+            Loader::Ts,
+            1002,
+            8,
+            8,
+            "Unterminated string literal.",
+        ),
+        (
+            b"x = `abc",
+            Loader::Ts,
+            1160,
+            8,
+            8,
+            "Unterminated template literal.",
+        ),
+        (b"let x = ;", Loader::Ts, 1109, 8, 9, "Expression expected."),
+        (b"let x = ;", Loader::Js, 1109, 8, 9, "Expression expected."),
+        (b"x = 1 +", Loader::Ts, 1109, 7, 7, "Expression expected."),
+        (b"if (x) )", Loader::Ts, 1109, 7, 8, "Expression expected."),
+        (b"in x", Loader::Ts, 1109, 0, 2, "Expression expected."),
+        (
+            b")",
+            Loader::Ts,
+            1128,
+            0,
+            1,
+            "Declaration or statement expected.",
+        ),
+        (
+            b"{ ) }",
+            Loader::Js,
+            1128,
+            2,
+            3,
+            "Declaration or statement expected.",
+        ),
+        (
+            b"function f() { default }",
+            Loader::Ts,
+            1128,
+            15,
+            22,
+            "Declaration or statement expected.",
+        ),
+        (b"default", Loader::Ts, 1005, 0, 7, "'export' expected."),
+        (b"catch (e) {}", Loader::Ts, 1005, 0, 5, "'try' expected."),
+        (b"let x: ;", Loader::Ts, 1110, 7, 8, "Type expected."),
+        (
+            b"function f(a: ) {}",
+            Loader::Ts,
+            1110,
+            14,
+            15,
+            "Type expected.",
+        ),
+        (b"let x: A<;", Loader::Ts, 1005, 9, 10, "'>' expected."),
+    ];
+
+    /// Sources whose first token fails, with the same.
+    const REJECTED_AT_FIRST_TOKEN: [(&[u8], Loader, u32, u32, u32, &str); 8] = [
+        (
+            b"\"abc",
+            Loader::Ts,
+            1002,
+            4,
+            4,
+            "Unterminated string literal.",
+        ),
+        (
+            b"\"abc",
+            Loader::Js,
+            1002,
+            4,
+            4,
+            "Unterminated string literal.",
+        ),
+        (
+            b"\"abc",
+            Loader::Tsx,
+            1002,
+            4,
+            4,
+            "Unterminated string literal.",
+        ),
+        (
+            b"'abc\n x",
+            Loader::Ts,
+            1002,
+            4,
+            4,
+            "Unterminated string literal.",
+        ),
+        (
+            b"  \"abc\r\nx",
+            Loader::Ts,
+            1002,
+            6,
+            6,
+            "Unterminated string literal.",
+        ),
+        (
+            b"`abc ",
+            Loader::Ts,
+            1160,
+            5,
+            5,
+            "Unterminated template literal.",
+        ),
+        (b"/* abc", Loader::Ts, 1010, 6, 6, "'*/' expected."),
+        (b"// c\n/* abc", Loader::Ts, 1010, 11, 11, "'*/' expected."),
+    ];
+
     #[test]
     fn a_syntax_error_of_a_lint_parse_has_the_code_of_the_reference() {
-        let cases: [(&'static [u8], Loader, u32, u32, u32, &str); 19] = [
-            (b"x = a ? b", Loader::Ts, 1005, 9, 9, "':' expected."),
-            (b"f(1;", Loader::Ts, 1005, 3, 4, "')' expected."),
-            (
-                b"function (",
-                Loader::Ts,
-                1003,
-                9,
-                10,
-                "Identifier expected.",
-            ),
-            (
-                b"function class() {}",
-                Loader::Ts,
-                1359,
-                9,
-                14,
-                "Identifier expected. 'class' is a reserved word that cannot be used here.",
-            ),
-            (
-                b"x = \"abc",
-                Loader::Ts,
-                1002,
-                8,
-                8,
-                "Unterminated string literal.",
-            ),
-            (
-                b"x = `abc",
-                Loader::Ts,
-                1160,
-                8,
-                8,
-                "Unterminated template literal.",
-            ),
-            (b"let x = ;", Loader::Ts, 1109, 8, 9, "Expression expected."),
-            (b"let x = ;", Loader::Js, 1109, 8, 9, "Expression expected."),
-            (b"x = 1 +", Loader::Ts, 1109, 7, 7, "Expression expected."),
-            (b"if (x) )", Loader::Ts, 1109, 7, 8, "Expression expected."),
-            (b"in x", Loader::Ts, 1109, 0, 2, "Expression expected."),
-            (
-                b")",
-                Loader::Ts,
-                1128,
-                0,
-                1,
-                "Declaration or statement expected.",
-            ),
-            (
-                b"{ ) }",
-                Loader::Js,
-                1128,
-                2,
-                3,
-                "Declaration or statement expected.",
-            ),
-            (
-                b"function f() { default }",
-                Loader::Ts,
-                1128,
-                15,
-                22,
-                "Declaration or statement expected.",
-            ),
-            (b"default", Loader::Ts, 1005, 0, 7, "'export' expected."),
-            (b"catch (e) {}", Loader::Ts, 1005, 0, 5, "'try' expected."),
-            (b"let x: ;", Loader::Ts, 1110, 7, 8, "Type expected."),
-            (
-                b"function f(a: ) {}",
-                Loader::Ts,
-                1110,
-                14,
-                15,
-                "Type expected.",
-            ),
-            (b"let x: A<;", Loader::Ts, 1005, 9, 10, "'>' expected."),
-        ];
-        for (text, loader, code, start, end, message) in cases {
+        for (text, loader, code, start, end, message) in REJECTED {
             assert_eq!(
                 first_error(path_of(loader), text, loader),
                 Some((code, start, end, message.as_bytes().to_vec())),
                 "{}",
                 bstr::BStr::new(text)
             );
-            // The same source without lint is an error too, and none of its messages has a code.
+        }
+    }
+
+    #[test]
+    fn a_parse_without_lint_gives_no_message_a_code() {
+        for (text, loader, ..) in REJECTED.into_iter().chain(REJECTED_AT_FIRST_TOKEN) {
+            // The source is an error without lint too.
             let (codes, count) = codes_without_lint(text, loader);
             assert!(count > 0, "{}", bstr::BStr::new(text));
             assert!(
@@ -474,66 +536,14 @@ mod tests {
 
     #[test]
     fn an_error_in_the_first_token_has_the_code_of_the_reference() {
-        let cases: [(&'static [u8], Loader, u32, u32, u32, &str); 8] = [
-            (
-                b"\"abc",
-                Loader::Ts,
-                1002,
-                4,
-                4,
-                "Unterminated string literal.",
-            ),
-            (
-                b"\"abc",
-                Loader::Js,
-                1002,
-                4,
-                4,
-                "Unterminated string literal.",
-            ),
-            (
-                b"\"abc",
-                Loader::Tsx,
-                1002,
-                4,
-                4,
-                "Unterminated string literal.",
-            ),
-            (
-                b"'abc\n x",
-                Loader::Ts,
-                1002,
-                4,
-                4,
-                "Unterminated string literal.",
-            ),
-            (
-                b"  \"abc\r\nx",
-                Loader::Ts,
-                1002,
-                6,
-                6,
-                "Unterminated string literal.",
-            ),
-            (
-                b"`abc ",
-                Loader::Ts,
-                1160,
-                5,
-                5,
-                "Unterminated template literal.",
-            ),
-            (b"/* abc", Loader::Ts, 1010, 6, 6, "'*/' expected."),
-            (b"// c\n/* abc", Loader::Ts, 1010, 11, 11, "'*/' expected."),
-        ];
-        for (text, loader, code, start, end, message) in cases {
+        for (text, loader, code, start, end, message) in REJECTED_AT_FIRST_TOKEN {
             assert_eq!(
                 first_error(path_of(loader), text, loader),
                 Some((code, start, end, message.as_bytes().to_vec())),
                 "{}",
                 bstr::BStr::new(text)
             );
-            // The token fails in `Parser::init` too, which gives no code.
+            // The token fails in `Parser::init` too, which gives no code, and `Parser::init_for_lint` gives it without a table.
             assert_eq!(
                 codes_of_first_token(text, loader, false),
                 Some(vec![None]),
@@ -546,8 +556,6 @@ mod tests {
                 "{}",
                 bstr::BStr::new(text)
             );
-            let (codes, count) = codes_without_lint(text, loader);
-            assert_eq!((codes, count), (vec![None], 1), "{}", bstr::BStr::new(text));
         }
     }
 
@@ -623,6 +631,8 @@ mod tests {
         // One error for one place, as the lexer has it.
         assert!(p.lint_error(range(2, 1), TYPE_EXPECTED, b""));
         assert!(p.lint_error(range(0, 1), TYPE_EXPECTED, b""));
+        // A range without a place is logged without one.
+        assert!(p.lint_error(Range::NONE, EXPRESSION_EXPECTED, b""));
         let found: Vec<(Option<u32>, Vec<u8>, usize, usize)> = p
             .log()
             .msgs
@@ -643,9 +653,10 @@ mod tests {
             [
                 (Some(1005), b"';' expected.".to_vec(), 2, 1),
                 (Some(1110), b"Type expected.".to_vec(), 0, 1),
+                (Some(1109), b"Expression expected.".to_vec(), 0, 0),
             ]
         );
-        assert_eq!(p.log().errors, 2);
+        assert_eq!(p.log().errors, 3);
         // SAFETY: the slot holds the parser that `init` made, and nothing reads it after this.
         unsafe { slot.assume_init_drop() };
     }

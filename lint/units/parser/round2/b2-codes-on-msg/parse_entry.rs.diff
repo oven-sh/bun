@@ -1,0 +1,75 @@
+--- /workspace/wt/parser/src/js_parser/parse/parse_entry.rs	2026-10-01 04:32:05.515914443 +0000
++++ src/js_parser/parse/parse_entry.rs	2026-10-01 13:22:51.793516746 +0000
+@@ -448,6 +448,54 @@
+             orig_error_count,
+         })
+     }
++
++    /// `init` for a lint parse: the comments before the first token are kept, and a first token that fails has the code of the reference.
++    #[cold]
++    pub fn init_for_lint(
++        options: Options<'a>,
++        log: &mut bun_ast::Log,
++        source: &'a bun_ast::Source,
++        define: &'a Define,
++        bump: &'a Arena,
++    ) -> Result<Parser<'a>, Error> {
++        let mut errors = SyntaxErrors::default();
++        Self::init_for_lint_with_codes(options, log, source, define, bump, &mut errors)
++    }
++
++    /// `init_for_lint`. Where the first token fails, `errors` gets the range and the text of the reference for the messages that it logged.
++    #[cold]
++    pub fn init_for_lint_with_codes(
++        options: Options<'a>,
++        log: &mut bun_ast::Log,
++        source: &'a bun_ast::Source,
++        define: &'a Define,
++        bump: &'a Arena,
++        errors: &mut SyntaxErrors,
++    ) -> Result<Parser<'a>, Error> {
++        source.check_parseable_len(log, "File")?;
++        let orig_error_count = log.errors;
++        let first = log.msgs.len();
++        let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
++        // Set before the first token is read: the comments in front of it are kept.
++        lexer.track_comments = true;
++        lexer.track_react_suppressions = options.features.react_compiler.is_enabled();
++        lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
++        lexer.step();
++        if let Err(err) = lexer.next() {
++            *errors = SyntaxErrors::of_first_token(lexer.log(), first, source.contents());
++            return Err(err.into());
++        }
++        let log_ptr = lexer.log;
++        Ok(Parser {
++            options,
++            bump,
++            lexer,
++            define,
++            source,
++            log: log_ptr,
++            orig_error_count,
++        })
++    }
+ }
+ 
+ // ── live `Parser::parse` / `Parser::scan_imports` symbols ────────────────
+@@ -529,7 +577,7 @@
+         self.parse_for_lint_with_codes(&mut SyntaxErrors::default(), f)
+     }
+ 
+-    /// `parse_for_lint`. Where the parse fails, `errors` gets what the reference reports for the messages that it logged.
++    /// `parse_for_lint`. Where the parse fails, its messages have their codes either way, and `errors` gets the range and the text of the reference for each.
+     #[cold]
+     pub fn parse_for_lint_with_codes<R>(
+         self,
+@@ -599,7 +647,7 @@
+         let stmts = match parsed {
+             Ok(stmts) => stmts,
+             Err(err) => {
+-                // The codes of the reference for what the parse logged go to the caller.
++                // The messages get the codes of the reference, and the caller its ranges and texts.
+                 p.finish_syntax_errors(errors);
+                 return Err(err);
+             }

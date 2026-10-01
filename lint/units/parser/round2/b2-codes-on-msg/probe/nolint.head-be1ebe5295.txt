@@ -1,0 +1,30 @@
+"x = a ? b" [ts] @9+0 Expected ":" but found end of file
+"f(1;" [ts] @3+1 Expected ")" but found ";"
+"function (" [ts] @9+1 Expected identifier but found "(" | @10+0 Expected "(" but found end of file
+"function class() {}" [ts] @9+5 Expected identifier but found "class"
+"x = \"abc" [ts] @4+0 Unterminated string literal
+"x = `abc" [ts] @4+0 Unterminated string literal
+"let x = ;" [ts] @8+1 Unexpected ;
+"let x = ;" [js] @8+1 Unexpected ;
+"x = 1 +" [ts] @7+0 Unexpected end of file
+"if (x) )" [ts] @7+1 Unexpected )
+"in x" [ts] @0+2 Unexpected in
+")" [ts] @0+1 Unexpected )
+"{ ) }" [js] @2+1 Unexpected )
+"function f() { default }" [ts] @15+7 Unexpected default
+"default" [ts] @0+7 Unexpected default
+"catch (e) {}" [ts] @0+5 Unexpected catch
+"let x: ;" [ts] @7+1 Unexpected ;
+"function f(a: ) {}" [ts] @14+1 Unexpected )
+"let x: A<;" [ts] @9+1 Unexpected ;
+"\"abc" [ts] @0+0 Unterminated string literal
+"'abc\n x" [ts] @0+0 Unterminated string literal
+"`abc " [ts] @0+0 Unterminated string literal
+"/* abc" [ts] @6+0 Expected "*/" to terminate multi-line comment
+"// c\n/* abc" [ts] @11+0 Expected "*/" to terminate multi-line comment
+"\"abc" [js] @0+0 Unterminated string literal
+"\"abc" [tsx] @0+0 Unterminated string literal
+"  \"abc\r\nx" [ts] @2+0 Unterminated string literal
+"let x: ( ;" [ts] @9+1 Unexpected ;
+"type T = { [: string]: b };" [ts] @12+1 Unexpected :
+1.4.3 be1ebe529527481e0a74cbfdb4f8d6a28f3be4eb

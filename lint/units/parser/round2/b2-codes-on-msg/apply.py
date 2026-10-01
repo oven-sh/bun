@@ -511,8 +511,8 @@ fn end_of_unterminated_string(source: &[u8], start: usize, is_template: bool) ->
         if !self.is_lint_parse() {
             return false;
         }
-        // As the lexer: one error for one place.
-        if self.lexer.prev_error_loc.eql(range.loc) {
+        // As the lexer: one error for one place. A range without a place is none.
+        if range.loc.start >= 0 && self.lexer.prev_error_loc.eql(range.loc) {
             return true;
         }
         self.log().add_range_error_with_code(

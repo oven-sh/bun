@@ -1,0 +1,33 @@
+a1-differential, top-down. Round 2, part A1. Files of the research run of 2026-10-01 18:25 to 19:40 UTC.
+Binaries: base = measure/parser/base/bun (e3566be889, sha256 31248200...), head = measure/parser/head/bun (be1ebe5295, sha256 7e1111b4...).
+typescript 6.0.2 from /workspace/wt/parser/node_modules. Scratch was /tmp/a1td (volatile): gd/ = grammar-diff/ with
+grammar-diff-oracle-and-causes/for-grammar-diff/ copied over it, probes -> ../probes.
+
+run.sh                 the whole A1 pipeline under the lock: harvest check, gen targeted, harness base and head on testrows,
+                       targeted (3,952 sources, with file 09) and small (209,628), oracle, diff
+run2.sh                the same harness with seven other configurations (blind-spots/harness.extra-apis.mjs)
+runs/run.log           what run.sh printed (times, revisions, counts)
+runs/diff.*.txt        the tables of diff.mjs (causes.mjs of for-grammar-diff) for small, targeted, testrows
+runs/table.be1ebe5295.tsv   the same tables, one line per row
+runs/decompose.*.txt   every record with the mark !! or ??, by the site that takes it back or the witness that explains it
+runs/restore-forms.*.txt    the distinct forms of those records, with contexts, first message of the base, codes of tsc
+runs/heritage-forms.small.txt   the forms that are restored in a heritage context, by what the same form is as a type alias
+runs/rr-families.*.txt the R>R records by how the error list changed
+runs/SHA256SUMS.runs.txt    sha256 of the run files that stayed in /tmp/a1td/runs
+
+tools/                 forms.mjs, heritage.mjs, rr.mjs, decompose.mjs, table.mjs read a diff.jsonl;
+                       probe.sh <sources.txt> [apis] runs side.mjs with base and head and merge.mjs with tsc;
+                       summarize.mjs <probe.out> [api] groups a probe by base>head and validity for tsc; collect.mjs joins probes
+probes/t1..t16.txt     probe inputs, one source per line (U+23CE is a line break); .out is what probe.sh printed
+                       t2 parameter modifiers, t3 parameters of signatures, t4 tuple elements, t5 type members,
+                       t6 heritage entries, t7 instantiation expressions, t8 reserved words as type names by context,
+                       t9 extends as a list element, t10 class members (four configurations), t11 metadata of conditional types,
+                       t12 and witness.pairs.txt witnesses, t14 type parameter lists, t15 cast of an arrow function,
+                       t16 function types without a return type
+probes/restore.plain.txt    393 sources: base rejects, head accepts, tsc rejects (loader ts, default options)
+probes/restore.exp.txt      30 sources: the same with experimentalDecorators
+probes/valid.plain.txt      153 sources: base rejects, head accepts, tsc as a whole reports nothing
+probes/witness.pairs.txt    24 pairs (source, witness), checked in witness.out
+
+blind-spots/           harness.extra-apis.mjs (loader js and jsx, minify.identifiers, minify: true, scan and scanImports of js),
+                       corpus.comments.json (122 sources with a comment inside a construct), diff.*.txt of the three small corpora

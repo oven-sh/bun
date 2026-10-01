@@ -257,6 +257,11 @@ fn level(token: &Token) -> i32 {
     }
 }
 
+/// The last statement of a clause that has a place: `Stmt::empty()` of a `;` has none.
+fn placed_tail(case: &bun_ast::Case) -> Option<u32> {
+    case.body.slice().iter().rev().find_map(|stmt| u32::try_from(stmt.loc.start).ok())
+}
+
 /// The text of the last comment in `text[at..end]`, which holds blanks and comments only: where it starts and ends, without `//`, `/*` and `*/`.
 fn last_comment_in(text: &[u8], mut at: usize, end: usize) -> Option<(usize, usize)> {
     let mut last = None;
@@ -268,6 +273,15 @@ fn last_comment_in(text: &[u8], mut at: usize, end: usize) -> Option<(usize, usi
                     stop += 1;
                 }
                 last = Some((at + 2, stop));
+                at = stop;
+            }
+            // The lexer reads `-->` after a line break as a comment up to the end of the line, and so does ESLint's parser in a script.
+            Some([b'-', b'-', b'>', ..]) => {
+                let mut stop = at + 3;
+                while stop < end && !matches!(text.get(stop..), Some([b'\n' | b'\r', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..])) {
+                    stop += 1;
+                }
+                last = Some((at + 3, stop));
                 at = stop;
             }
             Some([b'/', b'*', ..]) => {
@@ -1271,9 +1285,14 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
                     })
                 } else {
                     let before = &cases[index - 1];
-                    match before.body.slice().last() {
-                        Some(last) => u32::try_from(last.loc.start).ok().and_then(|from| self.next_clause(from, false)),
-                        None => after_colon,
+                    if before.body.slice().is_empty() {
+                        after_colon
+                    } else {
+                        // A `;` is a statement without a place: the read starts at the last statement that has one, else at the clause itself.
+                        match placed_tail(before) {
+                            Some(from) => self.next_clause(from, false),
+                            None => u32::try_from(starts[index - 1]).ok().and_then(|from| self.next_clause(from, true)),
+                        }
                     }
                 };
                 after_colon = None;
@@ -1310,10 +1329,7 @@ impl<'ast> Visitor<'ast> for Walk<'_, 'ast> {
                             }
                         }
                     }
-                    let from = match body.last() {
-                        Some(last) => last.loc.start,
-                        None => starts[index - 1],
-                    };
+                    let from = placed_tail(before).map_or(starts[index - 1], |from| from as i32);
                     if let Ok(from) = u32::try_from(from) {
                         before_clause = self.comment_before(from, starts[index] as u32);
                     }

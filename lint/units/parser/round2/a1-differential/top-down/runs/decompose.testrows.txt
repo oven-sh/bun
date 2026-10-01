@@ -1,0 +1,11 @@
+    30 records    2 sources  D1 a line break before with of an export: ECMAScript allows, tsc rejects (ruling)
+          e.g. "export { a } from \"x\"\nwith { type: \"json\" };"
+   100 records   10 sources  D3 A>A that is no metadata: a declaration named as (output equals the emit of tsc) (ruling)
+          e.g. "namespace as {}"
+    15 records    1 sources  W2 witness: with statement after an import on the next line
+          e.g. "import A from \"x\"\nwith { type: \"json\" };\nimport B from \"y\"\nwith (A) {}"
+    30 records    2 sources  W3 witness: type as any after type as = 1
+          e.g. "type as = 1\ntype as any"
+    15 records    1 sources  W4 witness: import type with attributes on one line (TS2857)
+          e.g. "import type A from \"x\"\nwith { type: \"json\" };"
+190 records

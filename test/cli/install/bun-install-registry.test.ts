@@ -9717,6 +9717,26 @@ describe("outdated", () => {
     // The catalog grouping should show which workspaces use it
     expect(out).toMatch(/catalog.*workspace-a.*workspace-b|workspace-b.*workspace-a/);
   });
+
+  // The latest prereleases-5 is 1.0.0-rc.10 and the current one is 1.0.0-rc.1.
+  // No byte inside "rc.1" differs, so the diff has to turn red at the appended
+  // "0" rather than print the whole version dim.
+  test("colored latest version highlights a prerelease tag that only grows", async () => {
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "prereleases-5": "1.0.0-rc.1" } }));
+    await runBunInstall(env, packageDir);
+
+    const out = await runBunOutdated({ ...env, FORCE_COLOR: "1" }, packageDir);
+    const row = out.split("\n").find(line => line.includes("prereleases-5"))!;
+    const cells = row.split("│").map(cell => cell.trim());
+    expect(cells).toEqual([
+      "",
+      "prereleases-5\x1b[2m\x1b[0m",
+      "1.0.0-rc.1",
+      "\x1b[2m1.0.0-rc.1\x1b[0m",
+      "\x1b[2m1.0.0-rc.1\x1b[0m\x1b[1m\x1b[31m0\x1b[0m",
+      "",
+    ]);
+  });
 });
 
 // TODO: setup registry to run across multiple test files, then move this and a few other describe

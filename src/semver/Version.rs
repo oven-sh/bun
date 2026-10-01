@@ -799,7 +799,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
 
                 let mut first = true;
                 for (i, &c) in pre.iter().enumerate() {
-                    if !set_color && i < other_pre.len() && c != other_pre[i] {
+                    if !set_color && other_pre.get(i) != Some(&c) {
                         set_color = true;
                         writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                     }
@@ -826,7 +826,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
 
                 let mut first = true;
                 for (i, &c) in build.iter().enumerate() {
-                    if !set_color && i < other_build.len() && c != other_build[i] {
+                    if !set_color && other_build.get(i) != Some(&c) {
                         set_color = true;
                         writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                     }

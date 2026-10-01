@@ -525,7 +525,6 @@ fn main() {
                     .unwrap_or(0),
                 lib_dir: lib_dir.as_deref(),
                 global_node_modules: None,
-                thread_start: &bun_sema_standalone::native::set_stack_size,
                 file_time_limit: std::time::Duration::from_secs(10),
                 loaded: args
                     .iter()

@@ -139,8 +139,6 @@ fn run(cwd: &str, project: Option<&str>, paths: &[String], threads: usize) -> Re
         threads,
         lib_dir: None,
         global_node_modules: global.as_deref(),
-        // The parser asks how much stack the thread has.
-        thread_start: &|_| Output::Source::configure_named_thread(bun_core::zstr!("Check")),
         file_time_limit: core::time::Duration::from_secs(10),
         loaded: None,
     })

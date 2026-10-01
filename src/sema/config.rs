@@ -1177,7 +1177,37 @@ fn match_files(
         visited: Default::default(),
         results: (0..buckets).map(|_| Vec::new()).collect(),
     };
-    for base in base_paths(&path, includes, case_sensitive) {
+    let bases = base_paths(&path, includes, case_sensitive);
+    // The walk goes through the directories one after the other, in the order that decides the order of the files. A host that remembers what
+    // it is asked has been asked everything by then, about many directories at once.
+    let mut level: Vec<String> = bases.clone();
+    let mut asked: crate::util::FxHashSet<String> = Default::default();
+    while !level.is_empty() {
+        let found: Vec<std::sync::Mutex<Vec<String>>> =
+            level.iter().map(|_| Default::default()).collect();
+        host.parallel(level.len(), &|i| {
+            let path = &level[i];
+            host.realpath(path);
+            let prefix = if path.ends_with('/') {
+                path.clone()
+            } else {
+                format!("{path}/")
+            };
+            *found[i].lock().unwrap() = host
+                .entries(path)
+                .1
+                .into_iter()
+                .filter(|directory| visitor.directories.matches_directory(&prefix, directory))
+                .map(|directory| format!("{prefix}{directory}"))
+                .collect();
+        });
+        level = found
+            .into_iter()
+            .flat_map(|found| found.into_inner().unwrap())
+            .filter(|path| asked.insert(host.realpath(path)))
+            .collect();
+    }
+    for base in bases {
         visitor.visit(&base);
     }
     visitor.results.into_iter().flatten().collect()

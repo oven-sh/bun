@@ -503,7 +503,7 @@ pub struct ShardedMap<K, V> {
     shards: Box<[MapShard<K, V>]>,
 }
 
-impl<K: std::hash::Hash + Eq, V: Clone> Default for ShardedMap<K, V> {
+impl<K: std::hash::Hash + Eq, V> Default for ShardedMap<K, V> {
     fn default() -> Self {
         ShardedMap {
             shards: (0..MAP_SHARDS)
@@ -513,6 +513,42 @@ impl<K: std::hash::Hash + Eq, V: Clone> Default for ShardedMap<K, V> {
                 })
                 .collect(),
         }
+    }
+}
+
+impl<K: std::hash::Hash + Eq, V> ShardedMap<K, V> {
+    /// What is kept never moves.
+    #[inline]
+    pub fn get_ref<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: std::hash::Hash + Eq + ?Sized,
+    {
+        let spread = spread_hash(key);
+        let shard = &self.shards[shard_of(spread)];
+        shard
+            .places
+            .find(spread, |i| shard.entries.get(i).0.borrow() == key)
+            .map(|i| &shard.entries.get(i).1)
+    }
+
+    /// Keeps what is there already, and returns what is kept.
+    pub fn insert_ref(&self, key: K, value: V) -> &V {
+        let spread = spread_hash(&key);
+        let shard = &self.shards[shard_of(spread)];
+        let entry = std::cell::RefCell::new(Some((key, value)));
+        let index = shard.places.find_or_add(
+            spread,
+            |i| {
+                entry
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|e| shard.entries.get(i).0 == e.0)
+            },
+            || shard.entries.push(entry.borrow_mut().take().unwrap()),
+            |i| spread_hash(&shard.entries.get(i).0),
+        );
+        &shard.entries.get(index).1
     }
 }
 

@@ -18,34 +18,41 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-/// The checker recurses as deep as the types it is given. The memory is only touched as far as it is used.
-pub const STACK: usize = 256 << 20;
+/// How much of the stack of a thread of the pool the checker lets itself use. What takes more is answered "unknown". The deepest any file of
+/// a project of 45,000 goes is a quarter of a megabyte.
+pub const STACK: usize = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize * 3 / 4;
 
-/// Runs `work(i)` for every `i` below `count`, on `threads` threads with room to recurse. `thread_start` is told how much stack each has.
-pub fn for_each_parallel(
+/// Runs `work(i)` for every `i` below `count` on the threads everything else in Bun runs on, no more than `threads` of them at a time. They take
+/// the numbers in order, each the next one when it is done with the last.
+pub fn for_each_parallel(threads: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
+    for_each_parallel_in_runs(threads, count, 1, work);
+}
+
+/// The same, each thread taking `run` numbers in a row at a time.
+pub fn for_each_parallel_in_runs(
     threads: usize,
     count: usize,
-    thread_start: &(dyn Fn(usize) + Sync),
+    run: usize,
     work: &(dyn Fn(usize) + Sync),
 ) {
+    if count == 0 {
+        return;
+    }
     let next = AtomicUsize::new(0);
-    std::thread::scope(|scope| {
-        for _ in 0..threads.clamp(1, count.max(1)) {
-            std::thread::Builder::new()
-                .stack_size(STACK)
-                .spawn_scoped(scope, || {
-                    thread_start(STACK - (1 << 20));
-                    loop {
-                        let i = next.fetch_add(1, Ordering::Relaxed);
-                        if i >= count {
-                            break;
-                        }
-                        work(i);
-                    }
-                })
-                .expect("spawn a thread");
-        }
-    });
+    let mut runners = vec![(); threads.clamp(1, count.div_ceil(run))];
+    bun_threading::WorkPool::get().each(
+        (),
+        |(), (), _| loop {
+            let from = next.fetch_add(run, Ordering::Relaxed);
+            if from >= count {
+                break;
+            }
+            for i in from..(from + run).min(count) {
+                work(i);
+            }
+        },
+        &mut runners,
+    );
 }
 
 pub struct Request<'a> {
@@ -61,8 +68,6 @@ pub struct Request<'a> {
     pub lib_dir: Option<&'a str>,
     /// The `node_modules` of what is installed globally, where they are looked for last.
     pub global_node_modules: Option<&'a str>,
-    /// Called on every thread that is started, with the size of its stack.
-    pub thread_start: &'a (dyn Fn(usize) + Sync),
     /// How long a single file may take. One that takes longer has run into a bug, and nothing is said about it but that.
     pub file_time_limit: Duration,
     /// Called with everything that was loaded, before any of it is checked.
@@ -226,7 +231,7 @@ pub fn check(request: &Request) -> Report {
         0 => std::thread::available_parallelism().map_or(4, usize::from),
         n => n,
     };
-    let disk = host::Disk::new(threads, request.thread_start);
+    let disk = host::Disk::new(threads);
     let cwd = host::from_native(request.cwd);
     let mut report = Report::default();
 
@@ -361,11 +366,11 @@ pub fn check(request: &Request) -> Report {
     report.files_checked = to_check.len();
     let found: Mutex<Vec<Diagnostic>> = Mutex::new(Vec::new());
     let gave_up: Mutex<Vec<String>> = Mutex::new(Vec::new());
-    for_each_parallel(threads, to_check.len(), request.thread_start, &|i| {
+    for_each_parallel(threads, to_check.len(), &|i| {
         let file = to_check[i];
         let module = &program.files.modules[file.idx()];
         let mut checker = program.checker();
-        checker.set_stack_limit(STACK - (64 << 20));
+        checker.set_stack_limit(STACK);
         checker.set_time_limit(request.file_time_limit);
         let errors = checker.check_file_explained(file);
         if checker.timed_out() {

@@ -1,7 +1,6 @@
 //! Interned names. One table for the whole program, filled from every parser thread.
 
-use crate::util::{AppendVec, FxHashMap, fx_hash};
-use std::sync::RwLock;
+use crate::util::{AppendVec, GrowingPlaces, SHARDS, shard_of, spread_hash};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Atom(pub u32);
@@ -24,11 +23,8 @@ impl std::fmt::Debug for Atom {
     }
 }
 
-const SHARDS: usize = 32;
-
 pub struct Interner {
-    shards: [RwLock<FxHashMap<&'static [u8], Atom>>; SHARDS],
-    /// Owns the bytes the shards' keys point at.
+    shards: Box<[GrowingPlaces]>,
     texts: AppendVec<Box<[u8]>>,
 }
 
@@ -178,7 +174,7 @@ impl Default for Interner {
 impl Interner {
     pub fn new() -> Self {
         let this = Interner {
-            shards: std::array::from_fn(|_| RwLock::new(FxHashMap::default())),
+            shards: (0..SHARDS).map(|_| GrowingPlaces::default()).collect(),
             texts: AppendVec::new(),
         };
         for (i, text) in known::TEXTS.iter().enumerate() {
@@ -194,19 +190,17 @@ impl Interner {
     }
 
     pub fn intern(&self, text: &[u8]) -> Atom {
-        let shard = &self.shards[(fx_hash(text) >> 57) as usize % SHARDS];
-        if let Some(&atom) = shard.read().unwrap().get(text) {
-            return atom;
+        let spread = spread_hash(text);
+        let shard = &self.shards[shard_of(spread)];
+        if let Some(atom) = shard.find(spread, |i| &**self.texts.get(i) == text) {
+            return Atom(atom);
         }
-        let mut map = shard.write().unwrap();
-        if let Some(&atom) = map.get(text) {
-            return atom;
-        }
-        let atom = Atom(self.texts.push(Box::from(text)));
-        // SAFETY: the box is owned by `texts`, which never moves or drops an element before `self` goes.
-        let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(&**self.texts.get(atom.0)) };
-        map.insert(key, atom);
-        atom
+        Atom(shard.find_or_add(
+            spread,
+            |i| &**self.texts.get(i) == text,
+            || self.texts.push(Box::from(text)),
+            |i| spread_hash(&**self.texts.get(i)),
+        ))
     }
 
     #[inline]
@@ -216,8 +210,10 @@ impl Interner {
 
     /// The atom of `text`, if anything interned it.
     pub fn lookup(&self, text: &[u8]) -> Option<Atom> {
-        let shard = &self.shards[(fx_hash(text) >> 57) as usize % SHARDS];
-        shard.read().unwrap().get(text).copied()
+        let spread = spread_hash(text);
+        self.shards[shard_of(spread)]
+            .find(spread, |i| &**self.texts.get(i) == text)
+            .map(Atom)
     }
 
     #[inline]

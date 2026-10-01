@@ -525,6 +525,26 @@ thread_local! {
     static STACK_LIMIT: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
 }
 
+/// Called by a thread of the pool when it starts, near the top of its stack.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__StackCheck__initialize() {
+    set_stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize - (256 << 10));
+}
+#[unsafe(no_mangle)]
+extern "C" fn WTF__numberOfProcessorCores() -> c_int {
+    std::thread::available_parallelism().map_or(4, |n| n.get() as c_int)
+}
+#[unsafe(no_mangle)]
+extern "C" fn mi_thread_set_in_threadpool() {}
+#[unsafe(no_mangle)]
+extern "C" fn mi_on_thread_idle() {}
+#[unsafe(no_mangle)]
+extern "C" fn mi_on_thread_idle_start() -> bool {
+    false
+}
+#[unsafe(no_mangle)]
+extern "C" fn mi_on_thread_idle_end() {}
+
 /// Says how much stack the current thread has left, roughly. Without it nothing stops recursion.
 pub fn set_stack_size(remaining: usize) {
     let probe = 0u8;

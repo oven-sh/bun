@@ -1364,6 +1364,8 @@ dependencies = [
  "bun_core",
  "bun_js_parser",
  "bun_sema",
+ "bun_sys",
+ "bun_threading",
 ]
 
 [[package]]
@@ -1373,6 +1375,7 @@ dependencies = [
  "bun_js_parser",
  "bun_sema",
  "bun_sema_driver",
+ "bun_threading",
  "libc",
 ]
 

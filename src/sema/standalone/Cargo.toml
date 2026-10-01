@@ -14,6 +14,7 @@ path = "main.rs"
 bun_sema.workspace = true
 bun_sema_driver.workspace = true
 bun_js_parser.workspace = true
+bun_threading.workspace = true
 libc.workspace = true
 
 [lints]

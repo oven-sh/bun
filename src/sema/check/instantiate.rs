@@ -2,6 +2,61 @@
 
 use super::*;
 
+/// The last answers to questions that go by two numbers, not both 0. It belongs to one checker and stands in front of something that
+/// takes longer to ask. An answer takes the place of whichever one was in its place.
+#[derive(Default)]
+pub(super) struct Recent {
+    /// The two numbers and the answer. There are none to begin with, then a power of two of them.
+    places: Vec<[u32; 3]>,
+    /// What is left of a hash shifted by so much is a place.
+    shift: u32,
+    /// How many answers were put in since the places were last made more.
+    added: usize,
+}
+
+impl Recent {
+    const MOST_PLACES: usize = 1 << 14;
+
+    #[inline]
+    fn place(&self, a: u32, b: u32) -> usize {
+        let both = u64::from(a) << 32 | u64::from(b);
+        (both.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> self.shift) as usize
+    }
+
+    #[inline]
+    pub(super) fn get(&self, a: u32, b: u32) -> Option<u32> {
+        match self.places.get(self.place(a, b)) {
+            Some(&[x, y, answer]) if x == a && y == b => Some(answer),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(super) fn put(&mut self, a: u32, b: u32, answer: u32) {
+        if self.added == self.places.len() && self.added < Self::MOST_PLACES {
+            self.grow();
+        }
+        self.added += 1;
+        let place = self.place(a, b);
+        self.places[place] = [a, b, answer];
+    }
+
+    /// Most files need few places, and the few that need many are where the time goes.
+    #[cold]
+    fn grow(&mut self) {
+        let len = (self.places.len() * 4).max(64);
+        let old = std::mem::replace(&mut self.places, vec![[0; 3]; len]);
+        self.shift = 64 - len.trailing_zeros();
+        self.added = 0;
+        for [a, b, answer] in old {
+            if (a, b) != (0, 0) {
+                let place = self.place(a, b);
+                self.places[place] = [a, b, answer];
+            }
+        }
+    }
+}
+
 impl<'p> Checker<'p> {
     pub fn mapper_from(&mut self, params: &[TypeId], args: &[TypeId]) -> MapperId {
         self.p
@@ -85,22 +140,34 @@ impl<'p> Checker<'p> {
 
     /// `instantiateTypeWithAlias`
     pub fn instantiate(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
-        self.time_trap();
-        self.guard("instantiate");
-        if mapper == MapperId::IDENTITY || !self.has_type_variables(ty) {
+        if mapper == MapperId::IDENTITY {
             return ty;
         }
-        match self.data(ty) {
-            TypeData::TypeParam(..) | TypeData::ThisParam(_) => {
-                return self.p.types.map(mapper, ty).unwrap_or(ty);
-            }
-            _ => {}
+        let (data, flags) = self.p.types.get_with_flags(ty);
+        if !flags.contains(TypeFlags::HAS_TYPE_VARIABLES) {
+            return ty;
         }
+        if let TypeData::TypeParam(..) | TypeData::ThisParam(_) = data {
+            return self.p.types.map(mapper, ty).unwrap_or(ty);
+        }
+        if let Some(known) = self.recent_instantiations.get(ty.0, mapper.0) {
+            self.note_depth(Deep::Instantiation(ty, mapper), None);
+            return TypeId(known);
+        }
+        self.instantiate_kept(ty, mapper)
+    }
+
+    /// `instantiate`, of a type that mentions type parameters, is none itself and was not asked about lately.
+    #[inline(never)]
+    fn instantiate_kept(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
         let key = Deep::Instantiation(ty, mapper);
         if let Some(known) = self.p.instantiations.get(&(ty, mapper)) {
+            self.recent_instantiations.put(ty.0, mapper.0, known.0);
             self.note_depth(key, None);
             return known;
         }
+        self.time_trap();
+        self.guard("instantiate");
         if self.instantiation_depth > 95 {
             // `getConditionalType` follows a tail call in a loop, at one `instantiationDepth`. `conditional_type` recurses, so
             // under a conditional type this depth is not comparable with tsgo's: the result is unknown and nothing is reported.
@@ -118,7 +185,11 @@ impl<'p> Checker<'p> {
         self.instantiation_depth -= 1;
         if self.cycles == cycles_before {
             self.note_depth(key, Some(events_before));
-            self.p.instantiations.insert((ty, mapper), result);
+            let kept = self.p.instantiations.insert((ty, mapper), result);
+            // The table keeps nothing local under a key that is shared.
+            if ty.is_local() || mapper.is_local() || !result.is_local() {
+                self.recent_instantiations.put(ty.0, mapper.0, kept.0);
+            }
         }
         result
     }

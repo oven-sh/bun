@@ -111,10 +111,6 @@ impl Slots {
         }
     }
     #[inline]
-    fn is_uncertain(&self, file: FileId, index: usize) -> bool {
-        self.0.raw((file, index as u32)) & Self::UNCERTAIN != 0
-    }
-    #[inline]
     fn set_uncertain(&self, file: FileId, index: usize, ty: TypeId) {
         self.0.set_raw(
             (file, index as u32),
@@ -134,6 +130,9 @@ pub struct Program {
     pub types: TypeStore,
 
     expr_types: Slots,
+    /// What `expr_types` would hold for a file that is at hand in some thread (see `local`): a slot for each of its expressions. A
+    /// checker holds on to those of its file, and need not ask the thread for them.
+    exprs_at_hand: ByIdKept<FileId, Arc<[AtomicU32]>>,
     type_node_types: Slots,
     fn_return_types: Slots,
     pat_types: Slots,
@@ -226,6 +225,8 @@ pub struct Program {
     mapped_targets: ById<TypeId, TypeId>,
     inferred_constraints: ById<TypeId, Option<TypeId>>,
     constraints: ById<TypeId, TypeId>,
+    /// See `holder_of_index_signatures`.
+    tuple_bases: ById<TypeId, TypeId>,
     /// `T | undefined` for `T`: see `optional_kept`.
     optional_types: ById<TypeId, TypeId>,
     /// `global_ref` of a name, without type arguments.
@@ -238,6 +239,8 @@ pub struct Program {
     /// `default_of_type_param` of a type parameter, once it holds for good.
     type_param_defaults: ById<TypeId, Option<TypeId>>,
     conditionals: ByKey<(FileId, TypeNodeId, MapperId), TypeId>,
+    /// What the parameter of each mapped type extends, if anything. See `constraint_of_mapped_param`.
+    mapped_param_constraints: ByNode<(FileId, TypeNodeId), Option<TypeId>>,
     /// Memo entries whose evaluation hit an instantiation limit, and those 2589 has been reported for. See `note_depth`.
     excessive: ByKey<Deep, ()>,
     excessive_reported: ByKey<Deep, ()>,
@@ -355,6 +358,7 @@ impl Program {
         Program {
             types: TypeStore::new(),
             expr_types: Slots::new(&exprs),
+            exprs_at_hand: Default::default(),
             type_node_types: Slots::new(&type_nodes),
             fn_return_types: Slots::new(&fns),
             pat_types: Slots::new(&pats),
@@ -411,6 +415,7 @@ impl Program {
             mapped_targets: Default::default(),
             inferred_constraints: Default::default(),
             constraints: Default::default(),
+            tuple_bases: Default::default(),
             optional_types: Default::default(),
             plain_global_refs: Default::default(),
             circular_constraints: Default::default(),
@@ -418,6 +423,7 @@ impl Program {
             enum_values: ByNodeKept::new(&enum_members),
             type_param_defaults: Default::default(),
             conditionals: Default::default(),
+            mapped_param_constraints: ByNode::new(&type_nodes),
             excessive: Default::default(),
             excessive_reported: Default::default(),
             has_excessive: AtomicBool::new(false),
@@ -430,13 +436,24 @@ impl Program {
     }
 
     pub fn checker(&self) -> Checker<'_> {
+        let file_at_hand = FileId(crate::local::file());
+        let empty_slots =
+            |count: usize| -> Arc<[AtomicU32]> { (0..count).map(|_| AtomicU32::new(0)).collect() };
+        let exprs_at_hand = if file_at_hand.0 == u32::MAX {
+            empty_slots(0)
+        } else {
+            self.exprs_at_hand.get(&file_at_hand).unwrap_or_else(|| {
+                let count = self.files.hir(file_at_hand).exprs.len();
+                self.exprs_at_hand.insert(file_at_hand, empty_slots(count))
+            })
+        };
         Checker {
             p: self,
+            file_at_hand,
+            exprs_at_hand,
             stack: Vec::new(),
-            tainted: Vec::new(),
-            circular: Vec::new(),
+            frames: Vec::new(),
             pending_circular_mapped_props: Vec::new(),
-            entry_depths: Vec::new(),
             last_enter: EnterOutcome::Entered,
             resolution_start: 0,
             asking_for_context: false,
@@ -451,6 +468,7 @@ impl Program {
             contextual: Vec::new(),
             inference: Vec::new(),
             instantiation_depth: 0,
+            recent_instantiations: Default::default(),
             deferring_type_arguments: 0,
             reports_depth: false,
             deep_events: 0,
@@ -482,13 +500,14 @@ impl Program {
             context_checked_for: FxHashMap::default(),
             uncertain: false,
             union_too_complex: false,
+            recent_unions: Default::default(),
             deadline: None,
             constraint_stack: Vec::new(),
             trap_on_timeout: std::env::var_os("BUN_SEMA_TIME_TRAP").is_some(),
+            trap_on_low_stack: std::env::var_os("BUN_SEMA_DEBUG_STACK").is_some(),
             deepest_stack: std::cell::Cell::new(0),
             exprs_by_kind: None,
             shapes_for_now: Vec::new(),
-            serials: Vec::new(),
             held_for_now: FxHashMap::default(),
             trials: FxHashMap::default(),
             explains: false,
@@ -611,18 +630,27 @@ pub(super) enum CurrentNode {
 
 const MAX_DEPTH: usize = 220;
 
+/// What goes with an entry of `Checker::stack`.
+#[derive(Copy, Clone)]
+struct QueryFrame {
+    /// A number no other question has had.
+    serial: u64,
+    /// `instantiation_depth` when it was pushed.
+    entry_depth: u32,
+    /// Something it asked came back to an entry below it.
+    tainted: bool,
+    /// It `is_resolution`, and is part of a circle of such. See `mark_circle_from`.
+    circular: bool,
+}
+
 pub struct Checker<'p> {
     pub p: &'p Program,
     stack: Vec<Query>,
-    /// For each entry of `stack`: whether something it asked came back to an entry below it.
-    tainted: Vec<bool>,
-    /// For each entry of `stack` that `is_resolution`: whether it is part of a circle of such. See `mark_circle_from`.
-    circular: Vec<bool>,
+    /// For each entry of `stack`.
+    frames: Vec<QueryFrame>,
     /// For each open `Query::MappedProp` that is part of a cycle: its index in `stack` and the type node to report 2615 at.
     /// `circular_mapped_property` commits the entry when the query is left.
     pending_circular_mapped_props: Vec<(usize, (FileId, TypeNodeId))>,
-    /// For each entry of `stack`: `instantiation_depth` when it was pushed.
-    entry_depths: Vec<u32>,
     /// How the last `enter` ended. `leave` and `excessively_deep` reset it to `Entered`.
     last_enter: EnterOutcome,
     /// The patterns whose implied type is being worked out to be what their initializer is expected to be, and how deep the
@@ -651,6 +679,8 @@ pub struct Checker<'p> {
     contextual: Vec<(FileId, ExprId, TypeId)>,
     inference: Vec<infer::Inference>,
     instantiation_depth: u32,
+    /// What was last read from or put into `Program::instantiations`.
+    recent_instantiations: instantiate::Recent,
     /// How many `instantiate_deferred_type_arguments` are trying an argument: a limit hit meanwhile is not reported.
     deferring_type_arguments: u32,
     /// Set while `check_excessive_depth` runs: an instantiation limit is reported at `current_node`.
@@ -704,17 +734,22 @@ pub struct Checker<'p> {
     /// Set when `union_reduced` or `intersection_ex` gives up on a union that is too complex to represent (2590). The caller
     /// clears it first.
     pub(super) union_too_complex: bool,
+    /// What `union` last made of two types, the one with the lower number first.
+    recent_unions: instantiate::Recent,
     deadline: Option<std::time::Instant>,
     /// The `stack` of `getResolvedBaseConstraint`: what the constraints being worked out, one for the sake of the other, are instances of.
     constraint_stack: Vec<relate::RecursionId>,
     trap_on_timeout: bool,
+    trap_on_low_stack: bool,
     deepest_stack: std::cell::Cell<usize>,
     /// Of the file that was last asked about.
     exprs_by_kind: Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>,
+    /// The file at hand in this thread when the checker was made: see `local`. `u32::MAX` if there was none.
+    file_at_hand: FileId,
+    /// See `Program::exprs_at_hand`.
+    exprs_at_hand: Arc<[AtomicU32]>,
     /// See `shape_for_now`.
     shapes_for_now: Vec<Box<shape::Resolved>>,
-    /// For each question on `stack`, a number no other question has had.
-    serials: Vec<u64>,
     /// The types of properties of object literals that only hold for now: see `hold_for_now`.
     held_for_now: FxHashMap<(FileId, PropId), Held>,
     /// The last candidate tried for a call that is being resolved: see `instantiate_for_call_as`.
@@ -780,7 +815,7 @@ pub struct Checker<'p> {
     /// See `contextual_property_of_value`.
     contextual_properties: FxHashMap<(TypeId, Atom), Option<TypeId>>,
     /// For each overloaded call being resolved: the type parameters of its candidates, as holes.
-    candidate_holes: Vec<MapperId>,
+    candidate_holes: Vec<call::CandidateHoles>,
     /// The next target to be related to is a member of an intersection.
     resolving: Vec<call::Resolving<'p>>,
     /// The `failure_sigs` entry of the call that `resolve_among` just resolved. `resolve_call` takes it, and stores it only together
@@ -911,7 +946,15 @@ impl<'p> Checker<'p> {
     /// For finding runaway recursion: `BUN_SEMA_DEBUG_STACK=1`.
     #[inline]
     pub(crate) fn guard(&self, what: &str) {
-        if self.is_stack_low() && std::env::var_os("BUN_SEMA_DEBUG_STACK").is_some() {
+        if self.trap_on_low_stack {
+            self.trap_if_stack_is_low(what);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn trap_if_stack_is_low(&self, what: &str) {
+        if self.is_stack_low() {
             panic!(
                 "stack low in {what}: {:?}\n{}",
                 &self.stack[self.stack.len().saturating_sub(30)..],
@@ -933,7 +976,15 @@ impl<'p> Checker<'p> {
     /// For finding what does not end: `BUN_SEMA_TIME_TRAP=1` stops with a backtrace where the time limit is passed.
     #[inline]
     pub(crate) fn time_trap(&mut self) {
-        if self.trap_on_timeout && self.is_out_of_time() {
+        if self.trap_on_timeout {
+            self.trap_if_out_of_time();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn trap_if_out_of_time(&mut self) {
+        if self.is_out_of_time() {
             if let Some(&Query::Cond(file, node, _)) = self
                 .stack
                 .iter()
@@ -976,8 +1027,13 @@ impl<'p> Checker<'p> {
             return true;
         }
         self.ticks = self.ticks.wrapping_add(1);
-        if self.ticks & 0x3ff == 0
-            && let Some(deadline) = self.deadline
+        self.ticks & 0x3ff == 0 && self.is_past_the_deadline()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn is_past_the_deadline(&mut self) -> bool {
+        if let Some(deadline) = self.deadline
             && std::time::Instant::now() > deadline
         {
             self.timed_out = true;
@@ -986,31 +1042,12 @@ impl<'p> Checker<'p> {
     }
 
     /// `false`: the question is being answered further down the stack.
+    #[inline]
     fn enter(&mut self, q: Query) -> bool {
         self.work += 1;
         self.came_full_circle = false;
-        self.last_enter = EnterOutcome::Refused;
-        if self.is_out_of_time() {
-            self.gave_up();
-            return false;
-        }
-        if self.work == self.work_trap {
-            panic!(
-                "work trap: {:?}\n{}",
-                &self.stack,
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
-        if self.is_stack_low() {
-            if std::env::var_os("BUN_SEMA_DEBUG_STACK").is_some() {
-                panic!(
-                    "stack low: {:?}\n{}",
-                    &self.stack[self.stack.len().saturating_sub(30)..],
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
-            self.gave_up();
-            return false;
+        if self.is_out_of_time() || self.work == self.work_trap || self.is_stack_low() {
+            return self.refuse_for_lack_of_time_or_stack();
         }
         // To one who asks what it expects of an argument, a call under way is under way however long ago it was begun.
         let from = if matches!(q, Query::Call(..)) && self.asking_for_context {
@@ -1018,47 +1055,89 @@ impl<'p> Checker<'p> {
         } else {
             self.resolution_start
         };
-        if let Some(i) = self.stack[from..].iter().rposition(|x| *x == q).map(|i| i + from)
-            // `findResolutionCycleStartIndex` looks no further down than a resolution that has its answer: what is asked for is
-            // begun once more, and comes to that answer.
-            && !(self.is_resolution(q) && self.is_answered_since(i))
+        if let Some(i) = self.stack[from..].iter().rposition(|x| *x == q)
+            && self.comes_back_to(q, i + from)
         {
-            // What is being computed between there and here is computed without the answer, so it only holds for now.
-            for tainted in &mut self.tainted[i + 1..] {
-                *tainted = true;
-            }
-            // TypeScript does not notice an expression that is looked at again while it is being looked at: it goes the
-            // same way once more, and the first resolution on that way is the one to come back to itself.
-            // A call that is asked what it expects of an argument while it is being resolved is another matter
-            // (`resolvingSignature`): whoever asks goes without an answer, and nothing is wrong.
-            let marked = !(matches!(q, Query::Call(..)) && self.asking_for_context)
-                && self.mark_circle_from(i);
-            self.came_full_circle = marked && self.is_resolution(q);
-            if marked && self.is_runaway(i) {
-                self.last_enter = EnterOutcome::Runaway;
-                if self.trace_cycles {
-                    eprintln!("RUNAWAY {q:?}");
-                }
-            }
-            self.cycles += 1;
-            if self.trace_cycles {
-                eprintln!("cycle: {:?}", &self.stack[i..]);
-            }
             return false;
         }
         if self.stack.len() >= MAX_DEPTH {
-            if self.trace_cycles {
-                eprintln!("too deep: {:?}", &self.stack[self.stack.len() - 12..]);
-            }
-            self.gave_up();
-            return false;
+            return self.refuse_as_too_deep();
         }
         self.last_enter = EnterOutcome::Entered;
         self.stack.push(q);
-        self.serials.push(self.work);
-        self.tainted.push(false);
-        self.circular.push(false);
-        self.entry_depths.push(self.instantiation_depth);
+        self.frames.push(QueryFrame {
+            serial: self.work,
+            entry_depth: self.instantiation_depth,
+            tainted: false,
+            circular: false,
+        });
+        true
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn refuse_for_lack_of_time_or_stack(&mut self) -> bool {
+        self.last_enter = EnterOutcome::Refused;
+        if !self.timed_out {
+            if self.work == self.work_trap {
+                panic!(
+                    "work trap: {:?}\n{}",
+                    &self.stack,
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+            if std::env::var_os("BUN_SEMA_DEBUG_STACK").is_some() {
+                panic!(
+                    "stack low: {:?}\n{}",
+                    &self.stack[self.stack.len().saturating_sub(30)..],
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+        }
+        self.gave_up();
+        false
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn refuse_as_too_deep(&mut self) -> bool {
+        self.last_enter = EnterOutcome::Refused;
+        if self.trace_cycles {
+            eprintln!("too deep: {:?}", &self.stack[self.stack.len() - 12..]);
+        }
+        self.gave_up();
+        false
+    }
+
+    /// What `enter` makes of a `q` that is under way at `stack[i]`. `false`: it is begun once more.
+    #[cold]
+    #[inline(never)]
+    fn comes_back_to(&mut self, q: Query, i: usize) -> bool {
+        // `findResolutionCycleStartIndex` looks no further down than a resolution that has its answer: what is asked for is
+        // begun once more, and comes to that answer.
+        if self.is_resolution(q) && self.is_answered_since(i) {
+            return false;
+        }
+        self.last_enter = EnterOutcome::Refused;
+        // What is being computed between there and here is computed without the answer, so it only holds for now.
+        self.mark_tainted_from(i + 1);
+        // TypeScript does not notice an expression that is looked at again while it is being looked at: it goes the
+        // same way once more, and the first resolution on that way is the one to come back to itself.
+        // A call that is asked what it expects of an argument while it is being resolved is another matter
+        // (`resolvingSignature`): whoever asks goes without an answer, and nothing is wrong.
+        let marked =
+            !(matches!(q, Query::Call(..)) && self.asking_for_context) && self.mark_circle_from(i);
+        self.came_full_circle = marked && self.is_resolution(q);
+        if marked && self.is_runaway(i) {
+            self.last_enter = EnterOutcome::Runaway;
+            if self.trace_cycles {
+                eprintln!("RUNAWAY {q:?}");
+            }
+        }
+        self.cycles += 1;
+        if self.trace_cycles {
+            eprintln!("cycle: {:?}", &self.stack[i..]);
+        }
         true
     }
 
@@ -1069,7 +1148,7 @@ impl<'p> Checker<'p> {
     /// directly inside a type node, or an `instantiate` nested in the `instantiate` of the reference.
     fn is_runaway(&self, i: usize) -> bool {
         let is_type_node = |q: &Query| matches!(q, Query::TypeNode(..));
-        let (cycle, depths) = (&self.stack[i..], &self.entry_depths[i..]);
+        let (cycle, frames) = (&self.stack[i..], &self.frames[i..]);
         cycle
             .iter()
             .all(|q| matches!(q, Query::TypeNode(..) | Query::Cond(..)))
@@ -1077,10 +1156,12 @@ impl<'p> Checker<'p> {
                 .windows(2)
                 .any(|pair| is_type_node(&pair[0]) && is_type_node(&pair[1]))
             && !(is_type_node(&cycle[0]) && cycle.last().is_some_and(is_type_node))
-            && depths.windows(2).all(|pair| pair[1] <= pair[0] + 1)
-            && depths
+            && frames
+                .windows(2)
+                .all(|pair| pair[1].entry_depth <= pair[0].entry_depth + 1)
+            && frames
                 .last()
-                .is_some_and(|&last| self.instantiation_depth <= last + 1)
+                .is_some_and(|last| self.instantiation_depth <= last.entry_depth + 1)
     }
 
     /// `pushTypeResolution` finding what is asked for under way at `i`: everything from there up that is a resolution is in the
@@ -1100,20 +1181,20 @@ impl<'p> Checker<'p> {
         let through_call = self.stack[i..].iter().any(|q| matches!(q, Query::Call(..)))
             || self.stack[..i]
                 .iter()
-                .zip(&self.circular[..i])
-                .any(|(q, &circular)| circular && matches!(q, Query::Pat(..) | Query::Symbol(_)));
+                .zip(&self.frames[..i])
+                .any(|(q, frame)| frame.circular && matches!(q, Query::Pat(..) | Query::Symbol(_)));
         for j in i..self.stack.len() {
             let q = self.stack[j];
             if !self.is_resolution(q) {
                 continue;
             }
-            if self.trace_cycles && !self.circular[j] {
+            if self.trace_cycles && !self.frames[j].circular {
                 eprintln!("CIRCLE {:?} in {:?}", q, &self.stack[i..]);
                 if std::env::var_os("BUN_SEMA_TRAP_CIRCLE").is_some() {
                     panic!("circle\n{}", std::backtrace::Backtrace::force_capture());
                 }
             }
-            self.circular[j] = true;
+            self.frames[j].circular = true;
             if through_call && let Query::Pat(file, pat) = q {
                 self.p.circular_through_call.insert((file, pat), ());
             }
@@ -1264,9 +1345,7 @@ impl<'p> Checker<'p> {
     /// A question went unanswered only because of how deep it was asked. Asked from elsewhere it has an answer, so
     /// nothing that is being computed from the lack of one may be kept.
     fn gave_up(&mut self) {
-        for tainted in &mut self.tainted {
-            *tainted = true;
-        }
+        self.mark_tainted_from(0);
         self.cycles += 1;
     }
 
@@ -1344,7 +1423,7 @@ impl<'p> Checker<'p> {
         // There is no node to report at. No open query is memoized, so `check_excessive_depth` evaluates them again in check order.
         // `cycles` stays as it is: `instantiations` keeps its entries, which bounds the repeated work.
         self.unreported_event = self.deep_events;
-        self.tainted.fill(true);
+        self.mark_tainted_from(0);
         false
     }
 
@@ -1387,14 +1466,28 @@ impl<'p> Checker<'p> {
     }
 
     /// Whether the answer holds whoever asks, and so may be kept.
+    #[inline]
     fn leave(&mut self) -> bool {
         self.stack.pop();
-        self.serials.pop();
-        self.entry_depths.pop();
         self.last_enter = EnterOutcome::Entered;
-        let tainted = self.tainted.pop().unwrap();
-        self.left_a_circle = self.circular.pop().unwrap();
-        !tainted
+        let frame = self.frames.pop().unwrap();
+        self.left_a_circle = frame.circular;
+        !frame.tainted
+    }
+
+    /// The answers to the questions from `stack[from]` up do not hold whoever asks.
+    fn mark_tainted_from(&mut self, from: usize) {
+        for frame in &mut self.frames[from..] {
+            frame.tainted = true;
+        }
+    }
+
+    fn is_innermost_tainted(&self) -> bool {
+        self.frames.last().is_some_and(|frame| frame.tainted)
+    }
+
+    fn is_innermost_in_a_circle(&self) -> bool {
+        self.frames.last().is_some_and(|frame| frame.circular)
     }
 
     /// The expressions of `file` kind by kind, for whoever is after a few kinds and would otherwise go through all of them. It is put
@@ -1424,13 +1517,13 @@ impl<'p> Checker<'p> {
     /// that each lead to all the others, like the rows of a table that is expected to be an array of its own rows, are gone through
     /// in every order there is.
     fn hold_for_now(&mut self, file: FileId, p: PropId, ty: TypeId, came_back: bool) {
-        if let Some(outermost) = self.tainted.iter().position(|&tainted| tainted) {
+        if let Some(outermost) = self.frames.iter().position(|frame| frame.tainted) {
             self.held_for_now.insert(
                 (file, p),
                 Held {
                     ty,
                     depth: outermost,
-                    serial: self.serials[outermost],
+                    serial: self.frames[outermost].serial,
                     came_back,
                 },
             );
@@ -1447,7 +1540,7 @@ impl<'p> Checker<'p> {
             return None;
         }
         let held = *self.held_for_now.get(&(file, p))?;
-        if self.serials.get(held.depth) != Some(&held.serial) {
+        if self.frames.get(held.depth).map(|frame| frame.serial) != Some(held.serial) {
             self.held_for_now.remove(&(file, p));
             return None;
         }
@@ -1455,7 +1548,7 @@ impl<'p> Checker<'p> {
         if held.came_back {
             self.taint_from(held.depth);
         } else {
-            self.tainted[held.depth..].fill(true);
+            self.mark_tainted_from(held.depth);
         }
         Some(held.ty)
     }
@@ -1466,10 +1559,7 @@ impl<'p> Checker<'p> {
         if self.provisional == 0 {
             return;
         }
-        let floor = self.provisional_floor.min(self.tainted.len());
-        for tainted in &mut self.tainted[floor..] {
-            *tainted = true;
-        }
+        self.mark_tainted_from(self.provisional_floor.min(self.frames.len()));
         self.cycles += 1;
     }
 
@@ -1477,20 +1567,18 @@ impl<'p> Checker<'p> {
     /// begun since are not kept. So of a loop under way: `getResolvedSignature` stores nothing while `flowLoopStack` has
     /// something on it, and `checkExpressionCached` empties it first.
     fn taint_from(&mut self, depth: usize) {
-        if depth >= self.tainted.len() {
+        if depth >= self.frames.len() {
             return;
         }
-        for tainted in &mut self.tainted[depth..] {
-            *tainted = true;
-        }
+        self.mark_tainted_from(depth);
         self.cycles += 1;
     }
 
     /// Whether what is being computed right now depends on a trial.
     fn is_provisional_here(&self) -> bool {
         self.provisional > 0
-            && self.tainted.len() > self.provisional_floor
-            && self.tainted.last() == Some(&true)
+            && self.frames.len() > self.provisional_floor
+            && self.is_innermost_tainted()
     }
 
     // ───────────────────────────── kinds of types ─────────────────────────────
@@ -1625,12 +1713,21 @@ impl<'p> Checker<'p> {
     }
 
     pub fn is_primitive(&self, ty: TypeId) -> bool {
-        self.is_string_like(ty)
-            || self.is_number_like(ty)
-            || self.is_bigint_like(ty)
-            || self.is_boolean_like(ty)
-            || self.is_symbol_like(ty)
-            || self.is_nullish(ty)
+        match self.data(ty) {
+            TypeData::Intrinsic(
+                Intrinsic::String | Intrinsic::Number | Intrinsic::BigInt | Intrinsic::Symbol,
+            )
+            | TypeData::StringLit { .. }
+            | TypeData::NumberLit { .. }
+            | TypeData::BigIntLit { .. }
+            | TypeData::BoolLit { .. }
+            | TypeData::EnumLit { .. }
+            | TypeData::Enum { .. }
+            | TypeData::UniqueSymbol { .. }
+            | TypeData::Template { .. }
+            | TypeData::StringMapping { .. } => true,
+            _ => self.is_nullish(ty),
+        }
     }
 
     /// Whether every member of `ty` passes.
@@ -1909,9 +2006,17 @@ impl<'p> Checker<'p> {
 
     /// The element type of `T[]` or `readonly T[]`.
     pub fn array_element(&self, ty: TypeId) -> Option<TypeId> {
-        self.is_global_ref(ty, known::Array)
-            .or_else(|| self.is_global_ref(ty, known::ReadonlyArray))
-            .and_then(|a| a.first().copied())
+        let TypeData::Ref { target, args } = self.data(ty) else {
+            return None;
+        };
+        let name = self.files().symbol(*target).name;
+        if (name == known::Array || name == known::ReadonlyArray)
+            && self.global_type_symbol(name) == Some(*target)
+        {
+            args.first().copied()
+        } else {
+            None
+        }
     }
 
     pub fn is_array(&self, ty: TypeId) -> bool {

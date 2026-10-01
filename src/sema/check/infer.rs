@@ -81,6 +81,8 @@ pub struct Inference {
     /// What is inferred from has holes (`UNRESOLVED`) where something waits for its context or is not known yet: whatever
     /// holds one is no candidate (`ObjectFlagsNonInferrableType`).
     pub(super) leaves_out_unknown: bool,
+    /// `calls_itself` or `leaves_out_unknown` has decided whether something became a candidate.
+    pub(super) went_by_flags: bool,
     /// What is inferred from is what a binding pattern implies (`patternForType`).
     pub(super) from_pattern: bool,
     /// The types of the array literals in the arguments (`ObjectFlagsArrayLiteral`).
@@ -127,6 +129,7 @@ impl Inference {
             original_target: TypeId::NEVER,
             calls_itself: false,
             leaves_out_unknown: false,
+            went_by_flags: false,
             from_pattern: false,
             array_literals: Vec::new(),
             any_default: false,
@@ -336,14 +339,19 @@ impl<'p> Checker<'p> {
         if self.is_type_variable(target) {
             if let Some(index) = n.index_of(target) {
                 // A parameter says nothing about itself, unless it is the caller's as well. It still counts as an inference made.
-                if source == target && !n.calls_itself {
-                    n.inference_priority = n.inference_priority.min(n.priority as i32);
-                    return;
+                if source == target {
+                    if !n.calls_itself {
+                        n.inference_priority = n.inference_priority.min(n.priority as i32);
+                        return;
+                    }
+                    n.went_by_flags = true;
                 }
                 // `ObjectFlagsNonInferrableType`: what has something left out of it is no candidate.
-                if self.is_non_inferrable(source, 0)
-                    || n.leaves_out_unknown && !self.is_known(source)
-                {
+                if self.is_non_inferrable(source, 0) {
+                    return;
+                }
+                if n.leaves_out_unknown && !self.is_known(source) {
+                    n.went_by_flags = true;
                     return;
                 }
                 self.add_candidate(n, index, source, target);
@@ -1530,10 +1538,43 @@ impl<'p> Checker<'p> {
         // From the bottom up. If the source has fewer, its first does for the rest of the target's.
         for (i, &t) in ts.iter().enumerate() {
             let source_index = (ss.len() + i).saturating_sub(ts.len());
-            let s = self.instantiate_sig(ss[source_index], sm.mapper);
-            let t = self.instantiate_sig(t, tm.mapper);
+            let s = if ss.len() == 1 {
+                self.instantiate_only_sig(source, construct, ss[0], sm.mapper)
+            } else {
+                self.instantiate_sig(ss[source_index], sm.mapper)
+            };
+            let t = if ts.len() == 1 {
+                self.instantiate_only_sig(target, construct, t, tm.mapper)
+            } else {
+                self.instantiate_sig(t, tm.mapper)
+            };
             self.infer_from_signatures(n, s, t, return_only);
         }
+    }
+
+    /// `instantiate_sig(sig, mapper)`, where `sig` is the only call (or construct) signature among the members of `ty` and `mapper`
+    /// is what they come with. `signatures` keeps it for an object type that is looked into as it stands.
+    pub(super) fn instantiate_only_sig(
+        &mut self,
+        ty: TypeId,
+        construct: bool,
+        sig: SigId,
+        mapper: MapperId,
+    ) -> SigId {
+        if mapper == MapperId::IDENTITY {
+            return sig;
+        }
+        let stands = match self.data(ty) {
+            TypeData::Anon { origin, .. } => !matches!(origin, Origin::Mapped(..)),
+            _ => self.is_object_type(ty),
+        };
+        if stands {
+            let kept = self.signatures(ty, construct);
+            if let [only] = kept[..] {
+                return only;
+            }
+        }
+        self.instantiate_sig(sig, mapper)
     }
 
     /// The heart of `instantiateTypeWithSingleGenericCallSignature`. `generic` is given where `contextual`, which is not generic,
@@ -2246,9 +2287,9 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── conclusions ─────────────────────────────
 
-    /// `hasPrimitiveConstraint`
-    fn has_primitive_constraint(&mut self, param: TypeId) -> bool {
-        let Some(mut constraint) = self.constraint_of_type_param(param) else {
+    /// `hasPrimitiveConstraint`, of a type parameter that extends `constraint`.
+    fn is_primitive_constraint(&mut self, constraint: Option<TypeId>) -> bool {
+        let Some(mut constraint) = constraint else {
             return false;
         };
         if matches!(self.data(constraint), TypeData::Cond { .. }) {
@@ -2392,7 +2433,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    /// `getCovariantInference`
+    /// `getCovariantInference`, and what `param` extends.
     fn covariant_inference(
         &mut self,
         c: &Candidate,
@@ -2400,7 +2441,7 @@ impl<'p> Checker<'p> {
         sig: SigId,
         is_fixed: bool,
         array_literals: &[TypeId],
-    ) -> TypeId {
+    ) -> (TypeId, Option<TypeId>) {
         // `unionObjectAndArrayLiteralCandidates`: the object and array literals count as one, after the others.
         let mut candidates = c.covariant.clone();
         if candidates.len() > 1 {
@@ -2418,8 +2459,9 @@ impl<'p> Checker<'p> {
         }
         // Literals are widened if every inference was to the type parameter itself, it does not extend anything primitive, and
         // it was settled early or is not what is returned.
+        let constraint = self.constraint_of_type_param(param);
         let primitive_constraint =
-            self.has_primitive_constraint(param) || self.is_const_type_variable(param, 0);
+            self.is_primitive_constraint(constraint) || self.is_const_type_variable(param, 0);
         let widen = !primitive_constraint
             && c.top_level
             && (is_fixed || !self.is_type_parameter_at_top_level_in_return_type(sig, param));
@@ -2437,7 +2479,7 @@ impl<'p> Checker<'p> {
         } else {
             self.common_supertype(&candidates)
         };
-        self.regular_object(unwidened)
+        (self.regular_object(unwidened), constraint)
     }
 
     /// What parameter `index` is, going by what has been seen so far. Does not settle it.
@@ -2472,11 +2514,16 @@ impl<'p> Checker<'p> {
         };
         let mut inferred = None;
         let mut fallback = None;
+        // What `param` extends, if that has been asked.
+        let mut extended = None;
         if let Some(sig) = n.sig {
             let covariant = if c.covariant.is_empty() {
                 None
             } else {
-                Some(self.covariant_inference(c, param, sig, is_fixed, &n.array_literals))
+                let (covariant, constraint) =
+                    self.covariant_inference(c, param, sig, is_fixed, &n.array_literals);
+                extended = Some(constraint);
+                Some(covariant)
             };
             let contravariant = if c.contravariant.is_empty() {
                 None
@@ -2512,15 +2559,18 @@ impl<'p> Checker<'p> {
                 };
             } else if let Some(default) = self.default_of_type_param(param) {
                 // A default may mention the parameters before it. Those from it on are nothing yet.
-                let default = self.instantiate(default, outer);
-                let unknowns: SmallVec<[TypeId; 4]> =
-                    smallvec![TypeId::UNKNOWN; n.params.len() - index];
-                let backreference = self.mapper_from(&n.params[index..], &unknowns);
-                let default = self.instantiate(default, backreference);
-                in_progress.push((index, TypeId::UNKNOWN));
-                let so_far = self.non_fixing_mapper(n, default, in_progress);
-                in_progress.pop();
-                inferred = Some(self.instantiate(default, so_far));
+                let mut default = self.instantiate(default, outer);
+                if self.has_type_variables(default) {
+                    let unknowns: SmallVec<[TypeId; 4]> =
+                        smallvec![TypeId::UNKNOWN; n.params.len() - index];
+                    let backreference = self.mapper_from(&n.params[index..], &unknowns);
+                    default = self.instantiate(default, backreference);
+                    in_progress.push((index, TypeId::UNKNOWN));
+                    let so_far = self.non_fixing_mapper(n, default, in_progress);
+                    in_progress.pop();
+                    default = self.instantiate(default, so_far);
+                }
+                inferred = Some(default);
             }
         } else {
             inferred = self.type_from_inference(c);
@@ -2530,7 +2580,11 @@ impl<'p> Checker<'p> {
         } else {
             TypeId::UNKNOWN
         });
-        let Some(constraint) = self.constraint_of_type_param(param) else {
+        let extended = match extended {
+            Some(asked) => asked,
+            None => self.constraint_of_type_param(param),
+        };
+        let Some(constraint) = extended else {
             return provisional;
         };
         let constraint = self.instantiate(constraint, outer);
@@ -2611,6 +2665,11 @@ impl<'p> Checker<'p> {
             .map(|i| self.inferred_type(n, i))
             .collect();
         self.mapper_from(&n.params, &types)
+    }
+
+    /// What `fix_params_in` settles parameter `index` on, or has settled it on.
+    pub(super) fn settled_type(&mut self, n: &Inference, index: usize) -> TypeId {
+        self.get_inferred_type(n, index, true, &mut InProgress::new())
     }
 
     /// Settles the parameters `ty` mentions: whatever is inferred later does not change them.

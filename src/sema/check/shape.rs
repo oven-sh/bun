@@ -1654,9 +1654,9 @@ impl<'p> Checker<'p> {
                 mapper,
             } = *self.data(part)
             {
-                let was_in_a_circle = self.circular.last() == Some(&true);
+                let was_in_a_circle = self.is_innermost_in_a_circle();
                 self.mapped_constraint(file, node, mapper);
-                if !was_in_a_circle && self.circular.last() == Some(&true) {
+                if !was_in_a_circle && self.is_innermost_in_a_circle() {
                     self.p.circular_mapped_keys.insert((file, node), ());
                 }
             }

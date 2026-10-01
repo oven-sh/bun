@@ -595,6 +595,37 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// What has the index signatures of `ty`. For a tuple whose members nobody has asked for it is the array the tuple is based on, with
+    /// the tuple for `this` (`getTupleBaseType`, `resolveObjectTypeMembers`): the members of the tuple take all of that array's.
+    fn holder_of_index_signatures(&mut self, ty: TypeId) -> TypeId {
+        let TypeData::Tuple {
+            elems,
+            flags,
+            readonly,
+        } = self.data(ty)
+        else {
+            return ty;
+        };
+        if self.p.members.get(&ty).is_some() {
+            return ty;
+        }
+        if let Some(known) = self.p.tuple_bases.get(&ty) {
+            return known;
+        }
+        let before = self.what_only_holds_for_now();
+        let element = self.tuple_element_union(elems, flags);
+        let array = if *readonly {
+            self.readonly_array_of(element)
+        } else {
+            self.array_of(element)
+        };
+        let base = self.type_with_this_argument(array, ty);
+        if self.what_only_holds_for_now() == before {
+            self.p.tuple_bases.insert(ty, base);
+        }
+        base
+    }
+
     /// `getPropertyTypeForIndexType`: what `obj`, which waits for nothing, has under `index`, which is no union.
     fn property_type_for_index(
         &mut self,
@@ -659,7 +690,12 @@ impl<'p> Checker<'p> {
                 ));
             }
         }
-        let Some(members) = self.members(apparent) else {
+        let holder = if name.is_none() {
+            self.holder_of_index_signatures(apparent)
+        } else {
+            apparent
+        };
+        let Some(members) = self.members(holder) else {
             return (index == TypeId::NEVER).then_some(TypeId::NEVER);
         };
         // `getPropertyOfType`: what every function and every object has counts, and comes before any index signature.
@@ -1274,6 +1310,22 @@ impl<'p> Checker<'p> {
         &hir[m]
     }
 
+    /// `getConstraintOfTypeParameter`, of the parameter of the mapped type at `node`.
+    fn constraint_of_mapped_param(&mut self, file: FileId, node: TypeNodeId) -> Option<TypeId> {
+        if let Some(known) = self.p.mapped_param_constraints.get(&(file, node)) {
+            return known;
+        }
+        let before = self.what_only_holds_for_now();
+        let param = self.type_param(file, self.mapped_decl(file, node).param);
+        let constraint = self.constraint_of_type_param(param);
+        if self.what_only_holds_for_now() == before {
+            self.p
+                .mapped_param_constraints
+                .insert((file, node), constraint);
+        }
+        constraint
+    }
+
     /// `getConstraintTypeFromMappedType`: what the parameter of the mapped type ranges over. `any` written there is every kind of
     /// key (`getConstraintFromTypeParameter`); one that comes back to the parameter is in error.
     pub(super) fn mapped_constraint(
@@ -1282,9 +1334,9 @@ impl<'p> Checker<'p> {
         node: TypeNodeId,
         mapper: MapperId,
     ) -> TypeId {
-        let mapped = self.mapped_decl(file, node);
-        let param = self.type_param(file, mapped.param);
-        let declared = self.constraint_of_type_param(param).unwrap_or(TypeId::ANY);
+        let declared = self
+            .constraint_of_mapped_param(file, node)
+            .unwrap_or(TypeId::ANY);
         self.instantiate(declared, mapper)
     }
 
@@ -1318,8 +1370,7 @@ impl<'p> Checker<'p> {
 
     /// `getHomomorphicTypeVariable`: the `T` of a mapped type whose declared constraint type is `keyof T`, however that is written.
     fn homomorphic_type_variable(&mut self, file: FileId, node: TypeNodeId) -> Option<TypeId> {
-        let param = self.type_param(file, self.mapped_decl(file, node).param);
-        let constraint = self.constraint_of_type_param(param)?;
+        let constraint = self.constraint_of_mapped_param(file, node)?;
         match *self.data(constraint) {
             TypeData::Keyof(target) if matches!(self.data(target), TypeData::TypeParam(..)) => {
                 Some(target)

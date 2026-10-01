@@ -1029,6 +1029,12 @@ impl TypeStore {
         self.record(id).flags
     }
 
+    #[inline]
+    pub fn get_with_flags(&self, id: TypeId) -> (&TypeData, TypeFlags) {
+        let record = self.record(id);
+        (&record.data, record.flags)
+    }
+
     pub fn len(&self) -> u32 {
         self.types.items.len()
     }

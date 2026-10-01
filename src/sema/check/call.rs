@@ -2129,19 +2129,22 @@ impl<'p> Checker<'p> {
         args: &[Arg],
         this_arg: Option<ExprId>,
     ) -> Option<SigId> {
-        self.try_candidates_before_const(file, call, candidates, type_args, args, this_arg);
         // What the arguments are expected to be mentions the type parameters of all the candidates. To a call among the
         // arguments those say nothing.
-        let mut pairs = Vec::new();
+        let mut type_params: SmallVec<[TypeId; 8]> = SmallVec::new();
+        let mut has_const = false;
         for &candidate in candidates {
-            pairs.extend(
-                self.sig_type_params(candidate)
-                    .into_iter()
-                    .map(|p| (p, TypeId::UNRESOLVED)),
-            );
+            let own = self.sig_type_params(candidate);
+            has_const = has_const || own.iter().any(|&p| self.is_const_type_variable(p, 0));
+            type_params.extend_from_slice(&own);
         }
-        let holes = self.p.types.mapper(pairs);
-        self.candidate_holes.push(holes);
+        if has_const {
+            self.try_candidates_before_const(file, call, candidates, type_args, args, this_arg);
+        }
+        self.candidate_holes.push(CandidateHoles {
+            type_params,
+            mapper: None,
+        });
         let chosen = self.choose_overload_among(file, call, candidates, type_args, args, this_arg);
         self.candidate_holes.pop();
         chosen
@@ -2157,7 +2160,6 @@ impl<'p> Checker<'p> {
         args: &[Arg],
         settled_before: usize,
     ) -> (bool, MapperId, MapperId) {
-        let type_params = self.sig_type_params(candidate);
         let mut plain: SmallVec<[(usize, TypeId); 8]> = SmallVec::new();
         for (i, &a) in args.iter().enumerate() {
             let is_plain = match a {
@@ -2180,6 +2182,11 @@ impl<'p> Checker<'p> {
                 plain.push((i, ty));
             }
         }
+        // No argument to go by: nothing is said, and nothing is ruled out.
+        if plain.is_empty() {
+            return (true, MapperId::IDENTITY, MapperId::IDENTITY);
+        }
+        let type_params = self.sig_type_params(candidate);
         let mut inference = Inference::for_params(&type_params, Some(candidate));
         inference.any_default = self.hir(file).is_js;
         for &(i, ty) in &plain {
@@ -2202,11 +2209,19 @@ impl<'p> Checker<'p> {
             };
             said.push((type_params[k], self.inferred_type(&inference, k)));
         }
-        let (known, lesser) = (
-            self.p.types.mapper(pairs),
-            self.p.types.mapper(lesser_pairs),
-        );
-        let all = self.inference_mapper(&inference);
+        let mapper_of = |c: &Self, pairs: Vec<(TypeId, TypeId)>| {
+            if pairs.is_empty() {
+                MapperId::IDENTITY
+            } else {
+                c.p.types.mapper(pairs)
+            }
+        };
+        let (known, lesser) = (mapper_of(self, pairs), mapper_of(self, lesser_pairs));
+        let all = if type_params.is_empty() {
+            MapperId::IDENTITY
+        } else {
+            self.inference_mapper(&inference)
+        };
         let fits = plain
             .iter()
             .all(|&(i, ty)| match self.param_type_at(params, i) {
@@ -2421,9 +2436,8 @@ impl<'p> Checker<'p> {
         let lists: SmallVec<[List<'p, SigParam>; 8]> =
             candidates.iter().map(|&c| self.sig_params(c)).collect();
         // What is expected of the result says what a candidate's type parameters are, for a start.
-        let mut from_result: SmallVec<[Option<MapperId>; 8]> = smallvec![None; candidates.len()];
-        let mut plain: SmallVec<[Option<(bool, MapperId, MapperId)>; 8]> =
-            smallvec![None; candidates.len()];
+        let mut from_result: SmallVec<[Option<MapperId>; 8]> = SmallVec::new();
+        let mut plain: SmallVec<[Option<(bool, MapperId, MapperId)>; 8]> = SmallVec::new();
         let is_sensitive: SmallVec<[bool; 8]> = args
             .iter()
             .map(|a| matches!(a, Arg::Expr(e) if self.is_context_sensitive(file, *e)))
@@ -2432,6 +2446,10 @@ impl<'p> Checker<'p> {
             let Arg::Expr(e) = arg else { continue };
             if is_sensitive[i] || !self.depends_on_context(file, e) {
                 continue;
+            }
+            if plain.is_empty() {
+                from_result.resize(candidates.len(), None);
+                plain.resize(candidates.len(), None);
             }
             let mut wanted: SmallVec<[TypeId; 8]> = SmallVec::new();
             // A literal is in the end held against the candidate that is chosen, which is none that the plain arguments rule out.
@@ -2609,8 +2627,9 @@ impl<'p> Checker<'p> {
             let (params, this) = match &instantiated[k] {
                 Some(known) => known.clone(),
                 None => {
+                    let is_generic = !self.sig_type_params(candidate).is_empty();
                     // `inferTypeArguments` checks the arguments whose parameter type could contain type variables.
-                    if type_args.is_empty() && !self.sig_type_params(candidate).is_empty() {
+                    if type_args.is_empty() && is_generic {
                         for (i, &arg) in args.iter().enumerate() {
                             if let Arg::Expr(e) = arg
                                 && !is_arg_checked[i]
@@ -2627,10 +2646,17 @@ impl<'p> Checker<'p> {
                             }
                         }
                     }
-                    let sig = self.instantiate_for_call(
-                        file, call, candidate, type_args, args, this_arg, true,
-                    );
-                    let known = (self.sig_params(sig), self.sig_this_type(sig));
+                    let known = match &lists[k] {
+                        List::Kept(declared) if !is_generic => {
+                            (List::Kept(*declared), self.sig_this_type(candidate))
+                        }
+                        _ => {
+                            let sig = self.instantiate_for_call(
+                                file, call, candidate, type_args, args, this_arg, true,
+                            );
+                            (self.sig_params(sig), self.sig_this_type(sig))
+                        }
+                    };
                     instantiated[k] = Some(known.clone());
                     known
                 }
@@ -3027,11 +3053,15 @@ impl<'p> Checker<'p> {
         is_guard
     }
 
-    /// Whether a type parameter of `sig` is in scope where `call` is written: in the function that declares it, or, for a construct
-    /// signature, in the class. What is written there may really mean it, and `inferFromTypes` takes it for a candidate like any other.
-    fn is_inside_declaration_of(&mut self, file: FileId, call: ExprId, sig: SigId) -> bool {
-        let own = self.sig_type_params(sig);
-        if own.is_empty() {
+    /// Whether one of `own`, the type parameters of a signature, is in scope where `call` is written: in the function that declares
+    /// it, or, for a construct signature, in the class. What is written there may really mean it, and `inferFromTypes` takes it for
+    /// a candidate like any other.
+    fn is_inside_declaration_of(&mut self, file: FileId, call: ExprId, own: &[TypeId]) -> bool {
+        // Only what the file of the call declares can be in scope there.
+        if own
+            .iter()
+            .all(|&p| matches!(*self.data(p), TypeData::TypeParam(of, ..) if of != file))
+        {
             return false;
         }
         let scope = self.scope_of_expr(file, call);
@@ -3091,13 +3121,37 @@ impl<'p> Checker<'p> {
         // `skipBindingPatterns`: to type parameters that all have defaults a pattern says nothing.
         let mut skips_patterns = true;
         for &param in type_params {
-            skips_patterns = skips_patterns && self.default_of_type_param(param).is_some();
+            skips_patterns = skips_patterns && self.has_default(param);
         }
         if skips_patterns {
             return without_patterns.map(|expected| (expected, false));
         }
         let expected = self.contextual_type(file, call)?;
         Some((expected, without_patterns != Some(expected)))
+    }
+
+    /// `getDefaultFromTypeParameter(param) != nil`
+    fn has_default(&mut self, param: TypeId) -> bool {
+        if let TypeData::TypeParam(file, tp, around) = *self.data(param)
+            && around != MapperId::IDENTITY
+        {
+            // A clone has one if the declared one does. Nothing is asked to fill in one that mentions no type parameter or is one.
+            let declared = self.type_param(file, tp);
+            match self.default_of_type_param(declared) {
+                None => return false,
+                Some(default)
+                    if !self.has_type_variables(default)
+                        || matches!(
+                            self.data(default),
+                            TypeData::TypeParam(..) | TypeData::ThisParam(_)
+                        ) =>
+                {
+                    return true;
+                }
+                Some(_) => {}
+            }
+        }
+        self.default_of_type_param(param).is_some()
     }
 
     /// `createOuterReturnMapper`, applied to what is expected of a call among the arguments of the calls being resolved: none of
@@ -3122,7 +3176,20 @@ impl<'p> Checker<'p> {
             if !self.has_type_variables(ty) {
                 break;
             }
-            ty = self.instantiate(ty, self.candidate_holes[i]);
+            let holes = match self.candidate_holes[i].mapper {
+                Some(holes) => holes,
+                None => {
+                    let pairs: Vec<(TypeId, TypeId)> = self.candidate_holes[i]
+                        .type_params
+                        .iter()
+                        .map(|&p| (p, TypeId::UNRESOLVED))
+                        .collect();
+                    let holes = self.p.types.mapper(pairs);
+                    self.candidate_holes[i].mapper = Some(holes);
+                    holes
+                }
+            };
+            ty = self.instantiate(ty, holes);
         }
         ty
     }
@@ -3133,11 +3200,16 @@ impl<'p> Checker<'p> {
     fn outer_return_mapper(&mut self, inference: &Inference, return_mapper: MapperId) -> MapperId {
         // `cloneInferenceContext(context).mapper`: it is the clone that is settled.
         let mut settled: Option<Inference> = None;
-        let mut pairs = Vec::with_capacity(inference.params.len());
-        for k in 0..inference.params.len() {
+        let count = inference.params.len();
+        let mut pairs = Vec::with_capacity(count);
+        for k in 0..count {
             let param = inference.params[k];
             let ty = match self.p.types.map(return_mapper, param) {
                 Some(ty) => ty,
+                // Nothing goes by what the last one is settled on.
+                None if k + 1 == count && matches!(self.data(param), TypeData::TypeParam(..)) => {
+                    self.settled_type(settled.as_ref().unwrap_or(inference), k)
+                }
                 None => {
                     let settled = settled.get_or_insert_with(|| inference.clone());
                     self.fix_params_in(settled, param);
@@ -3197,7 +3269,8 @@ impl<'p> Checker<'p> {
     }
 
     /// `returnContext`: what `contextual`, which is expected of the result, says about the type parameters of `sig` when taken
-    /// on its own. `target`: what `sig` returns.
+    /// on its own. `target`: what `sig` returns. `inferred`: a type that has been inferred from to `target` at the same priority,
+    /// and the inference that holds what came of it and nothing else.
     fn return_mapper(
         &mut self,
         sig: SigId,
@@ -3206,9 +3279,15 @@ impl<'p> Checker<'p> {
         target: TypeId,
         is_from_pattern: bool,
         calls_itself: bool,
+        inferred: Option<(TypeId, &Inference)>,
     ) -> MapperId {
         let expected = self.instantiate_with_outer_return_mappers(contextual);
         let expected = self.instantiate_with_candidate_holes(expected);
+        if let Some((source, inference)) = inferred
+            && source == expected
+        {
+            return self.mapper_of_result_inference(type_params, inference);
+        }
         let mut from_result = Inference::for_params(type_params, Some(sig));
         from_result.calls_itself = calls_itself;
         from_result.from_pattern = is_from_pattern;
@@ -3235,7 +3314,7 @@ impl<'p> Checker<'p> {
         else {
             return MapperId::IDENTITY;
         };
-        let calls_itself = self.is_inside_declaration_of(file, call, sig);
+        let calls_itself = self.is_inside_declaration_of(file, call, &type_params);
         let return_mapper = self.return_mapper(
             sig,
             &type_params,
@@ -3243,6 +3322,7 @@ impl<'p> Checker<'p> {
             ret,
             is_from_pattern,
             calls_itself,
+            None,
         );
         self.return_mapper_for_contexts(return_mapper)
     }
@@ -3269,6 +3349,9 @@ impl<'p> Checker<'p> {
                 (type_params[i], ty)
             })
             .collect();
+        if pairs.is_empty() {
+            return MapperId::IDENTITY;
+        }
         let inferred = self.p.types.mapper(pairs.clone());
         let mut changed = false;
         for pair in &mut pairs {
@@ -3306,13 +3389,16 @@ impl<'p> Checker<'p> {
             return MapperId::IDENTITY;
         }
         let mapping = self.p.types.mapping(return_mapper);
-        let mut pairs = Vec::with_capacity(mapping.len());
+        let mut pairs: SmallVec<[(TypeId, TypeId); 4]> = SmallVec::new();
         for &(param, ty) in mapping {
             if !self.is_any(ty) && ty != TypeId::UNKNOWN {
                 pairs.push((param, self.without_boolean(ty)));
             }
         }
-        self.p.types.mapper(pairs)
+        if pairs[..] == *mapping {
+            return return_mapper;
+        }
+        self.p.types.mapper(pairs.into_vec())
     }
 
     /// What `param` is expected to be going by what is expected of the result. Not `boolean`: `f(true)` is to give a
@@ -3403,7 +3489,7 @@ impl<'p> Checker<'p> {
         // `chooseOverload`, `inferSignatureInstantiationForOverloadFailure`: `InferenceFlagsAnyDefault` depends on the file that contains
         // the call, not on the file that declares `sig`.
         inference.any_default = self.hir(file).is_js;
-        inference.calls_itself = self.is_inside_declaration_of(file, call, sig);
+        inference.calls_itself = self.is_inside_declaration_of(file, call, &type_params);
         // `returnMapper`: the inferences from the contextual type of the call alone.
         let mut from_result = MapperId::IDENTITY;
         // `inferTypeArguments`: nothing is expected of what a decorator gives back when it is applied. It is applied to what is made
@@ -3429,6 +3515,8 @@ impl<'p> Checker<'p> {
             && let Some((contextual, is_from_pattern)) =
                 self.expected_result(file, call, &type_params)
         {
+            // What the inference below was made from, if `return_mapper` would make the same of it.
+            let mut inferred_from = None;
             // `const [a, b] = f()` expects a pair of anything. That helps the arguments along, but is no answer.
             if !is_from_pattern {
                 // Type parameters of the calls around, which are still being worked out, are what is known of them by now.
@@ -3470,7 +3558,11 @@ impl<'p> Checker<'p> {
                 self.infer(&mut inference, source, ret, PRIORITY_RETURN);
                 inference.leaves_out_unknown = false;
                 inference.calls_itself = calls_itself;
+                if !inference.went_by_flags {
+                    inferred_from = Some(source);
+                }
             }
+            let any_default = std::mem::replace(&mut inference.any_default, false);
             from_result = self.return_mapper(
                 sig,
                 &type_params,
@@ -3478,7 +3570,9 @@ impl<'p> Checker<'p> {
                 ret,
                 is_from_pattern,
                 inference.calls_itself,
+                inferred_from.map(|source| (source, &inference)),
             );
+            inference.any_default = any_default;
         }
         // `getNonArrayRestType`: what a rest parameter that is no plain array collects is inferred from all together.
         let rest_ty = self.non_array_rest_type(&params);
@@ -4200,7 +4294,7 @@ impl<'p> Checker<'p> {
         {
             return None;
         }
-        Some(self.instantiate_sig(own[0], members.mapper))
+        Some(self.instantiate_only_sig(ty, construct, own[0], members.mapper))
     }
 
     pub(super) fn single_call_signature(
@@ -4990,7 +5084,8 @@ impl<'p> Checker<'p> {
         if !matches!(
             self.hir(file)[e].kind,
             ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }
-        ) {
+        ) || self.hir(file).type_params.is_empty()
+        {
             return None;
         }
         let scope = self.scope_of_expr(file, e);
@@ -6095,7 +6190,7 @@ impl<'p> Checker<'p> {
             let c = &inference.candidates[i];
             !c.covariant.is_empty()
                 || !c.contravariant.is_empty()
-                || self.default_of_type_param(inference.params[i]).is_some()
+                || self.has_default(inference.params[i])
         });
         if !has_something {
             return ty;
@@ -6513,6 +6608,9 @@ impl<'p> Checker<'p> {
                 pairs.push((p, self.inferred_type(inference, i)));
             }
         }
+        if pairs.is_empty() {
+            return param;
+        }
         let mapper = self.p.types.mapper(pairs);
         self.instantiate(param, mapper)
     }
@@ -6598,9 +6696,7 @@ impl<'p> Checker<'p> {
                     .iter()
                     .rposition(|q| *q == Query::Call(file, call))
             {
-                for tainted in &mut self.tainted[i + 1..] {
-                    *tainted = true;
-                }
+                self.mark_tainted_from(i + 1);
             }
             return Some(self.without_no_infer(param));
         }
@@ -6628,6 +6724,12 @@ impl<'p> Checker<'p> {
                 .unwrap_or(TypeId::ANY),
         )
     }
+}
+
+/// The type parameters of the candidates of an overloaded call. `mapper`: from each of them to a hole, once that has been asked for.
+pub(super) struct CandidateHoles {
+    type_params: SmallVec<[TypeId; 8]>,
+    mapper: Option<MapperId>,
 }
 
 /// Whether the type node `node` is a keyword, a literal type, a reference without type arguments, or a union or intersection of those.

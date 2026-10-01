@@ -6,10 +6,9 @@ use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, Sco
 use smallvec::SmallVec;
 
 impl Slots {
-    /// `get` and `is_uncertain`, read together.
+    /// What a slot that holds `raw` says: the type, and whether it is uncertain.
     #[inline]
-    fn get_with_uncertainty(&self, file: FileId, index: usize) -> Option<(TypeId, bool)> {
-        let raw = self.0.raw((file, index as u32));
+    fn unpack(raw: u32) -> Option<(TypeId, bool)> {
         match raw & !Self::UNCERTAIN {
             0 => None,
             n => Some((TypeId(n - 1), raw & Self::UNCERTAIN != 0)),
@@ -68,6 +67,11 @@ impl<'p> Checker<'p> {
         {
             return ty;
         }
+        self.instantiated_where_it_stands(file, e, ty)
+    }
+
+    #[inline(never)]
+    fn instantiated_where_it_stands(&mut self, file: FileId, e: ExprId, ty: TypeId) -> TypeId {
         // What is expected of `e` may go by what `e` is.
         if !self.enter(Query::Expr(file, e)) {
             return ty;
@@ -107,6 +111,31 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// The type that is kept for `e`, and whether it rests on something that could not be found out.
+    #[inline]
+    fn kept_type_of_expr(&self, file: FileId, e: ExprId) -> Option<(TypeId, bool)> {
+        if file == self.file_at_hand
+            && let Some(slot) = self.exprs_at_hand.get(e.idx())
+        {
+            return Slots::unpack(slot.load(std::sync::atomic::Ordering::Relaxed));
+        }
+        Slots::unpack(self.p.expr_types.0.raw((file, e.0)))
+    }
+
+    #[inline]
+    fn keep_type_of_expr(&self, file: FileId, e: ExprId, ty: TypeId, uncertain: bool) {
+        if file == self.file_at_hand
+            && let Some(slot) = self.exprs_at_hand.get(e.idx())
+        {
+            let mark = if uncertain { Slots::UNCERTAIN } else { 0 };
+            slot.store((ty.0 + 1) | mark, std::sync::atomic::Ordering::Relaxed);
+        } else if uncertain {
+            self.p.expr_types.set_uncertain(file, e.idx(), ty);
+        } else {
+            self.p.expr_types.set(file, e.idx(), ty);
+        }
+    }
+
     /// `checkExpressionWorker`
     #[inline]
     fn type_of_expr_as_written(&mut self, file: FileId, e: ExprId) -> TypeId {
@@ -115,7 +144,7 @@ impl<'p> Checker<'p> {
             return TypeId::UNRESOLVED;
         }
         if self.contextual_binding_patterns.is_empty()
-            && let Some((known, uncertain)) = self.p.expr_types.get_with_uncertainty(file, e.idx())
+            && let Some((known, uncertain)) = self.kept_type_of_expr(file, e)
         {
             self.uncertain |= uncertain;
             return known;
@@ -134,10 +163,7 @@ impl<'p> Checker<'p> {
                 afresh = true;
                 visible_from = visible_from.max(floor.min(self.stack.len()));
             }
-            if !afresh
-                && let Some((known, uncertain)) =
-                    self.p.expr_types.get_with_uncertainty(file, e.idx())
-            {
+            if !afresh && let Some((known, uncertain)) = self.kept_type_of_expr(file, e) {
                 self.uncertain |= uncertain;
                 return known;
             }
@@ -145,7 +171,7 @@ impl<'p> Checker<'p> {
         // Resolving the calls around it may well have settled it.
         if self.prepare_question_about_expr(file, e)
             && !afresh
-            && let Some((known, uncertain)) = self.p.expr_types.get_with_uncertainty(file, e.idx())
+            && let Some((known, uncertain)) = self.kept_type_of_expr(file, e)
         {
             self.uncertain |= uncertain;
             return known;
@@ -166,30 +192,68 @@ impl<'p> Checker<'p> {
         ) {
             self.resolve_chain_from_the_inside(file, e);
         }
-        // `checkExpressionWithContextualType` has no guard against re-entry. A visit begun before the pattern was looked at this way
-        // took its names for what they are declared as: this one does not go the same way.
-        let resolution_start = std::mem::replace(&mut self.resolution_start, visible_from);
-        let entered = self.enter(Query::Expr(file, e));
-        self.resolution_start = resolution_start;
-        if !entered {
-            return TypeId::UNRESOLVED;
-        }
-        let around = std::mem::replace(&mut self.uncertain, false);
-        let ty = self.type_of_expr_uncached(file, e);
-        let ty = match self.data(ty) {
-            TypeData::LazyAlias { .. } | TypeData::NoInfer(_) => self.force(ty),
-            _ => ty,
-        };
-        let uncertain = self.uncertain;
-        self.uncertain |= around;
-        if self.leave() && !afresh {
-            if uncertain {
-                self.p.expr_types.set_uncertain(file, e.idx(), ty);
-            } else {
-                self.p.expr_types.set(file, e.idx(), ty);
+        let (ty, uncertain, holds) = match self.type_of_plain_literal(file, e) {
+            Some(ty) => (ty, false, true),
+            None => {
+                // `checkExpressionWithContextualType` has no guard against re-entry. A visit begun before the pattern was looked at
+                // this way took its names for what they are declared as: this one does not go the same way.
+                let resolution_start = std::mem::replace(&mut self.resolution_start, visible_from);
+                let entered = self.enter(Query::Expr(file, e));
+                self.resolution_start = resolution_start;
+                if !entered {
+                    return TypeId::UNRESOLVED;
+                }
+                let around = std::mem::replace(&mut self.uncertain, false);
+                let ty = self.type_of_expr_uncached(file, e);
+                let ty = match self.data(ty) {
+                    TypeData::LazyAlias { .. } | TypeData::NoInfer(_) => self.force(ty),
+                    _ => ty,
+                };
+                let uncertain = self.uncertain;
+                self.uncertain |= around;
+                (ty, uncertain, self.leave())
             }
+        };
+        if holds && !afresh {
+            self.keep_type_of_expr(file, e, ty, uncertain);
         }
         ty
+    }
+
+    /// The type of `e` if it is a literal that nothing has to be asked about, so that nothing can come back to it or be found out to
+    /// hold only for now meanwhile. It leaves what `enter` and `leave` would. `None` also where `enter` would refuse.
+    #[inline]
+    fn type_of_plain_literal(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        let hir = self.hir(file);
+        let kind = hir[e].kind;
+        if !matches!(
+            kind,
+            ExprKind::Null
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Number(_)
+                | ExprKind::String(_)
+        ) || self.timed_out
+            || self.stack.len() >= MAX_DEPTH
+            || self.is_stack_low()
+        {
+            return None;
+        }
+        let ty = match kind {
+            ExprKind::Null => TypeId::NULL,
+            ExprKind::True => TypeId::FRESH_TRUE,
+            ExprKind::False => TypeId::FRESH_FALSE,
+            ExprKind::Number(n) => self.number_literal(hir.numbers[n as usize], true),
+            // Not a private name.
+            ExprKind::String(s) if hir.text.get(hir[e].pos as usize) != Some(&b'#') => {
+                self.string_literal(s, true)
+            }
+            _ => return None,
+        };
+        self.came_full_circle = false;
+        self.last_enter = EnterOutcome::Entered;
+        self.left_a_circle = false;
+        Some(ty)
     }
 
     /// `reportNonexistentProperty` returns at once for a property access whose error is already being reported, and the access is
@@ -299,7 +363,8 @@ impl<'p> Checker<'p> {
     /// Whether the type of `e`, which has been asked for, rests on something that could not be found out.
     #[inline]
     pub(super) fn is_uncertain(&self, file: FileId, e: ExprId) -> bool {
-        self.p.expr_types.is_uncertain(file, e.idx())
+        self.kept_type_of_expr(file, e)
+            .is_some_and(|(_, uncertain)| uncertain)
     }
 
     /// Looks at an operand nothing is made of, as `checkExpression` does: what leads back to something that is being worked out
@@ -325,7 +390,7 @@ impl<'p> Checker<'p> {
                     }
                     match hir[at].kind {
                         ExprKind::Binary { left, .. }
-                            if c.p.expr_types.get(file, at.idx()).is_none() =>
+                            if c.kept_type_of_expr(file, at).is_none() =>
                         {
                             Some(left)
                         }
@@ -353,7 +418,7 @@ impl<'p> Checker<'p> {
                 let further = |c: &Self, at: ExprId| match hir[at].kind {
                     ExprKind::Call(call) => {
                         let is_link = at != e;
-                        if is_link && c.p.expr_types.get(file, at.idx()).is_some() {
+                        if is_link && c.kept_type_of_expr(file, at).is_some() {
                             return None;
                         }
                         Some((hir[call].callee, is_link))
@@ -386,7 +451,7 @@ impl<'p> Checker<'p> {
         for link in chain.into_iter().rev() {
             self.type_of_expr_as_written(file, link);
             // What is not kept would be worked out again by every link after it.
-            if self.p.expr_types.get(file, link.idx()).is_none() {
+            if self.kept_type_of_expr(file, link).is_none() {
                 break;
             }
         }
@@ -2352,9 +2417,7 @@ impl<'p> Checker<'p> {
                             .iter()
                             .rposition(|q| *q == Query::Call(file, parent))
                         {
-                            for tainted in &mut self.tainted[i + 1..] {
-                                *tainted = true;
-                            }
+                            self.mark_tainted_from(i + 1);
                         }
                         return self.instantiate(ty, so_far);
                     }
@@ -3753,9 +3816,7 @@ impl<'p> Checker<'p> {
         {
             // Once the component is resolved something else may be expected: what goes by this is not kept.
             if let Some(i) = self.stack.iter().rposition(|q| *q == Query::Call(file, e)) {
-                for tainted in &mut self.tainted[i + 1..] {
-                    *tainted = true;
-                }
+                self.mark_tainted_from(i + 1);
             }
             return Some(ty);
         }
@@ -4225,7 +4286,7 @@ impl<'p> Checker<'p> {
                 let context = self.without_no_infer(context);
                 if self.is_provisional_here() {
                     self.provisional_arg_contexts.insert((file, part), context);
-                } else if self.tainted.last() != Some(&true) {
+                } else if !self.is_innermost_tainted() {
                     // Not where the choice rests on something that went unanswered: it is made again, and settles this then.
                     self.p.arg_contexts.insert((file, part), context);
                 }

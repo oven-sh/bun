@@ -3059,9 +3059,7 @@ impl<'p> Checker<'p> {
                     });
                 }
                 // `getDeclaredTypeOfTypeAlias`, `pushTypeResolution`: it depends on itself, which is an error.
-                for tainted in &mut self.tainted[i + 1..] {
-                    *tainted = true;
-                }
+                self.mark_tainted_from(i + 1);
                 self.cycles += 1;
                 return TypeId::ANY;
             }

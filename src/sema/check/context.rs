@@ -266,10 +266,7 @@ impl<'p> Checker<'p> {
                     PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => {
                         if outer == pattern {
                             // What is made of it holds for as long as the implied type is being worked out.
-                            let floor = floor.min(self.tainted.len());
-                            for tainted in &mut self.tainted[floor..] {
-                                *tainted = true;
-                            }
+                            self.mark_tainted_from(floor.min(self.stack.len()));
                             self.cycles += 1;
                             return true;
                         }
@@ -1204,7 +1201,7 @@ impl<'p> Checker<'p> {
         self.what_only_holds_for_now() == before
             // What goes by a call that is being resolved marks the questions asked since the call. If the call is the last of
             // them there is nothing to mark.
-            && self.tainted.last() != Some(&true)
+            && !self.is_innermost_tainted()
             && !matches!(self.stack.last(), Some(Query::Call(..)))
             // These are raised for whoever asked, each time.
             && !(self.uncertain

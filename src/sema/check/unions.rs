@@ -100,6 +100,17 @@ mod tf {
 /// Where something is declared: the libraries first, then by file, then by position. `compareNodes`
 type Place = (bool, FileId, u32);
 
+/// The members of a union that is being put together.
+type Flat = smallvec::SmallVec<[TypeId; 16]>;
+
+// `union_anew` goes by these numbers.
+const _: () = assert!(
+    TypeId::UNRESOLVED.0 == 0
+        && TypeId::ANY.0 == 1
+        && TypeId::UNKNOWN.0 == 2
+        && TypeId::SYMBOL.0 < 32
+);
+
 /// What has a name, or a declaration, comes before what has none.
 fn some_first<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
     match (a, b) {
@@ -161,7 +172,7 @@ impl<'p> Checker<'p> {
         }
     }
 
-    fn add_to_union(&self, out: &mut Vec<TypeId>, ty: TypeId) {
+    fn add_to_union(&self, out: &mut Flat, ty: TypeId) {
         match self.data(ty) {
             TypeData::Union(members) => out.extend_from_slice(members),
             TypeData::Intrinsic(Intrinsic::Never) => {}
@@ -177,19 +188,24 @@ impl<'p> Checker<'p> {
     /// `merge_constrained`: whether `T & P1 | T & P2` comes to `T`. It does not among the intersections made without looking at
     /// what `T` extends, which have no `ObjectFlagsIsConstrainedTypeVariable`.
     fn union_ex(&mut self, types: &[TypeId], merge_constrained: bool) -> TypeId {
-        self.time_trap();
-        self.guard("union");
-        match types {
+        // Two types come to the same in either order.
+        let pair = match *types {
             [] => return TypeId::NEVER,
-            [one] => return *one,
-            [a, b] if a == b => return *a,
-            _ => {}
+            [one] => return one,
+            [a, b] if a == b => return a,
+            [a, b] if merge_constrained => Some(if a < b { (a, b) } else { (b, a) }),
+            _ => None,
+        };
+        if let Some((a, b)) = pair
+            && let Some(known) = self.recent_unions.get(a.0, b.0)
+        {
+            return TypeId(known);
         }
-        let mut members = Vec::with_capacity(types.len());
-        for &ty in types {
-            self.add_to_union(&mut members, ty);
+        let (union, is_plain) = self.union_anew(types, merge_constrained);
+        if is_plain && let Some((a, b)) = pair {
+            self.recent_unions.put(a.0, b.0, union.0);
         }
-        self.union_of_flat(members, merge_constrained)
+        union
     }
 
     /// `getUnionType(types, UnionReductionNone)`: `A | B | ...` with everything left in, `any` and `unknown` next to others too.
@@ -199,7 +215,7 @@ impl<'p> Checker<'p> {
         if let [one] = types {
             return *one;
         }
-        let mut members = Vec::with_capacity(types.len());
+        let mut members = Flat::new();
         for &ty in types {
             self.add_to_union(&mut members, ty);
         }
@@ -212,30 +228,36 @@ impl<'p> Checker<'p> {
         if !self.p.files.options.strict_null_checks {
             members.retain(|m| !m.is_undefined() && !m.is_null());
         }
-        match members.len() {
-            0 => TypeId::NEVER,
-            1 => members[0],
-            _ => self.intern(TypeData::Union(members.into_boxed_slice())),
+        match members[..] {
+            [] => TypeId::NEVER,
+            [only] => only,
+            _ => self.intern(TypeData::Union(Box::from(&members[..]))),
         }
     }
 
-    /// `getUnionTypeWorker` with `UnionReductionLiteral`.
-    fn union_of_flat(&mut self, mut members: Vec<TypeId>, merge_constrained: bool) -> TypeId {
+    /// `getUnionTypeWorker` with `UnionReductionLiteral`. With it, whether nothing but the members was looked at: then the same types
+    /// come to the same whoever asks.
+    #[inline(never)]
+    fn union_anew(&mut self, given: &[TypeId], merge_constrained: bool) -> (TypeId, bool) {
+        self.time_trap();
+        self.guard("union");
+        let mut members = Flat::new();
+        for &ty in given {
+            self.add_to_union(&mut members, ty);
+        }
         members.sort_unstable();
         members.dedup();
-        if members.first() == Some(&TypeId::UNRESOLVED) {
-            return TypeId::UNRESOLVED;
-        }
-        if members.contains(&TypeId::ANY) {
-            return TypeId::ANY;
-        }
-        if members.contains(&TypeId::UNKNOWN) {
-            return TypeId::UNKNOWN;
+        match members[..] {
+            [] => return (TypeId::NEVER, true),
+            // What is not known, `any` and `unknown`, in this order, leave nothing of the others. Theirs are the lowest numbers.
+            [first, ..] if first <= TypeId::UNKNOWN => return (first, true),
+            [only] => return (only, true),
+            _ => {}
         }
         // `addTypeToUnion`: without strictNullChecks everything can be null or undefined, and they are never members. With nothing
         // else there it is null before undefined, and the kind that is not widened if any of them was
         // (`TypeFlagsIncludesNonWideningType`).
-        if members.len() > 1 && !self.p.files.options.strict_null_checks {
+        if !self.p.files.options.strict_null_checks {
             let null = members.iter().any(|m| m.is_null());
             let not_widened = members.iter().any(|&m| {
                 matches!(
@@ -245,85 +267,122 @@ impl<'p> Checker<'p> {
             });
             members.retain(|m| !m.is_undefined() && !m.is_null());
             if members.is_empty() {
-                return match (null, not_widened) {
+                let left = match (null, not_widened) {
                     (true, true) => TypeId::NULL_DECLARED,
                     (true, false) => TypeId::NULL,
                     (false, true) => TypeId::UNDEFINED_DECLARED,
                     (false, false) => TypeId::UNDEFINED,
                 };
+                return (left, true);
             }
         }
-        // The `undefined` of what is not there says nothing next to the real one.
-        if members.binary_search(&TypeId::MISSING).is_ok()
-            && members.binary_search(&TypeId::UNDEFINED).is_ok()
-        {
-            members.retain(|&m| m != TypeId::MISSING);
+        // A bit for each of the types with the lowest numbers that is there. They come first.
+        let mut low = 0u32;
+        for m in members.iter().take_while(|m| m.0 < 32) {
+            low |= 1 << m.0;
         }
-        // `removeRedundantLiteralTypes`. It goes by the flags, and a member of an enum has those of its value.
+        let has = |t: TypeId| low & 1 << t.0 != 0;
+        // The `undefined` of what is not there says nothing next to the real one.
+        if has(TypeId::MISSING) && has(TypeId::UNDEFINED) {
+            members.retain(|m| *m != TypeId::MISSING);
+        }
+        let mut is_plain = true;
         if members.len() > 1 {
-            let has = |t: TypeId| members.binary_search(&t).is_ok();
+            let (mut any_fresh, mut has_pattern, mut has_constrained) = (false, false, false);
+            for &m in members.iter() {
+                match self.data(m) {
+                    TypeData::StringLit { fresh: true, .. }
+                    | TypeData::NumberLit { fresh: true, .. }
+                    | TypeData::BigIntLit { fresh: true, .. }
+                    | TypeData::BoolLit { fresh: true, .. }
+                    | TypeData::EnumLit { fresh: true, .. }
+                    | TypeData::Enum { fresh: true, .. } => any_fresh = true,
+                    TypeData::Template { .. } | TypeData::StringMapping { .. } => {
+                        has_pattern = true
+                    }
+                    // `constrained_type_variable` makes nothing of any other.
+                    TypeData::Intersection(parts) => {
+                        if let [a, b] = parts[..]
+                            && (self.is_type_variable(a) || self.is_type_variable(b))
+                        {
+                            has_constrained = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // `removeRedundantLiteralTypes`. It goes by the flags, and a member of an enum has those of its value.
             let (string, number, bigint, symbol) = (
                 has(TypeId::STRING),
                 has(TypeId::NUMBER),
                 has(TypeId::BIGINT),
                 has(TypeId::SYMBOL),
             );
-            let any_fresh = members.iter().any(|&m| self.is_fresh_literal(m));
             if string || number || bigint || symbol || any_fresh {
-                let snapshot = members.clone();
-                members.retain(|&m| match self.data(m) {
-                    TypeData::StringLit { .. }
-                    | TypeData::Template { .. }
-                    | TypeData::StringMapping { .. }
-                        if string =>
-                    {
-                        false
+                let snapshot = if any_fresh {
+                    Flat::from_slice(&members[..])
+                } else {
+                    Flat::new()
+                };
+                members.retain(|m| {
+                    let m = *m;
+                    match self.data(m) {
+                        TypeData::StringLit { .. }
+                        | TypeData::Template { .. }
+                        | TypeData::StringMapping { .. }
+                            if string =>
+                        {
+                            false
+                        }
+                        TypeData::NumberLit { .. } if number => false,
+                        TypeData::EnumLit {
+                            value: EnumValue::String(_),
+                            ..
+                        } if string => false,
+                        TypeData::EnumLit {
+                            value: EnumValue::Number(_),
+                            ..
+                        } if number => false,
+                        TypeData::BigIntLit { .. } if bigint => false,
+                        TypeData::UniqueSymbol { .. } if symbol => false,
+                        _ if any_fresh && self.is_fresh_literal(m) => snapshot
+                            .binary_search(&self.with_freshness(m, false))
+                            .is_err(),
+                        _ => true,
                     }
-                    TypeData::NumberLit { .. } if number => false,
-                    TypeData::EnumLit {
-                        value: EnumValue::String(_),
-                        ..
-                    } if string => false,
-                    TypeData::EnumLit {
-                        value: EnumValue::Number(_),
-                        ..
-                    } if number => false,
-                    TypeData::BigIntLit { .. } if bigint => false,
-                    TypeData::UniqueSymbol { .. } if symbol => false,
-                    _ if any_fresh && self.is_fresh_literal(m) => snapshot
-                        .binary_search(&self.with_freshness(m, false))
-                        .is_err(),
-                    _ => true,
                 });
             }
-        }
-        if members.len() > 1 {
-            let (mut has_pattern, mut has_intersection) = (false, false);
-            for &m in &members {
-                match self.data(m) {
-                    TypeData::Template { .. } | TypeData::StringMapping { .. } => {
-                        has_pattern = true
-                    }
-                    TypeData::Intersection(_) => has_intersection = true,
-                    _ => {}
+            if members.len() > 1 {
+                // `string` has taken the patterns out.
+                if has_pattern && !string {
+                    is_plain = false;
+                    self.remove_string_literals_matched_by_template_literals(&mut members);
+                }
+                if has_constrained && merge_constrained {
+                    is_plain = false;
+                    self.remove_constrained_type_variables(&mut members);
                 }
             }
-            if has_pattern {
-                self.remove_string_literals_matched_by_template_literals(&mut members);
-            }
-            if has_intersection && merge_constrained {
-                self.remove_constrained_type_variables(&mut members);
-            }
         }
-        match members.len() {
-            0 => TypeId::NEVER,
-            1 => members[0],
-            _ => self.intern(TypeData::Union(members.into_boxed_slice())),
-        }
+        let union = match members[..] {
+            [] => TypeId::NEVER,
+            [only] => only,
+            _ => {
+                // One of those given may be all of it.
+                let whole = given.iter().copied().find(
+                    |&ty| matches!(self.data(ty), TypeData::Union(all) if all[..] == members[..]),
+                );
+                match whole {
+                    Some(whole) => whole,
+                    None => self.intern(TypeData::Union(Box::from(&members[..]))),
+                }
+            }
+        };
+        (union, is_plain)
     }
 
     /// `removeStringLiteralsMatchedByTemplateLiterals`
-    fn remove_string_literals_matched_by_template_literals(&mut self, members: &mut Vec<TypeId>) {
+    fn remove_string_literals_matched_by_template_literals(&mut self, members: &mut Flat) {
         let patterns: Vec<TypeId> = members
             .iter()
             .copied()
@@ -403,7 +462,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `removeConstrainedTypeVariables`: `T & P1 | T & P2` is `T` once the `P`s are all that `T` extends.
-    fn remove_constrained_type_variables(&mut self, members: &mut Vec<TypeId>) {
+    fn remove_constrained_type_variables(&mut self, members: &mut Flat) {
         // (member, T, P, what T extends)
         let mut constrained: Vec<(TypeId, TypeId, TypeId, TypeId)> = Vec::new();
         for &m in members.iter() {
@@ -429,7 +488,7 @@ impl<'p> Checker<'p> {
                 .iter()
                 .all(|&p| constrained.iter().any(|c| c.1 == variable && c.2 == p))
             {
-                members.retain(|&m| !constrained.iter().any(|c| c.0 == m && c.1 == variable));
+                members.retain(|m| !constrained.iter().any(|c| c.0 == *m && c.1 == variable));
                 members.push(variable);
                 changed = true;
             }
@@ -632,15 +691,20 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         match self.data(ty) {
             TypeData::Union(members) => {
-                let kept: Vec<TypeId> =
-                    members.iter().copied().filter(|&m| keep(self, m)).collect();
-                if kept.len() == members.len() {
+                let Some(first_out) = members.iter().position(|&m| !keep(self, m)) else {
                     return ty;
+                };
+                let mut kept: smallvec::SmallVec<[TypeId; 8]> =
+                    smallvec::SmallVec::from_slice(&members[..first_out]);
+                for &m in &members[first_out + 1..] {
+                    if keep(self, m) {
+                        kept.push(m);
+                    }
                 }
-                match kept.len() {
-                    0 => TypeId::NEVER,
-                    1 => kept[0],
-                    _ => self.intern(TypeData::Union(kept.into_boxed_slice())),
+                match kept[..] {
+                    [] => TypeId::NEVER,
+                    [only] => only,
+                    _ => self.intern(TypeData::Union(Box::from(&kept[..]))),
                 }
             }
             TypeData::Intrinsic(Intrinsic::Never) => ty,
@@ -662,7 +726,8 @@ impl<'p> Checker<'p> {
     ) -> TypeId {
         match self.data(ty) {
             TypeData::Union(members) => {
-                let mapped: Vec<TypeId> = members.iter().map(|&m| f(self, m)).collect();
+                let mapped: smallvec::SmallVec<[TypeId; 8]> =
+                    members.iter().map(|&m| f(self, m)).collect();
                 if mapped[..] == members[..] {
                     return ty;
                 }

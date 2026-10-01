@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isGlibc, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isGlibc, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "path";
 
@@ -458,11 +458,11 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
 
   // The compiled binary runs from another cwd with its own temp dir, so the
   // only place the libraries can come from is the executable itself.
-  async function runIsolated(dir: string, extractDir: string) {
+  async function runIsolated(dir: string, extractDir: string, env: Record<string, string> = {}) {
     await using proc = Bun.spawn({
       cmd: [join(dir, "app" + exe)],
       cwd: extractDir,
-      env: { ...bunEnv, BUN_TMPDIR: extractDir, TMPDIR: extractDir },
+      env: { ...bunEnv, BUN_TMPDIR: extractDir, TMPDIR: extractDir, ...env },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -832,52 +832,79 @@ describe.concurrent.skipIf(!cc)("compile --asset: embedded shared libraries keep
     TIMEOUT,
   );
 
-  // Another user of the machine can create the mirror's name first. The
-  // process then loads from a copy under a name of its own: one copy, not one
-  // for each `dlopen` call.
+  // A process that cannot have the canonical directory, or that no later run
+  // could trust there, loads from a copy under a name of its own: one copy,
+  // not one for each `dlopen` call, and the copy is gone when the process exits.
   test(
-    "dlopen calls share one copy when the mirror's name is taken",
+    "a process that cannot use the canonical directory loads from one copy of its own",
     async () => {
-      using dir = tempDir("bunfs-ffi-taken", {
+      const euid = process.geteuid!();
+      using dir = tempDir("bunfs-ffi-own-copy", {
         "foo.c": FOO_C,
         "bar.c": BAR_C,
+        "euid.c": `unsigned geteuid(void) { return ${euid + 1}; }\n`,
         "lib/.keep": "",
+        // Three `dlopen` calls, then what the temp directory holds while the
+        // process runs and the euid the process sees.
         "index.ts": /* ts */ `
           import { dlopen } from "bun:ffi";
+          import { readdirSync } from "node:fs";
           const symbols = { bar: { args: [], returns: "int" } } as const;
           const answers: number[] = [];
           for (let i = 0; i < 3; i++) answers.push(dlopen("/$bunfs/root/lib/libbar.${soExt}", symbols).symbols.bar());
-          console.log(JSON.stringify(answers));
+          const entries = readdirSync(process.env.BUN_TMPDIR!).length;
+          console.log(JSON.stringify({ answers, entries, euid: process.geteuid!() }));
         `,
       });
       await buildLibs(String(dir), { [`lib/libbar.${soExt}`]: "bar.c" });
       await compile(String(dir), ["--asset", "lib"]);
+      const report = (entries: number, seenEuid = euid) =>
+        JSON.stringify({ answers: [43, 43, 43], entries, euid: seenEuid });
 
-      // The first run gives the name. A file at that name in a second temp
-      // directory stands for the other user's entry: the mirror cannot take it.
-      using named = tempDir("bunfs-ffi-taken-name", {});
-      expect((await runIsolated(String(dir), String(named))).stdout.trim()).toBe("[43,43,43]");
+      // The first run gives the name of the canonical directory.
+      using named = tempDir("bunfs-ffi-own-copy-name", {});
+      const first = await runIsolated(String(dir), String(named));
+      expect(first.stderr).not.toContain("ERR_DLOPEN_FAILED");
+      expect(first.stdout.trim()).toBe(report(1));
       const name = readdirSync(String(named)).find(entry => entry.startsWith(".bun-"))!;
       expect(name).toBeString();
 
-      using extractRoot = tempDir("bunfs-ffi-taken-extract", { [name]: "" });
-      const extractDir = String(extractRoot);
-      const result = await runIsolated(String(dir), extractDir);
+      // Another user of the machine can create that name first. A file at the
+      // name in a second temp directory stands for the other user's entry.
+      using taken = tempDir("bunfs-ffi-own-copy-taken", { [name]: "" });
+      const result = await runIsolated(String(dir), String(taken));
       expect(result.stderr).not.toContain("ERR_DLOPEN_FAILED");
-      expect(result.stdout.trim()).toBe("[43,43,43]");
+      expect(result.stdout.trim()).toBe(report(2));
       expect(result.code).toBe(0);
-      expect(extracted(extractDir, "libbar." + soExt)).toHaveLength(1);
+      expect(readdirSync(String(taken))).toEqual([name]);
 
-      // The same when the mirror is this user's and cannot be completed: a
+      // The canonical directory is this user's and cannot be completed: a
       // directory sits where a library goes, and a rename does not replace it.
       const library = join(String(named), extracted(String(named), "libbar." + soExt)[0]);
       rmSync(library);
       mkdirSync(join(library, "in-the-way"), { recursive: true });
       const beside = await runIsolated(String(dir), String(named));
       expect(beside.stderr).not.toContain("ERR_DLOPEN_FAILED");
-      expect(beside.stdout.trim()).toBe("[43,43,43]");
+      expect(beside.stdout.trim()).toBe(report(2));
       expect(beside.code).toBe(0);
-      expect(readdirSync(String(named))).toHaveLength(2);
+      expect(readdirSync(String(named))).toEqual([name]);
+
+      // Some filesystems do not keep the owner of a file: a mount that gives
+      // every file to one user, or a server that maps root to another user.
+      // What the process creates there shows an owner that is not its euid, so
+      // no directory there can pass for this user's in a later run. The
+      // preloaded `geteuid` stands for such a filesystem: the process sees
+      // another euid than the owner of what it creates.
+      if (isLinux) {
+        await run_cc(String(dir), ["-shared", "-fPIC", "euid.c", "-o", "euid.so"]);
+        using otherOwner = tempDir("bunfs-ffi-own-copy-owner", {});
+        const preload = [join(String(dir), "euid.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":");
+        const shown = await runIsolated(String(dir), String(otherOwner), { LD_PRELOAD: preload });
+        expect(shown.stderr).not.toContain("ERR_DLOPEN_FAILED");
+        expect(shown.stdout.trim()).toBe(report(1, euid + 1));
+        expect(shown.code).toBe(0);
+        expect(readdirSync(String(otherOwner))).toEqual([]);
+      }
     },
     TIMEOUT,
   );

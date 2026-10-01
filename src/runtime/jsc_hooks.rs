@@ -4576,39 +4576,104 @@ struct MirrorSet<'a> {
     members: MirrorMembers<'a>,
 }
 
-/// The copies this process wrote under a name of its own, by set hash, because
-/// it could not have the canonical name. Later calls and Workers load from the
-/// same copy instead of writing one each. Its lock is held for every write of
-/// a mirror, so Workers that start together write it once between them.
-static OWN_COPIES: bun_threading::Guarded<Vec<(u64, bun_core::ZBox)>> =
-    bun_threading::Guarded::new(Vec::new());
+/// A copy of a set that this process wrote under a name of its own, because it
+/// could not have the canonical name or no later run could trust it there.
+struct OwnCopy {
+    hash: u64,
+    /// The euid the process had when it made the copy.
+    euid: u32,
+    name: bun_core::ZBox,
+    /// The owner the filesystem showed for it when this process made it.
+    owner: u32,
+    /// Where each member is in it: what the process removes when it exits.
+    members: Vec<bun_core::ZBox>,
+}
+
+impl OwnCopy {
+    /// One pass, and no second try for what stays. A library that is still
+    /// loaded can stay until the process is gone (NFS and SMB keep it under
+    /// another name, Windows does not remove it), and then the directories
+    /// above it stay too.
+    fn remove(&self, tmpdir: &bun_sys::Dir) {
+        {
+            let Ok(dir) = tmpdir.open_at_with(
+                self.name.as_bytes(),
+                bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
+            ) else {
+                return;
+            };
+            #[cfg(unix)]
+            if !bun_sys::fstat(dir.fd).is_ok_and(|st| st.st_uid == self.owner) {
+                return;
+            }
+            for member in &self.members {
+                let _ = bun_sys::unlinkat(&dir, member.as_zstr());
+            }
+            let mut parent_buf = bun_paths::path_buffer_pool::get();
+            for member in &self.members {
+                let mut parent = bun_paths::dirname(member.as_bytes());
+                while let Some(path) = parent {
+                    let path_z = bun_paths::resolve_path::z(path, &mut parent_buf);
+                    if bun_sys::rmdirat(&dir, path_z).is_err() {
+                        break;
+                    }
+                    parent = bun_paths::dirname(path);
+                }
+            }
+        }
+        let _ = bun_sys::rmdirat(tmpdir, self.name.as_zstr());
+    }
+}
+
+struct OwnCopies {
+    copies: Vec<OwnCopy>,
+    /// The process removed its copies on its way out: it makes no more.
+    exited: bool,
+}
+
+/// Later calls and Workers load from the same copy instead of writing one
+/// each, and the process removes its copies when it exits. The lock is held
+/// for every write of a mirror, so Workers that start together write it once
+/// between them.
+static OWN_COPIES: bun_threading::Guarded<OwnCopies> = bun_threading::Guarded::new(OwnCopies {
+    copies: Vec::new(),
+    exited: false,
+});
 
 /// One directory under the temp directory that holds, or is to hold, a mirror.
 struct MirrorDir<'a> {
     set: &'a MirrorSet<'a>,
     tmpdir: &'a bun_sys::Dir,
     name: &'a bun_core::ZStr,
+    /// The uid that owns it and everything in it when it is ours.
+    owner: u32,
 }
 
 impl MirrorDir<'_> {
-    /// A directory, not a symlink, owned by the euid: nobody else can swap an
+    /// The owner the filesystem shows for it, when it is a directory and not
+    /// a symlink.
+    fn shown_owner(&self) -> Option<u32> {
+        let st = bun_sys::lstatat(self.tmpdir, self.name).ok()?;
+        #[cfg(unix)]
+        {
+            bun_sys::S::ISDIR(st.st_mode as u32).then_some(st.st_uid)
+        }
+        // The temp directory is per user: there is no owner to compare.
+        #[cfg(windows)]
+        {
+            let _ = st;
+            Some(self.owner)
+        }
+    }
+
+    /// A directory, not a symlink, of the right owner: nobody else can swap an
     /// entry under us before `dlopen`. Mode bits are not part of the rule, some
     /// filesystems make them up.
     fn is_ours(&self) -> bool {
-        bun_sys::lstatat(self.tmpdir, self.name).is_ok_and(|st| {
-            #[cfg(unix)]
-            {
-                bun_sys::S::ISDIR(st.st_mode as u32) && st.st_uid == self.set.uid
-            }
-            #[cfg(windows)]
-            {
-                let _ = st;
-                true
-            }
-        })
+        self.shown_owner() == Some(self.owner)
     }
 
-    /// `file` is in it: a regular file of the euid with the right size.
+    /// `file` is in it: a regular file of the right owner with the right size.
     fn has(&self, file: &bun_standalone_graph::File) -> bool {
         let mut rel_buf = bun_paths::path_buffer_pool::get();
         let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) else {
@@ -4622,7 +4687,7 @@ impl MirrorDir<'_> {
         bun_sys::lstatat(self.tmpdir, path).is_ok_and(|st| {
             let size_ok = st.st_size as usize == file.contents.len();
             #[cfg(unix)]
-            let ours = st.st_uid == self.set.uid && bun_sys::S::ISREG(st.st_mode as u32);
+            let ours = st.st_uid == self.owner && bun_sys::S::ISREG(st.st_mode as u32);
             #[cfg(windows)]
             let ours = true;
             size_ok && ours
@@ -4664,11 +4729,17 @@ impl MirrorDir<'_> {
 }
 
 impl<'a> MirrorSet<'a> {
-    fn dir(&'a self, tmpdir: &'a bun_sys::Dir, name: &'a bun_core::ZStr) -> MirrorDir<'a> {
+    fn dir(
+        &'a self,
+        tmpdir: &'a bun_sys::Dir,
+        name: &'a bun_core::ZStr,
+        owner: u32,
+    ) -> MirrorDir<'a> {
         MirrorDir {
             set: self,
             tmpdir,
             name,
+            owner,
         }
     }
 
@@ -4710,8 +4781,9 @@ impl<'a> MirrorSet<'a> {
 
     /// Writes `{tmpdir}/.bun-{uid}-{hash}/{target's relative path}` into `out_buf`
     /// and returns the length once every member of the set is on disk there.
-    /// When that directory cannot be had, or cannot be completed, the path is
-    /// inside a copy under a name of this process's own.
+    /// When that directory cannot be had, cannot be completed, or would not
+    /// show the euid as its owner, the path is inside a copy under a name of
+    /// this process's own.
     fn materialise(
         &'a self,
         tmpdir: &'a bun_sys::Dir,
@@ -4727,7 +4799,7 @@ impl<'a> MirrorSet<'a> {
         let mut rel_buf = bun_paths::path_buffer_pool::get();
         let rel = native_libs::mirror_relative_path(target.name, &mut rel_buf[..])?;
 
-        let canonical = self.dir(tmpdir, canonical_name);
+        let canonical = self.dir(tmpdir, canonical_name, self.uid);
         // Nothing is written for a path the caller has no room for.
         canonical.path_of(rel, out_buf)?;
         if canonical.is_complete() {
@@ -4736,9 +4808,10 @@ impl<'a> MirrorSet<'a> {
 
         let mut own_copies = OWN_COPIES.lock();
         let own = own_copies
+            .copies
             .iter()
-            .find(|(hash, _)| *hash == self.hash)
-            .map(|(_, name)| self.dir(tmpdir, name.as_zstr()));
+            .rfind(|copy| copy.hash == self.hash && copy.euid == self.uid)
+            .map(|copy| self.dir(tmpdir, copy.name.as_zstr(), copy.owner));
         if let Some(own) = &own
             && own.is_complete()
         {
@@ -4755,6 +4828,10 @@ impl<'a> MirrorSet<'a> {
             return own.path_of(rel, out_buf);
         }
 
+        if own_copies.exited {
+            return None;
+        }
+
         // Write the whole set into a scratch directory, then rename it into
         // place. A directory rename never replaces a non-empty directory, so
         // the first process to finish owns the name.
@@ -4765,43 +4842,88 @@ impl<'a> MirrorSet<'a> {
             let _ = tmpdir.delete_tree(scratch_name.as_bytes());
         };
         // Scoped: Windows refuses to move a directory that is open.
-        let written = {
-            let Ok(scratch) = tmpdir.open_at_with(scratch_name.as_bytes(), bun_sys::O::RDONLY)
-            else {
+        let (made_as, written) = {
+            let Ok(handle) = tmpdir.open_at_with(
+                scratch_name.as_bytes(),
+                bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW,
+            ) else {
                 discard_scratch();
                 return None;
             };
-            self.members
-                .all(&mut |file| self.write_member(&scratch, file))
+            // The owner the filesystem shows for what this process makes. It
+            // is not the euid on a mount that gives every file to one user
+            // (drvfs, CIFS `uid=`) or maps this user to another (NFS
+            // `root_squash`).
+            #[cfg(unix)]
+            let Ok(made_as) = bun_sys::fstat(handle.fd).map(|st| st.st_uid) else {
+                discard_scratch();
+                return None;
+            };
+            #[cfg(windows)]
+            let made_as = self.uid;
+            let written = self
+                .members
+                .all(&mut |file| self.write_member(&handle, file));
+            (made_as, written)
         };
         if !written {
             discard_scratch();
             return None;
         }
-        if bun_sys::renameat(tmpdir, scratch_name, tmpdir, canonical_name).is_ok() {
-            return canonical.path_of(rel, out_buf);
+        let scratch = self.dir(tmpdir, scratch_name, made_as);
+        // Under the canonical name a later run takes a directory for this
+        // user's only by the euid. One that shows another owner there looks
+        // like everyone else's, so it does not go there.
+        if made_as == self.uid {
+            if bun_sys::renameat(tmpdir, scratch_name, tmpdir, canonical_name).is_ok() {
+                return canonical.path_of(rel, out_buf);
+            }
+            if !canonical_was_ours
+                && canonical.is_ours()
+                && (canonical.is_complete() || canonical.repair())
+            {
+                // Another process won the name.
+                discard_scratch();
+                return canonical.path_of(rel, out_buf);
+            }
         }
-        if !canonical_was_ours
-            && canonical.is_ours()
-            && (canonical.is_complete() || canonical.repair())
-        {
-            // Another process won the name.
-            discard_scratch();
-            return canonical.path_of(rel, out_buf);
-        }
-        // The name belongs to someone else on a sticky `/tmp`, or the
-        // directory under it is ours and cannot be completed: load from our
-        // own copy, this call and the later ones.
-        let Some(len) = self.dir(tmpdir, scratch_name).path_of(rel, out_buf) else {
+        // The name belongs to someone else on a sticky `/tmp`, the directory
+        // under it is ours and cannot be completed, or the filesystem does not
+        // show the euid: load from our own copy, this call and the later ones.
+        let Some(len) = scratch.path_of(rel, out_buf) else {
             discard_scratch();
             return None;
         };
-        own_copies.retain(|(hash, _)| *hash != self.hash);
-        own_copies.push((
-            self.hash,
-            bun_core::ZBox::from_bytes(scratch_name.as_bytes()),
-        ));
+        let mut members = Vec::new();
+        self.members.all(&mut |file| {
+            let mut rel_buf = bun_paths::path_buffer_pool::get();
+            if let Some(rel) = native_libs::mirror_relative_path(file.name, &mut rel_buf[..]) {
+                members.push(bun_core::ZBox::from_bytes(rel));
+            }
+            true
+        });
+        bun_core::add_exit_callback(remove_own_copies);
+        own_copies.copies.push(OwnCopy {
+            hash: self.hash,
+            euid: self.uid,
+            name: bun_core::ZBox::from_bytes(scratch_name.as_bytes()),
+            owner: made_as,
+            members,
+        });
         Some(len)
+    }
+}
+
+/// No later run looks for this process's own copies: it would not know their
+/// names.
+extern "C" fn remove_own_copies() {
+    let mut own_copies = OWN_COPIES.lock();
+    own_copies.exited = true;
+    let Ok(tmpdir) = bun_sys::Dir::open(Fs::RealFS::tmpdir_path()) else {
+        return;
+    };
+    for copy in own_copies.copies.drain(..) {
+        copy.remove(&tmpdir);
     }
 }
 

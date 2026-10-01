@@ -60,7 +60,7 @@ module.exports = {
 					}
 					break;
 				case "BinaryExpression":
-					if (node.left.type === "PrivateIdentifier") { reference(node.left.name, true); walk(node.right, {}); return; }
+					if (node.left.type === "PrivateIdentifier") { reference(node.left.name, cx.write !== true); walk(node.right, {}); return; }
 					break;
 				case "ClassBody": {
 					const members = new Map();

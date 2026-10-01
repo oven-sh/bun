@@ -58,11 +58,14 @@ fn is_update(op: OpCode) -> bool {
     matches!(op, OpCode::UnPreDec | OpCode::UnPreInc | OpCode::UnPostDec | OpCode::UnPostInc)
 }
 
-/// The address of a member whose property is a private name.
+/// The address of the node that holds a private name: a member `a.#b`, or `#b in a`. It is ESLint's `privateIdentifierNode.parent`.
 fn private_member(expr: &Expr) -> Option<usize> {
     match &expr.data {
         ExprData::EIndex(index) if matches!(index.index.data, ExprData::EPrivateIdentifier(_)) => {
             Some(core::ptr::from_ref::<E::Index>(index).addr())
+        }
+        ExprData::EBinary(binary) if binary.op == OpCode::BinIn && matches!(binary.left.data, ExprData::EPrivateIdentifier(_)) => {
+            Some(core::ptr::from_ref::<E::Binary>(binary).addr())
         }
         _ => None,
     }
@@ -84,6 +87,11 @@ impl<'p, 'a> Walker<'p, 'a> {
         }
         match &expr.data {
             ExprData::EIndex(_) => {
+                if let Some(address) = private_member(expr) {
+                    self.write_only.insert(address);
+                }
+            }
+            ExprData::EBinary(node) if node.op == OpCode::BinIn => {
                 if let Some(address) = private_member(expr) {
                     self.write_only.insert(address);
                 }
@@ -282,8 +290,9 @@ impl<'ast> Visitor<'ast> for Walker<'_, '_> {
         } else if node.op == OpCode::BinIn
             && let ExprData::EPrivateIdentifier(private) = &node.left.data
         {
+            let write_only = self.write_only.remove(&address);
             let name = self.parsed.name_of(private.ref_);
-            self.reference(name, node.left.loc.start, true);
+            self.reference(name, node.left.loc.start, !write_only);
         }
         walk::walk_e_binary(self, node)
     }

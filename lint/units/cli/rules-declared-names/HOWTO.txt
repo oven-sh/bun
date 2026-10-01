@@ -1,0 +1,18 @@
+RESEARCH OF D4, "rules-declared-names", the pass that starts from the code (1a). Nothing here is in the tree. Read at be1ebe5295 of /workspace/wt/cli.
+The other pass of the same research has topdown/. The ten binding rules were first looked at in ../rules-bindings (oracle, cases, vectors, proto).
+
+oracle/rdn-oracle.cjs    node rdn-oracle.cjs [--type module|commonjs|script] [--ts|--tsx] [--core] [--rules r1,r2] [--no-bun-globals] [--json] <code | file.json>...
+                         ESLint at the pin for the twelve rules with the globals of Bun (../name-resolution/oracle/bun-globals.txt);
+                         --ts: @typescript-eslint/parser, and @typescript-eslint/no-redeclare unless --core.
+oracle/eslint-side.cjs   the oracle of D2 (../ts-entry-codes-harness/topdown/tools/eslint-side.cjs) with the table as languageOptions.globals
+                         (JEST=1 adds the 14 names of `bun test`, NO_BUN_GLOBALS=1 takes the table out). extract-d2.cjs and carry.cjs use it:
+                         SHOW=1 node oracle/carry.cjs <rule>...     ESLint's own cases by the extension that carries them.
+oracle/extract.cjs classify.cjs compare-upstream.cjs   as in ../rules-bindings/oracle; cases/ and vectors/ hold no-const-assign and no-undef.
+oracle/corpus-twelve.cjs  node corpus-twelve.cjs cases/corpus-own.txt <js|ts> [max]   the twelve rules over files of the repository: counts, names.
+oracle/corpus-show.cjs    node corpus-show.cjs cases/corpus-own.txt <js|ts> <rule> <max files> <max lines>   the reports with their lines.
+oracle/ts-redeclare-classes.cjs  node ts-redeclare-classes.cjs cases/corpus-own.txt   what @typescript-eslint/no-redeclare reports in TypeScript
+                         files: a value twice, a type beside a value, and how many are left when names of types and of imports do not count.
+proto/table-rules.cjs    ten rules as ONE pass over the tables of the scope analysis (no getDeclaredVariables, no handler per node),
+                         compared with the rules of ESLint:  node proto/table-rules.cjs [--ts] [--type commonjs] <cases.json>...
+                         node proto/table-rules.cjs --corpus cases/corpus-own.txt <js|ts> [max]     (FORCE=commonjs for every .js file)
+                         The other two rules have their prototypes in ../rules-bindings/proto (tracker-down.cjs, import-assign-down.cjs).

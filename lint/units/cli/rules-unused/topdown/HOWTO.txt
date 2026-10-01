@@ -19,6 +19,11 @@ no-unused-private-class-members
                        192 of TypeScript's tests/cases, 520 of ESLint and its node_modules, 3,675 of test262 and other trees.
   nupcm-real.cjs       node nupcm-real.cjs --probe <binary> [--show N] <file | cases.json | --list files.txt>...
                        a BINARY on Bun's tree (../probe: `nupcm <file>...`) against ESLint. `extra` has to be 0.
+                       Run (2026-10-01) with the probe of the other pass (/tmp/ru/nupcm, built 20:38 from ../probe/src/main.rs:
+                       the same plan on the tree of Parser::parse_for_lint), no difference, extra 0, missing 0:
+                       the seed 839 + cross 19 + ESLint's 61 + typescript-eslint's 99 + own 115; the generated 7,084 .js and
+                       33,288 .ts; files: 550 of bun, 164 of TypeScript's tests (28 more only Bun rejects: error tests), 520 of
+                       ESLint, 899 of typescript-eslint, 3,675 of test262 and other trees (249 both reject, 54 only ESLint).
   make-edge.cjs        node make-edge.cjs js|ts [--small] > list.json : each declaration form x each place x each form of the member.
   make-seed-nupcm.cjs  node make-seed-nupcm.cjs > seed/no-unused-private-class-members.json : 839 cases (461 js, 2 jsx, 372 ts, 2 tsx,
                        2 d.ts; 321 reports) with ESLint's answer as `expect`: ESLint's 61 (`eslintTest`), typescript-eslint's 99, cases/own.json,

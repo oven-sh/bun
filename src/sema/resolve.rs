@@ -771,7 +771,7 @@ pub(crate) fn known_extension(path: &str) -> &'static str {
 }
 
 /// `IsDeclarationFileName`: the name ends in `.d.ts`, `.d.mts`, `.d.cts` or `.d.*.ts`.
-fn is_declaration_file_name(path: &str) -> bool {
+pub(crate) fn is_declaration_file_name(path: &str) -> bool {
     let base = &path[path.rfind('/').map_or(0, |i| i + 1)..];
     [".d.ts", ".d.mts", ".d.cts"]
         .iter()

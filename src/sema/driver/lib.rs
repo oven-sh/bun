@@ -175,6 +175,16 @@ fn global(code: u32, args: &[String]) -> Diagnostic {
     }
 }
 
+/// TypeScript's messages say how to install types with npm.
+fn in_terms_of_bun(text: String) -> String {
+    const NPM: &str = "npm i --save-dev ";
+    if text.contains(NPM) {
+        text.replace(NPM, "bun add -d ")
+    } else {
+        text
+    }
+}
+
 /// `said`, of the bytes `start..end` of the file at `path`, which reads `text` and whose lines start at `starts`.
 fn located(
     path: &str,
@@ -488,7 +498,7 @@ pub fn check(request: &Request) -> Report {
                 let said = Diagnostic {
                     code: e.code,
                     category: e.category,
-                    text: e.text,
+                    text: in_terms_of_bun(e.text),
                     ..global(0, &[])
                 };
                 located(&module.path, text, &starts, e.start, e.end, said)

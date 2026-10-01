@@ -53,6 +53,8 @@ pub struct Module {
     pub default_mode: ResolutionMode,
     /// The specifiers that lead to JavaScript nothing declares the types of, and the way they are looked for when they do.
     pub untyped_imports: Few<(Atom, ResolutionMode)>,
+    /// For each of `untyped_imports`: the file it leads to, and `PackageId.Name` of the package that file is in.
+    pub untyped_import_files: Few<(Atom, Option<Atom>)>,
     /// Those of `untyped_imports` that lead to a `.jsx` file, which takes `jsx` (`GetResolutionDiagnostic`).
     pub jsx_imports: Few<(Atom, ResolutionMode)>,
     /// Those of `untyped_imports` that resolve to a file inside a package. With `allowJs` such a file is loaded only up to
@@ -1290,6 +1292,7 @@ impl Files {
         let mut imports = Vec::new();
         let (mut untyped_imports, mut jsx_imports, mut untyped_package_imports) =
             (Vec::new(), Vec::new(), Vec::new());
+        let mut untyped_import_files = Vec::new();
         let mut ts_extension_imports = Vec::new();
         let mut arbitrary_extension_imports = Vec::new();
         let mut extensionless_imports = Vec::new();
@@ -1393,6 +1396,15 @@ impl Files {
                 match resolver.resolve_module_and_extension(&text, path, mode) {
                     Some((found, _, _)) if is_javascript(&found) => {
                         untyped_imports.push((spec, mode));
+                        let package = resolver.package_id(&found);
+                        untyped_import_files.push((
+                            atoms.intern(found.as_bytes()),
+                            // The name can hold a `@` at its start only.
+                            package
+                                .as_deref()
+                                .and_then(|id| Some(&id[..1 + id.get(1..)?.find('@')?]))
+                                .map(|name| atoms.intern(name.as_bytes())),
+                        ));
                         let is_jsx = found.ends_with(".jsx");
                         if is_jsx {
                             jsx_imports.push((spec, mode));
@@ -1486,6 +1498,7 @@ impl Files {
             is_lib,
             imports: FxHashMap::default(),
             untyped_imports: untyped_imports.into(),
+            untyped_import_files: untyped_import_files.into(),
             jsx_imports: jsx_imports.into(),
             untyped_package_imports: untyped_package_imports.into(),
             ts_extension_imports: ts_extension_imports.into(),

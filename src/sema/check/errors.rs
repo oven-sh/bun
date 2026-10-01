@@ -376,6 +376,43 @@ impl Checker<'_> {
 
     // ───────────────────────────── modules ─────────────────────────────
 
+    /// `CreateModuleNotFoundChain`, but for `AlternateResult`: what to do about `spec`, which leads into `package`, where nothing declares
+    /// its types.
+    fn module_not_found_hint(&self, spec: &str, package: &str) -> super::explain::Line {
+        // `MangleScopedPackageName`
+        let mangled = match package
+            .strip_prefix('@')
+            .and_then(|rest| rest.split_once('/'))
+        {
+            Some((scope, name)) => format!("{scope}__{name}"),
+            None => package.to_owned(),
+        };
+        // `GetPackagesMap`
+        let (types, own) = (
+            format!("/node_modules/@types/{mangled}/"),
+            format!("/node_modules/{package}/"),
+        );
+        let modules = self.files().modules.iter();
+        let (mut has_types_package, mut has_declarations) = (false, false);
+        for module in modules {
+            has_types_package |= module.path.contains(&types);
+            has_declarations |= crate::resolve::is_declaration_file_name(&module.path)
+                && module.path.contains(&own);
+        }
+        let (code, args) = if has_types_package {
+            (7040, vec![package.to_owned(), mangled])
+        } else if has_declarations {
+            (7058, vec![package.to_owned(), spec.to_owned()])
+        } else {
+            (7035, vec![spec.to_owned(), mangled])
+        };
+        super::explain::Line {
+            code,
+            args,
+            level: 1,
+        }
+    }
+
     /// 2307 2882 2306 6137 6142 7016 2732 2834 2835 2591 2580: what a module specifier leads to. `resolveExternalModule`. 2322 2880 for the
     /// options of `import()`.
     fn check_modules(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
@@ -1062,7 +1099,19 @@ impl Checker<'_> {
             // `errorOnImplicitAnyModule`
             } else if options.no_implicit_any && !is_side_effect {
                 out.push(Diagnostic { start, code: 7016 });
-                self.explain(start, 7016, |c| vec![c.atom_text(spec)]);
+                let at = module
+                    .untyped_imports
+                    .iter()
+                    .position(|&u| u == (spec, mode));
+                let (path, package) = module.untyped_import_files[at.unwrap()];
+                self.explain(start, 7016, |c| vec![c.atom_text(spec), c.atom_text(path)]);
+                if let Some(package) = package
+                    && !crate::resolve::is_relative(&self.atom_text(spec))
+                {
+                    self.explain_chain(start, 7016, |c| {
+                        vec![c.module_not_found_hint(&c.atom_text(spec), &c.atom_text(package))]
+                    });
+                }
             }
             return;
         }

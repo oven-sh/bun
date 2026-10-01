@@ -1,0 +1,464 @@
+0	"type A = | | B;"
+	tsc : TS1110 [11,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+1	"interface I { a A }"
+	tsc : TS1131 [14,+1) Property or signature expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: ok
+2	"interface I extends A | B {}"
+	tsc : TS1005 [22,+1) ',' expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: ok
+3	"type A = A & | B;"
+	tsc : TS1110 [13,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+4	"type A = keyof | B;"
+	tsc : TS1110 [15,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+5	"type F = A | () => void;"
+	tsc : TS1385 [12,+11) Function type notation must be parenthesized when used in a union type. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+6	"type A = { a A };"
+	tsc : TS1131 [11,+1) Property or signature expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: ok
+7	"type A = (a: ) => void;"
+	tsc : TS1110 [13,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[13,+1) "Unexpected )" code=1110 ref@[13,14) "Type expected." msgs=1
+8	"type A = B<>;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+9	"type A = ;"
+	tsc : TS1110 [9,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[9,+1) "Unexpected ;" code=1110 ref@[9,10) "Type expected." msgs=1
+10	"type A = B<C | >;"
+	tsc : TS1110 [15,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[15,+1) "Unexpected >" code=1110 ref@[15,16) "Type expected." msgs=1
+11	"type A = | new () => A;"
+	tsc : TS1386 [10,+12) Constructor type notation must be parenthesized when used in a union type. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+12	"type A = A | abstract new () => B;"
+	tsc : TS1386 [12,+21) Constructor type notation must be parenthesized when used in a union type. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+13	"type A = B extends C ? D;"
+	tsc : TS1005 [24,+1) ':' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[24,+1) "Expected ":" but found ";"" code=1005 ref@[24,25) "':' expected." msgs=2
+14	"type A = [a: ];"
+	tsc : TS1110 [13,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[13,+1) "Unexpected ]" code=1110 ref@[13,14) "Type expected." msgs=1
+15	"type A = { [k: string] };"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+16	"type A<T = > = T;"
+	tsc : TS1110 [11,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[11,+1) "Unexpected >" code=1110 ref@[11,12) "Type expected." msgs=1
+17	"type A<T extends > = T;"
+	tsc : TS1109 [17,+1) Expression expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[17,+1) "Unexpected >" code=1110 ref@[17,18) "Type expected." msgs=1
+18	"type A<> = 1;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+19	"type A = 1 2;"
+	tsc : TS1005 [11,+1) ';' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[11,+1) "Expected ";" but found "2"" code=1005 ref@[11,12) "';' expected." msgs=1
+20	"type A = typeof;"
+	tsc : TS1003 [15,+1) Identifier expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[15,+1) "Expected identifier but found ";"" code=1003 ref@[15,16) "Identifier expected." msgs=1
+21	"type A = import();"
+	tsc : TS1110 [16,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[16,+1) "Expected string but found ")"" code=0 ref@[0,0) "" msgs=2
+22	"type A = B.;"
+	tsc : TS1003 [11,+1) Identifier expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[11,+1) "Expected identifier but found ";"" code=1003 ref@[11,12) "Identifier expected." msgs=1
+23	"type A = `${}`;"
+	tsc : TS1110 [12,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[12,+1) "Unexpected }" code=1110 ref@[12,13) "Type expected." msgs=1
+24	"interface I { a: | | B }"
+	tsc : TS1110 [19,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+25	"interface I { m(a: ): void }"
+	tsc : TS1110 [19,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[19,+1) "Unexpected )" code=1110 ref@[19,20) "Type expected." msgs=1
+26	"interface I { new }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+27	"interface I { 1n: a }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+28	"interface I { +a: 1 }"
+	tsc : TS1131 [14,+1) Property or signature expected. (n=3)
+	tsgo: = tsc (n=3)
+	lint: ok
+29	"interface I { -readonly a: 1 }"
+	tsc : TS1131 [14,+1) Property or signature expected. (n=3)
+	tsgo: = tsc (n=3)
+	lint: ok
+30	"interface I { readonly readonly a }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+31	"interface I { get }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+32	"interface I { get a(): 1; set a(v) }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+33	"interface I { a = 1 }"
+	tsc : TS1131 [14,+1) Property or signature expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: err bun@[16,+1) "Unexpected =" code=0 ref@[0,0) "" msgs=1
+34	"interface I { a: 1 b: 2 }"
+	tsc : TS1005 [19,+1) ';' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[19,+1) "Unexpected b" code=0 ref@[0,0) "" msgs=1
+35	"interface I { a: 1, b: 2; c: 3\n d: 4 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+36	"interface I { [k: string]: any }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+37	"interface I { [k: string] }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+38	"interface I { readonly [k: string]: any }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+39	"interface I { [k in K]: any }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+40	"interface I { (): void; new (): I; <T>(a: T): T }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+41	"interface I { a?(): void; b?: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+42	"interface I { 'a': 1; 2: 3; [x]: 4; [x.y]: 5; #p: 6 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+43	"interface I { public a: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+44	"interface I { static a: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+45	"interface I { async a(): void }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+46	"interface I { a!: 1 }"
+	tsc : TS1131 [14,+1) Property or signature expected. (n=3)
+	tsgo: = tsc (n=3)
+	lint: ok
+47	"interface I { ; }"
+	tsc : TS1131 [14,+1) Property or signature expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[14,+1) "Unexpected ;" code=0 ref@[0,0) "" msgs=1
+48	"interface I { , }"
+	tsc : TS1131 [14,+1) Property or signature expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[14,+1) "Unexpected ," code=0 ref@[0,0) "" msgs=1
+49	"interface I { a: A<> }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+50	"interface I { * }"
+	tsc : TS1131 [14,+1) Property or signature expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: err bun@[14,+1) "Unexpected *" code=0 ref@[0,0) "" msgs=1
+51	"interface I { ...a }"
+	tsc : TS1131 [14,+3) Property or signature expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[14,+3) "Unexpected ..." code=0 ref@[0,0) "" msgs=1
+52	"interface I { @d a: 1 }"
+	tsc : TS1131 [14,+1) Property or signature expected. (n=3)
+	tsgo: = tsc (n=3)
+	lint: err bun@[14,+1) "Unexpected @" code=0 ref@[0,0) "" msgs=1
+53	"interface I<T> extends A<T>, B.C<T[]> { }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+54	"interface I extends {} {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+55	"interface I extends A, {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+56	"interface I extends A, {} {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+57	"interface I extends typeof x {}"
+	tsc : TS1109 [20,+6) Expression expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: ok
+58	"interface I implements A {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+59	"interface I extends A implements B {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+60	"interface I extends A extends B {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+61	"interface I extends (A) {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+62	"interface I extends A.B() {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+63	"interface I extends string {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+64	"interface I extends A[] {}"
+	tsc : TS1011 [22,+0) An element access expression should take an argument. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+65	"interface I extends A? {}"
+	tsc : TS1005 [21,+1) ',' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[21,+1) "Expected "{" but found "?"" code=1005 ref@[21,22) "'{' expected." msgs=2
+66	"interface I extends A! {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+67	"interface I extends {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+68	"interface I extends { a: 1 } {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+69	"interface I extends A<> {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+70	"interface I extends A<B | > {}"
+	tsc : TS1110 [26,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[26,+1) "Unexpected >" code=1110 ref@[26,27) "Type expected." msgs=1
+71	"interface I extends A., B {}"
+	tsc : TS1003 [22,+1) Identifier expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[22,+1) "Expected identifier but found ","" code=1003 ref@[22,23) "Identifier expected." msgs=1
+72	"interface I extends A, {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+73	"interface I extends , A {}"
+	tsc : TS1109 [20,+1) Expression expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[20,+1) "Unexpected ," code=1110 ref@[20,21) "Type expected." msgs=1
+74	"interface I extends A, {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+75	"interface I extends A,, B {}"
+	tsc : TS1109 [22,+1) Expression expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[22,+1) "Unexpected ," code=1110 ref@[22,23) "Type expected." msgs=1
+76	"interface I extends A B {}"
+	tsc : TS1005 [22,+1) ',' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[22,+1) "Expected "{" but found "B"" code=1005 ref@[22,23) "'{' expected." msgs=2
+77	"interface I extends {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+78	"interface I extends import('m').A {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+79	"interface I extends this {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+80	"interface I extends new () => A {}"
+	tsc : TS1109 [25,+1) Expression expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: ok
+81	"interface I extends a.b<c>.d {}"
+	tsc : TS1477 [23,+3) An instantiation expression cannot be followed by a property access. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+82	"interface I extends void {}"
+	tsc : TS1109 [20,+4) Expression expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+83	"interface I extends null {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+84	"interface I extends class {} {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+85	"interface I extends function () {} {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+86	"interface I extends 1 {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+87	"interface I extends 'a' {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+88	"interface I extends A<T>\n{}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+89	"interface I extends\n{}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+90	"interface I<const T> {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+91	"interface I<in out T> {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+92	"interface I<T,> {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+93	"interface I<> {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+94	"interface {}"
+	tsc : TS1438 [10,+1) Interface must be given a name. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[10,+1) "Expected identifier but found "{"" code=1003 ref@[10,11) "Identifier expected." msgs=3
+95	"interface I"
+	tsc : TS1005 [11,+0) '{' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[11,+0) "Expected "{" but found end of file" code=1005 ref@[11,11) "'{' expected." msgs=1
+96	"interface I {"
+	tsc : TS1005 [13,+0) '}' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[13,+0) "Unexpected end of file" code=0 ref@[0,0) "" msgs=1
+97	"interface I { a: 1 "
+	tsc : TS1005 [19,+0) '}' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[19,+0) "Unexpected end of file" code=0 ref@[0,0) "" msgs=1
+98	"type A"
+	tsc : TS1005 [6,+0) '=' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[6,+0) "Expected "=" but found end of file" code=1005 ref@[6,6) "'=' expected." msgs=1
+99	"type A ="
+	tsc : TS1110 [8,+0) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[8,+0) "Unexpected end of file" code=1110 ref@[8,8) "Type expected." msgs=1
+100	"type A<T> = T extends infer U ? U : never;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+101	"type A = intrinsic;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+102	"type A = unique symbol;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+103	"declare type A = 1;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+104	"export type A = | | B;"
+	tsc : TS1110 [18,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+105	"export interface I { a A }"
+	tsc : TS1131 [21,+1) Property or signature expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: ok
+106	"export default interface I { a A }"
+	tsc : TS1131 [29,+1) Property or signature expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: ok
+107	"declare namespace N { type A = | | B }"
+	tsc : TS1110 [33,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+108	"declare namespace N { interface I { a A } }"
+	tsc : TS1131 [36,+1) Property or signature expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: ok
+109	"namespace N { export type A = | | B }"
+	tsc : TS1110 [32,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+110	"function f() { type A = | | B }"
+	tsc : TS1110 [26,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+111	"{ interface I extends A | B {} }"
+	tsc : TS1005 [24,+1) ',' expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: ok
+112	"if (a) type A = | | B;"
+	tsc : TS1110 [18,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+113	"type as = | | B;"
+	tsc : TS1110 [12,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+114	"interface as { a A }"
+	tsc : TS1131 [15,+1) Property or signature expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: ok
+115	"type type = | | B;"
+	tsc : TS1110 [14,+1) Type expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok

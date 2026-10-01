@@ -36,28 +36,44 @@ const check = (holds: boolean, text: string, lines: string[] = []) => (holds ? o
 
 // 1. The functions of the runner, as the revision has them.
 const runnerSource = git(repo, "show", `${rev}:scripts/runner.node.ts`);
-const names = ["isJavaScript", "isJavaScriptTest", "isNodeTest", "isClusterTest", "isTest", "isTestStrict", "isHidden", "getTests"];
+const names = [
+  "isJavaScript",
+  "isJavaScriptTest",
+  "isNodeTest",
+  "isClusterTest",
+  "isTest",
+  "isTestStrict",
+  "isHidden",
+  "getTests",
+];
 const cut = (name: string) => {
   const found = [...runnerSource.matchAll(new RegExp(`^function ${name}\\([^]*?^}$`, "gm"))];
-  if (found.length !== 1) throw new Error(`scripts/runner.node.ts of ${rev} has ${found.length} functions named ${name}: this script has to follow the runner`);
+  if (found.length !== 1)
+    throw new Error(
+      `scripts/runner.node.ts of ${rev} has ${found.length} functions named ${name}: this script has to follow the runner`,
+    );
   return found[0][0];
 };
 const code = new Bun.Transpiler({ loader: "ts" }).transformSync(names.map(cut).join("\n"));
-type Predicates = Record<"isJavaScript" | "isJavaScriptTest" | "isNodeTest" | "isClusterTest" | "isTest" | "isTestStrict" | "isHidden", (p: string) => boolean> & {
+type Predicates = Record<
+  "isJavaScript" | "isJavaScriptTest" | "isNodeTest" | "isClusterTest" | "isTest" | "isTestStrict" | "isHidden",
+  (p: string) => boolean
+> & {
   getTests: (cwd: string) => string[];
 };
 // The free names of those functions: the path functions of the platform, the directory reader, and the three constants of isNodeTest.
 const bind = (p: typeof path.posix, env: { isCI: boolean; isMacOS: boolean; isX64: boolean }): Predicates =>
-  new Function("basename", "dirname", "join", "sep", "readdirSync", "isCI", "isMacOS", "isX64", `"use strict";\n${code}\nreturn { ${names.join(", ")} };`)(
-    p.basename,
-    p.dirname,
-    p.join,
-    p.sep,
-    readdirSync,
-    env.isCI,
-    env.isMacOS,
-    env.isX64,
-  );
+  new Function(
+    "basename",
+    "dirname",
+    "join",
+    "sep",
+    "readdirSync",
+    "isCI",
+    "isMacOS",
+    "isX64",
+    `"use strict";\n${code}\nreturn { ${names.join(", ")} };`,
+  )(p.basename, p.dirname, p.join, p.sep, readdirSync, env.isCI, env.isMacOS, env.isX64);
 const anywhere = { isCI: false, isMacOS: false, isX64: false };
 const posix = bind(path.posix, anywhere);
 const win32 = bind(path.win32, anywhere);
@@ -78,32 +94,60 @@ const controls: [keyof Omit<Predicates, "getTests">, string, boolean][] = [
   ["isHidden", "cli/lint/conformance/corpus/cases/conformance/node/allowJs/a.ts", false],
 ];
 const wrong = controls.filter(([fn, p, want]) => posix[fn](p) !== want || win32[fn](p.replaceAll("/", "\\")) !== want);
-check(wrong.length === 0, `${controls.length} controls: the predicates answer as the runner's source reads`, wrong.map(([fn, p, want]) => `${fn}(${p}) is not ${want}`));
+check(
+  wrong.length === 0,
+  `${controls.length} controls: the predicates answer as the runner's source reads`,
+  wrong.map(([fn, p, want]) => `${fn}(${p}) is not ${want}`),
+);
 
 // 3. Every path of the revision below test/cli/lint, in the two forms the runner passes (below test/, and from the root), with both separators.
 const tree = git(repo, "ls-tree", "-r", "--name-only", "-z", rev, "--", "test/cli/lint").split("\0").filter(Boolean);
 const below = tree.filter(p => p.startsWith(`${home}/`));
 const forms = (p: string) => [p, p.slice("test/".length)];
 const taken = (p: string) =>
-  forms(p).some(f => posix.isTest(f) || posix.isJavaScriptTest(f) || win32.isTest(f.replaceAll("/", "\\")) || win32.isJavaScriptTest(f.replaceAll("/", "\\")));
+  forms(p).some(
+    f =>
+      posix.isTest(f) ||
+      posix.isJavaScriptTest(f) ||
+      win32.isTest(f.replaceAll("/", "\\")) ||
+      win32.isJavaScriptTest(f.replaceAll("/", "\\")),
+  );
 const hits = below.filter(taken);
 const kinds = new Map<string, number>();
 for (const p of below) {
   const top = p.slice(home.length + 1).split("/");
-  const key = top[0] === "corpus" && top.length > 2 ? top.slice(0, top[1] === "lib" ? 2 : 3).join("/") : top.length > 1 ? top[0] : "(files of the directory)";
+  const key =
+    top[0] === "corpus" && top.length > 2
+      ? top.slice(0, top[1] === "lib" ? 2 : 3).join("/")
+      : top.length > 1
+        ? top[0]
+        : "(files of the directory)";
   kinds.set(key, (kinds.get(key) ?? 0) + 1);
 }
-console.log(`      ${below.length} paths below ${home} in ${rev}: ${[...kinds].map(([k, n]) => `${k} ${n}`).join(", ")}`);
-check(hits.length === 0, `CI: isTest and isJavaScriptTest are false for each of the ${below.length} paths (isHidden not used)`, hits);
+console.log(
+  `      ${below.length} paths below ${home} in ${rev}: ${[...kinds].map(([k, n]) => `${k} ${n}`).join(", ")}`,
+);
+check(
+  hits.length === 0,
+  `CI: isTest and isJavaScriptTest are false for each of the ${below.length} paths (isHidden not used)`,
+  hits,
+);
 const siblings = tree.filter(p => !p.startsWith(`${home}/`) && posix.isTest(p.slice("test/".length)));
-check(siblings.includes("test/cli/lint/conformance.test.ts"), `CI: the test files of test/cli/lint are ${siblings.map(p => path.posix.basename(p)).join(", ")}`);
+check(
+  siblings.includes("test/cli/lint/conformance.test.ts"),
+  `CI: the test files of test/cli/lint are ${siblings.map(p => path.posix.basename(p)).join(", ")}`,
+);
 
 // 4. The rule of `bun test` on the same paths: a model of Scanner::could_be_test_file with the suffixes of the revision. The run in 6 is the witness.
 const scanner = git(repo, "show", `${rev}:src/runtime/cli/test/Scanner.rs`);
 const suffixLine = /TEST_NAME_SUFFIXES: \[&\[u8\]; \d+\] = \[([^\]]*)\];/.exec(scanner);
-if (suffixLine === null) throw new Error(`src/runtime/cli/test/Scanner.rs of ${rev} has no TEST_NAME_SUFFIXES: this script has to follow the scanner`);
+if (suffixLine === null)
+  throw new Error(
+    `src/runtime/cli/test/Scanner.rs of ${rev} has no TEST_NAME_SUFFIXES: this script has to follow the scanner`,
+  );
 const suffixes = [...suffixLine[1].matchAll(/b"([^"]*)"/g)].map(m => m[1]);
-if (!/let name = entry\.base_lowercase\(\);/.test(scanner)) throw new Error("the scanner no longer lowers the base name: this script has to follow the scanner");
+if (!/let name = entry\.base_lowercase\(\);/.test(scanner))
+  throw new Error("the scanner no longer lowers the base name: this script has to follow the scanner");
 const javascriptLike = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
 const bunTakes = (p: string) => {
   const base = path.posix.basename(p).toLowerCase();
@@ -111,7 +155,10 @@ const bunTakes = (p: string) => {
   return javascriptLike.has(ext) && suffixes.some(s => base.slice(0, -ext.length).endsWith(s));
 };
 const bunHits = below.filter(bunTakes);
-check(bunTakes("a/b.TEST.ts") && bunTakes("a/b_Spec.tsx") && !bunTakes("a/castTest.ts"), `bun test (model): suffixes ${suffixes.join(" ")} on the lowered base name`);
+check(
+  bunTakes("a/b.TEST.ts") && bunTakes("a/b_Spec.tsx") && !bunTakes("a/castTest.ts"),
+  `bun test (model): suffixes ${suffixes.join(" ")} on the lowered base name`,
+);
 check(bunHits.length === 0, `bun test (model): no path of the ${below.length} has such a name`, bunHits);
 
 // 5. The glob of `bun run prettier`, from package.json of the revision.
@@ -119,15 +166,23 @@ const prettier: string = JSON.parse(git(repo, "show", `${rev}:package.json`)).sc
 const quoted = [...prettier.matchAll(/'([^']*)'/g)].map(m => m[1]);
 const wanted = quoted.filter(g => !g.startsWith("!")).map(g => new Bun.Glob(g));
 const unwanted = quoted.filter(g => g.startsWith("!")).map(g => new Bun.Glob(g.slice(1)));
-const bare = prettier.split(/\s+/).filter((w, i, all) => i > all.findIndex(x => x === "--write") && !w.startsWith("'") && !w.startsWith("-"));
-const prettierTakes = (p: string) => (wanted.some(g => g.match(p)) && !unwanted.some(g => g.match(p))) || bare.some(d => p.startsWith(`${d}/`));
-check(wanted.length > 0 && prettierTakes("test/cli/lint/conformance.test.ts"), `prettier: operands ${bare.join(" ")} ${quoted.join(" ")}; it takes test/cli/lint/conformance.test.ts`);
+const bare = prettier
+  .split(/\s+/)
+  .filter((w, i, all) => i > all.findIndex(x => x === "--write") && !w.startsWith("'") && !w.startsWith("-"));
+const prettierTakes = (p: string) =>
+  (wanted.some(g => g.match(p)) && !unwanted.some(g => g.match(p))) || bare.some(d => p.startsWith(`${d}/`));
+check(
+  wanted.length > 0 && prettierTakes("test/cli/lint/conformance.test.ts"),
+  `prettier: operands ${bare.join(" ")} ${quoted.join(" ")}; it takes test/cli/lint/conformance.test.ts`,
+);
 const prettierHits = below.filter(prettierTakes);
 check(prettierHits.length === 0, `prettier: takes none of the ${below.length} paths`, prettierHits);
 
 // 6. The refusal of sync.sh, run as sync.sh runs it, on names that each discoverer takes.
 const sync = git(repo, "show", `${rev}:${home}/sync.sh`).split("\n");
-const stopAt = sync.findIndex(line => line.includes('stop bad "names that a test runner of this repository takes for a test"'));
+const stopAt = sync.findIndex(line =>
+  line.includes('stop bad "names that a test runner of this repository takes for a test"'),
+);
 if (stopAt < 1) throw new Error("sync.sh has no refusal of test names");
 const refusal = sync[stopAt - 1].replace(/ paths > bad$/, "");
 const probes = [
@@ -160,20 +215,32 @@ const harmless = [
 ];
 const isTaken = (p: string) => taken(`${home}/${p}`) || bunTakes(p);
 const refused = new Set(
-  spawnSync("bash", ["-c", `rel='${home}/'; tab=$(printf '\\t'); ${refusal}`], { input: [...probes, ...harmless].join("\n") + "\n", encoding: "utf8" }).stdout.split("\n"),
+  spawnSync("bash", ["-c", `rel='${home}/'; tab=$(printf '\\t'); ${refusal}`], {
+    input: [...probes, ...harmless].join("\n") + "\n",
+    encoding: "utf8",
+  }).stdout.split("\n"),
 );
 const let_through = probes.filter(p => isTaken(p) && !refused.has(p));
 const mistaken = [...probes.filter(p => !isTaken(p)), ...harmless.filter(isTaken)];
-check(mistaken.length === 0, `${probes.length} names that a discoverer takes, ${harmless.length} that none takes`, mistaken);
+check(
+  mistaken.length === 0,
+  `${probes.length} names that a discoverer takes, ${harmless.length} that none takes`,
+  mistaken,
+);
 check(let_through.length === 0, `sync.sh line ${stopAt}: refuses each of the ${probes.length}`, let_through);
 const for_nothing = harmless.filter(p => refused.has(p));
-console.log(`      sync.sh line ${stopAt}: refuses ${for_nothing.length} of the ${harmless.length} that none takes${for_nothing.length ? `: ${for_nothing.join(", ")}` : ""}`);
+console.log(
+  `      sync.sh line ${stopAt}: refuses ${for_nothing.length} of the ${harmless.length} that none takes${for_nothing.length ? `: ${for_nothing.join(", ")}` : ""}`,
+);
 
 // 6b. The generator of test/parallel-allowlist.json walks test/ with a copy of the rule: its own function, on the paths of the revision.
 const allowlist = git(repo, "show", `${rev}:scripts/update-parallel-allowlist.mjs`);
 const nodeStyle = /^const isNodeStyle = [^]*?;$/m.exec(allowlist);
 const lister = /^function listBunTestFiles\(\) \{[^]*?^}$/m.exec(allowlist);
-if (nodeStyle === null || lister === null) throw new Error("scripts/update-parallel-allowlist.mjs has no isNodeStyle or listBunTestFiles: this script has to follow it");
+if (nodeStyle === null || lister === null)
+  throw new Error(
+    "scripts/update-parallel-allowlist.mjs has no isNodeStyle or listBunTestFiles: this script has to follow it",
+  );
 const entriesOf = new Map<string, { name: string; isDirectory: () => boolean }[]>();
 for (const p of git(repo, "ls-tree", "-r", "--name-only", "-z", rev, "--", "test").split("\0").filter(Boolean)) {
   const parts = p.slice("test/".length).split("/");
@@ -183,19 +250,32 @@ for (const p of git(repo, "ls-tree", "-r", "--name-only", "-z", rev, "--", "test
     if (!list.some(e => e.name === parts[i])) list.push({ name: parts[i], isDirectory: () => i < parts.length - 1 });
   }
 }
-const listed: string[] = new Function("readdirSync", "join", "testDir", `${nodeStyle[0]}\n${lister[0]}\nreturn listBunTestFiles();`)(
+const listed: string[] = new Function(
+  "readdirSync",
+  "join",
+  "testDir",
+  `${nodeStyle[0]}\n${lister[0]}\nreturn listBunTestFiles();`,
+)(
   (dir: string) => entriesOf.get(dir) ?? [],
   (_: string, rel: string) => rel,
   "",
 );
 const listedInside = listed.filter(p => p.startsWith("cli/lint/conformance/"));
-check(listed.includes("cli/lint/conformance.test.ts") && listedInside.length === 0, `allowlist generator: listBunTestFiles() lists ${listed.length} files of the revision, none below cli/lint/conformance/`, listedInside);
+check(
+  listed.includes("cli/lint/conformance.test.ts") && listedInside.length === 0,
+  `allowlist generator: listBunTestFiles() lists ${listed.length} files of the revision, none below cli/lint/conformance/`,
+  listedInside,
+);
 
 // 7. The directory on disk: the walk of the runner and the scan of `bun test`.
 if (disk) {
   const onDisk = posix.getTests(path.join(repo, "test")).filter(p => p.startsWith("cli/lint/"));
   const inside = onDisk.filter(p => p.startsWith("cli/lint/conformance/"));
-  check(inside.length === 0 && onDisk.includes("cli/lint/conformance.test.ts"), `CI on disk: getTests(test) yields below cli/lint only ${onDisk.join(", ")}`, inside);
+  check(
+    inside.length === 0 && onDisk.includes("cli/lint/conformance.test.ts"),
+    `CI on disk: getTests(test) yields below cli/lint only ${onDisk.join(", ")}`,
+    inside,
+  );
   const debug = path.join(repo, "build/debug/bun-debug");
   const exe = flag("--bun") ?? (existsSync(debug) ? debug : process.execPath);
   const env = { ...process.env, AGENT: "0", NO_COLOR: "1", BUN_DEBUG_QUIET_LOGS: "1" };
@@ -206,9 +286,17 @@ if (disk) {
       continue;
     }
     const none = spawnSync(exe, ["test"], { cwd: path.join(repo, dir), encoding: "utf8", env });
-    const filter = spawnSync(exe, ["test", "no-file-has-this-name"], { cwd: path.join(repo, dir), encoding: "utf8", env });
+    const filter = spawnSync(exe, ["test", "no-file-has-this-name"], {
+      cwd: path.join(repo, dir),
+      encoding: "utf8",
+      env,
+    });
     const searched = /(\d+) files were searched/.exec(filter.stderr)?.[1] ?? "?";
-    check(none.status === 1 && none.stderr.includes("No tests found!"), `bun test in ${dir} (${revision}): "No tests found!", exit code ${none.status}, ${searched} entries searched`, none.stderr.split("\n"));
+    check(
+      none.status === 1 && none.stderr.includes("No tests found!"),
+      `bun test in ${dir} (${revision}): "No tests found!", exit code ${none.status}, ${searched} entries searched`,
+      none.stderr.split("\n"),
+    );
   }
 }
 process.exit(failed ? 1 : 0);

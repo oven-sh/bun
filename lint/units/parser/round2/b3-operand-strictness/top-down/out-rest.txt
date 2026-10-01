@@ -1,0 +1,435 @@
+## yield* without an operand
+"function* g() { yield*; }" [ts]
+    go : TS1109@22+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+"function* g() { yield* }" [ts]
+    go : TS1109@23+1 "Expression expected." <<}>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+"function* g() { (yield*); }" [ts]
+    go : TS1109@23+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+"function* g() { [yield*]; }" [ts]
+    go : TS1109@23+1 "Expression expected." <<]>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+"function* g() { f(yield*, 1); }" [ts]
+    go : TS1109@24+1 "Expression expected." <<,>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  f(yield, 1);\n}\n"
+"function* g() { x ? yield* : 1; }" [ts]
+    go : TS1109@27+1 "Expression expected." <<:>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  x && (yield);\n}\n"
+"function* g() { yield* /* c */ ; }" [ts]
+    go : TS1109@31+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+"function* g() { yield * ; }" [ts]
+    go : TS1109@24+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+"function* g() { x = yield*; }" [ts]
+    go : TS1109@26+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  x = yield;\n}\n"
+"function* g() { yield*\n; }" [ts]
+    go : TS1109@23+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+"function* g() { yield*\nx; }" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield* x;\n}\n"
+"function* g() { yield\n* x; }" [ts]
+    go : TS1109@22+1 "Expression expected." <<*>>   [tsc first: same]
+    bun: parse ERR @22+1 Unexpected *
+"function* g() { yield*" [ts]
+    go : TS1109@22+0 "Expression expected." <<>>   [tsc first: same]
+    bun: parse ERR @22+0 Unexpected end of file
+"function* g() { `${yield*}`; }" [ts]
+    go : TS1109@25+1 "Expression expected." <<}>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  `${yield}`;\n}\n"
+"function* g() { yield; yield\nx; (yield); [yield]; f(yield, 1); x ? yield : 1; }" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n  yield;\n  x;\n  yield;\n  yield;\n  f(yield, 1)"
+"function* g() { yield* x; yield *x; yield\n; }" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield* x;\n  yield* x;\n  yield;\n}\n"
+"async function* g() { yield*; }" [ts]
+    go : TS1109@28+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "async function* g() {\n  yield;\n}\n"
+"class C { *m() { yield*; } }" [ts]
+    go : TS1109@23+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "class C {\n  *m() {\n    yield;\n  }\n}\n"
+"({ *m() { yield*; } });" [ts]
+    go : TS1109@16+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => ""
+"function* g() { yield* = 1; }" [ts]
+    go : TS1109@23+1 "Expression expected." <<=>>   [tsc first: same]
+    bun: parse ERR @23+1 Unexpected =
+"function* g() { yield = 1; }" [ts]
+    go : TS1005@22+1 "';' expected." <<=>>   [tsc first: same]
+    bun: parse ERR @22+1 Unexpected =
+"function* g() { 1 + yield x; }" [ts]
+    go : TS1109@20+5 "Expression expected." <<yield>>   [tsc first: same]
+    bun: parse ERR @20+5 Cannot use a "yield" here without parentheses
+"function* g() { ++yield; }" [ts]
+    go : TS1109@18+5 "Expression expected." <<yield>>   [tsc first: same]
+    bun: parse ERR @18+5 Cannot use a "yield" here without parentheses
+"function* g() { yield in x; }" [ts]
+    go : TS1109@22+2 "Expression expected." <<in>>   [tsc first: same]
+    bun: parse ERR @22+2 Unexpected in
+"function* g() { yield* in x; }" [ts]
+    go : TS1109@23+2 "Expression expected." <<in>>   [tsc first: same]
+    bun: parse ERR @23+2 Unexpected in
+"function* g() { yield*; }" [js]
+    go : TS1109@22+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+"function* g() { (yield*); }" [js]
+    go : TS1109@23+1 "Expression expected." <<)>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+"function* g() { yield*; }" [tsx]
+    go : TS1109@22+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => "function* g() {\n  yield;\n}\n"
+## a name after a dot and a line break, before a word on its line
+"a.\nb in c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\nb instanceof c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b instanceof c;\n"
+"a.\nb as c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b;\n"
+"a.\nb satisfies c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b;\n"
+"for (a.\nb of c) {}" [ts]
+    go : TS1003@7+0 "Identifier expected." <<>> | TS1005@8+1 "';' expected." <<b>>   [tsc first: same]
+    bun: accepts => "for (a.b of c) {}\n"
+"for (a.\nb in c) {}" [ts]
+    go : TS1003@7+0 "Identifier expected." <<>> | TS1005@8+1 "';' expected." <<b>>   [tsc first: same]
+    bun: accepts => "for (a.b in c) {}\n"
+"a?.\nb in c;" [ts]
+    go : TS1003@3+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a?.b in c;\n"
+"a.b.\nc in d;" [ts]
+    go : TS1003@4+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b.c in d;\n"
+"x = a.\nb in c;" [ts]
+    go : TS1003@6+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "x = a.b in c;\n"
+"f(a.\nb in c);" [ts]
+    go : TS1003@4+0 "Identifier expected." <<>> | TS1005@5+1 "',' expected." <<b>>   [tsc first: same]
+    bun: accepts => "f(a.b in c);\n"
+"(a.\nb in c);" [ts]
+    go : TS1003@3+0 "Identifier expected." <<>> | TS1005@4+1 "')' expected." <<b>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a. // x\nb in c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a. /* x\n */ b in c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a./* x */\nb in c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\n/* x */ b in c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a\n.\nb in c;" [ts]
+    go : TS1003@3+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a .\n b  in c;" [ts]
+    go : TS1003@3+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\r\nb in c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a. b in c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\nb\nin c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\nb.c in d;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b.c in d;\n"
+"a.\nb(c) in d;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b(c) in d;\n"
+"a.\nb[c] in d;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b[c] in d;\n"
+"a.\nb = c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b = c;\n"
+"a.\nb;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b;\n"
+"a.\nb + c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b + c;\n"
+"a.b in c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a\n.b in c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\nb /* x\n */ in c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\nb /* x */ in c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\nb! in c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\nb++ in c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b++ in c;\n"
+"a.\nb<T> in c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\nin in c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>> | TS1109@6+2 "Expression expected." <<in>>   [tsc first: same]
+    bun: accepts => "a.in in c;\n"
+"a.\nclass in c;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>> | TS1005@9+2 "'{' expected." <<in>>   [tsc first: same]
+    bun: accepts => "a.class in c;\n"
+"a.\nb\n.c in d;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b.c in d;\n"
+"a.\nb.\nc in d;" [ts]
+    go : TS1003@5+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b.c in d;\n"
+"(a.\nb) in c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\nb in\nc;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"-a.\nb in c;" [ts]
+    go : TS1003@3+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "-a.b in c;\n"
+"x + a.\nb in c;" [ts]
+    go : TS1003@6+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "x + a.b in c;\n"
+"typeof a.\nb in c;" [ts]
+    go : TS1003@9+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "typeof a.b in c;\n"
+"new a.\nb in c;" [ts]
+    go : TS1003@6+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "new a.b in c;\n"
+"a.\nb ? c : d;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b ? c : d;\n"
+"a.\nb of;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>> | TS1434@3+1 "Unexpected keyword or identifier." <<b>>   [tsc first: same]
+    bun: parse ERR @5+2 Expected ";" but found "of"
+"class C { #b; m(a) { a.\n#b in c; } }" [ts]
+    go : TS1003@23+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "class C {\n  #b;\n  m(a) {\n    a.#b in c;\n  }\n}\n"
+"class C { #b; m(a) { a?.\n#b in c; } }" [ts]
+    go : TS1003@24+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "class C {\n  #b;\n  m(a) {\n    a?.#b in c;\n  }\n}\n"
+"class C { #b; m(a) { a.\nb in c; } }" [ts]
+    go : TS1003@23+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "class C {\n  #b;\n  m(a) {\n    a.b in c;\n  }\n}\n"
+"class C { #b; static m(a) { return #b in a.\nx in c; } }" [ts]
+    go : TS1003@43+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "class C {\n  #b;\n  static m(a) {\n    return #b in a.x in c;\n  }\n}\n"
+"class C extends a.\nb implements I {}" [ts]
+    go : TS1003@18+0 "Identifier expected." <<>> | TS1005@19+1 "',' expected." <<b>>   [tsc first: same]
+    bun: accepts => "class C extends a.b {\n}\n"
+"class C extends a.\nb {}" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "class C extends a.b {\n}\n"
+"@a.\nb class C {}" [ts]
+    go : TS1003@3+0 "Identifier expected." <<>> | TS1434@4+1 "Unexpected keyword or identifier." <<b>>   [tsc first: same]
+    bun: accepts => "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorS"
+"class C { @a.\nb m() {} }" [ts]
+    go : TS1003@13+0 "Identifier expected." <<>> | TS1434@14+1 "Unexpected keyword or identifier." <<b>>   [tsc first: same]
+    bun: accepts => "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorM"
+"class C { @a.\nb static m() {} }" [ts]
+    go : TS1003@13+0 "Identifier expected." <<>> | TS1434@14+1 "Unexpected keyword or identifier." <<b>>   [tsc first: same]
+    bun: accepts => "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorM"
+"class C { @a.\nb\nm() {} }" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorM"
+"@a.\nb export class C {}" [ts]
+    go : TS1003@3+0 "Identifier expected." <<>> | TS1434@4+1 "Unexpected keyword or identifier." <<b>>   [tsc first: same]
+    bun: accepts => "import { __decorateElement as __decorateElement_ggs2dd8p, __decoratorS"
+"super.\nb in c;" [ts]
+    go : TS1003@6+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: parse ERR @0+5 Unexpected "super"
+"class C extends B { m() { super.\nb in c; } }" [ts]
+    go : TS1003@32+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "class C extends B {\n  m() {\n    super.b in c;\n  }\n}\n"
+"import.meta.\nb in c;" [ts]
+    go : TS1003@12+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "import.meta.b in c;\n"
+"new.target.\nb in c;" [ts]
+    go : TS1003@11+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "new.target.b in c;\n"
+"this.\nb in c;" [ts]
+    go : TS1003@5+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "exports.b in c;\n"
+"a.\nb in c, d.\ne in f;" [ts]
+    go : TS1003@2+0 "Identifier expected." <<>> | TS1003@13+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c, d.e in f;\n"
+"let x: A.\nB extends C ? D : E;" [ts]
+    go : TS1003@9+0 "Identifier expected." <<>> | TS1434@10+1 "Unexpected keyword or identifier." <<B>>   [tsc first: same]
+    bun: accepts => "let x;\n"
+"type T = A.\nB extends C ? D : E;" [ts]
+    go : TS1003@11+0 "Identifier expected." <<>> | TS1434@12+1 "Unexpected keyword or identifier." <<B>>   [tsc first: same]
+    bun: accepts => ""
+"let x = y as A.\nB as C;" [ts]
+    go : TS1003@15+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "let x = y;\n"
+"let x: typeof a.\nb extends C ? D : E;" [ts]
+    go : TS1003@16+0 "Identifier expected." <<>> | TS1434@17+1 "Unexpected keyword or identifier." <<b>>   [tsc first: same]
+    bun: accepts => "let x;\n"
+"let x: A.\nB;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "let x;\n"
+"let x: A.\nB = c;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "let x = c;\n"
+"let x: A.\nB | C;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "let x;\n"
+"function f(x: A.\nB is) {}" [ts]
+    go : TS1003@16+0 "Identifier expected." <<>> | TS1005@17+1 "',' expected." <<B>>   [tsc first: same]
+    bun: parse ERR @19+2 Expected ")" but found "is"
+"import a = b.\nc;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => ""
+"type T = { [K in A.\nB as C]: D };" [ts]
+    go : TS1003@19+0 "Identifier expected." <<>> | TS1005@20+1 "']' expected." <<B>>   [tsc first: same]
+    bun: accepts => ""
+"let x: import('m').\nB extends C ? D : E;" [ts]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "let x;\n"
+"class C implements A.\nB implements D {}" [ts]
+    go : TS1003@21+0 "Identifier expected." <<>> | TS1005@22+1 "',' expected." <<B>>   [tsc first: same]
+    bun: parse ERR @24+10 Expected "{" but found "implements"
+"interface I extends A.\nB extends C {}" [ts]
+    go : TS1003@22+0 "Identifier expected." <<>> | TS1005@23+1 "',' expected." <<B>>   [tsc first: same]
+    bun: accepts => ""
+"a.\nb in c;" [js]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"a.\nb instanceof c;" [js]
+    go : TS1003@2+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b instanceof c;\n"
+"for (a.\nb of c) {}" [js]
+    go : TS1003@7+0 "Identifier expected." <<>> | TS1005@8+1 "';' expected." <<b>>   [tsc first: same]
+    bun: accepts => "for (a.b of c) {}\n"
+"a?.\nb in c;" [js]
+    go : TS1003@3+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a?.b in c;\n"
+"a.\nb\nin c;" [js]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b in c;\n"
+"<a.\nb c='1' />;" [tsx]
+    go : TS1003@3+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b;\n"
+"<a.\nb/>;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b;\n"
+"<a.\nb></a.b>;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b;\n"
+"<a.b.\nc d='1' />;" [tsx]
+    go : TS1003@5+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b.c;\n"
+"<a.\nb c='1' />;" [jsx]
+    go : TS1003@3+0 "Identifier expected." <<>>   [tsc first: same]
+    bun: accepts => "a.b;\n"
+"<a.\nb {...c} />;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b, {\n  ...c\n};\n"
+"<a.\nb\nc='1' />;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "a.b;\n"
+## a member, a call or an update after a JSX element
+"<a/>.b;" [tsx]
+    go : TS1005@4+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this).b;\n"
+"<a/>[0];" [tsx]
+    go : TS1005@4+1 "';' expected." <<[>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this)[0];\n"
+"<a/>(1);" [tsx]
+    go : TS1005@4+1 "';' expected." <<(>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this)(1);\n"
+"<a/>`x`;" [tsx]
+    go : TS1005@4+3 "';' expected." <<`x`>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this)`x`;\n"
+"<a/>!;" [tsx]
+    go : TS1005@4+1 "';' expected." <<!>> | TS1109@5+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: accepts => ""
+"<a/>++;" [tsx]
+    go : TS1005@4+2 "';' expected." <<++>> | TS1109@6+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"<a/>?.b;" [tsx]
+    go : TS1005@4+2 "';' expected." <<?.>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this)?.b;\n"
+"<a/> as T;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => ""
+"<a/> + 1;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this) + 1;\n"
+"<a/> = 1;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"<a/> ? 1 : 2;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => ""
+"<a/>, 1;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => ""
+"<a></a>.b;" [tsx]
+    go : TS1005@7+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this).b;\n"
+"<></>.b;" [tsx]
+    go : TS1005@5+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(Fragment_8vg9x3sq, {}, undefined, false, undefined, th"
+"(<a/>).b;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this).b;\n"
+"f(<a/>.b);" [tsx]
+    go : TS1005@6+1 "',' expected." <<.>>   [tsc first: same]
+    bun: accepts => "f(jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this).b);\n"
+"x = <a/>.b;" [tsx]
+    go : TS1005@8+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "x = jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this).b;\n"
+"<a/>\n.b;" [tsx]
+    go : TS1128@5+1 "Declaration or statement expected." <<.>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this).b;\n"
+"<a/>\n(1);" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this)(1);\n"
+"<a/>\n[0];" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this)[0];\n"
+"<a><b/>.c</a>;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => ""
+"<a>{<b/>.c}</a>;" [tsx]
+    go : TS1005@8+1 "'}' expected." <<.>> | TS1381@10+1 "Unexpected token. Did you mean `{'}'}` or `&rbrace;`?" <<}>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"b\", {}, undefined, false, undefined, this).c;\n"
+"<a/>.b;" [jsx]
+    go : TS1005@4+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this).b;\n"
+"<a/>(1);" [jsx]
+    go : TS1005@4+1 "';' expected." <<(>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this)(1);\n"
+"<a/>++;" [jsx]
+    go : TS1005@4+2 "';' expected." <<++>> | TS1109@6+1 "Expression expected." <<;>>   [tsc first: same]
+    bun: parse ok, visit ERR @0+0 Invalid assignment target
+"++<a/>;" [tsx]
+    go : TS1109@2+1 "Expression expected." <<<>> | TS1109@5+1 "Expression expected." <<>>>   [tsc first: same]
+    bun: parse ok, visit ERR @2+0 Invalid assignment target
+"-<a/>;" [tsx]
+    go : (parses)   [tsc first: same]
+    bun: accepts => "-jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this);\n"
+"typeof <a/>.b;" [tsx]
+    go : TS1005@11+1 "';' expected." <<.>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this).b;\n"
+"<a/><T>(x);" [tsx]
+    go : TS17008@5+1 "JSX element 'T' has no corresponding closing tag." <<T>> | TS1005@11+0 "'</' expected." <<>>   [tsc first: same]
+    bun: accepts => "jsxDEV_7x81h0kn(\"a\", {}, undefined, false, undefined, this)(x);\n"

@@ -1,0 +1,1258 @@
+{
+	"base": {
+		"ecmaVersion": 2021,
+		"sourceType": "script",
+		"parserOptions": {
+			"ecmaFeatures": {
+				"jsx": true
+			}
+		}
+	},
+	"valid": [
+		{
+			"code": "<p /> && foo"
+		},
+		{
+			"code": "<></> && foo"
+		},
+		{
+			"code": "<p /> ?? foo"
+		},
+		{
+			"code": "<></> ?? foo"
+		},
+		{
+			"code": "arbitraryFunction(n) ?? foo"
+		},
+		{
+			"code": "foo.Boolean(n) ?? foo"
+		},
+		{
+			"code": "(x += 1) && foo"
+		},
+		{
+			"code": "`${bar}` && foo"
+		},
+		{
+			"code": "bar && foo"
+		},
+		{
+			"code": "delete bar.baz && foo"
+		},
+		{
+			"code": "true ? foo : bar"
+		},
+		{
+			"code": "new Foo() == true"
+		},
+		{
+			"code": "foo == true"
+		},
+		{
+			"code": "`${foo}` == true"
+		},
+		{
+			"code": "`${foo}${bar}` == true"
+		},
+		{
+			"code": "`0${foo}` == true"
+		},
+		{
+			"code": "`00000000${foo}` == true"
+		},
+		{
+			"code": "`0${foo}.000` == true"
+		},
+		{
+			"code": "[n] == true"
+		},
+		{
+			"code": "delete bar.baz === true"
+		},
+		{
+			"code": "foo.Boolean(true) && foo"
+		},
+		{
+			"code": "function Boolean(n) { return n; }; Boolean(x) ?? foo"
+		},
+		{
+			"code": "function String(n) { return n; }; String(x) ?? foo"
+		},
+		{
+			"code": "function Number(n) { return n; }; Number(x) ?? foo"
+		},
+		{
+			"code": "function Symbol(n) { return n; }; Symbol(x) ?? foo"
+		},
+		{
+			"code": "function BigInt(n) { return n; }; BigInt(x) ?? foo"
+		},
+		{
+			"code": "function Boolean(n) { return Math.random(); }; Boolean(x) === 1"
+		},
+		{
+			"code": "function Boolean(n) { return Math.random(); }; Boolean(1) == true"
+		},
+		{
+			"code": "new Foo() === x"
+		},
+		{
+			"code": "x === new someObj.Promise()"
+		},
+		{
+			"code": "Boolean(foo) === true"
+		},
+		{
+			"code": "function foo(undefined) { undefined ?? bar;}"
+		},
+		{
+			"code": "function foo(undefined) { undefined == true;}"
+		},
+		{
+			"code": "function foo(undefined) { undefined === true;}"
+		},
+		{
+			"code": "[...arr, 1] == true"
+		},
+		{
+			"code": "[,,,] == true"
+		},
+		{
+			"code": "new Foo() === bar;",
+			"languageOptions": {
+				"globals": {
+					"Foo": "writable"
+				}
+			}
+		},
+		{
+			"code": "(foo && true) ?? bar"
+		},
+		{
+			"code": "foo ?? null ?? bar"
+		},
+		{
+			"code": "a ?? (doSomething(), undefined) ?? b"
+		},
+		{
+			"code": "a ?? (something = null) ?? b"
+		},
+		{
+			"code": "5 < 10"
+		},
+		{
+			"code": "5 <= 10"
+		},
+		{
+			"code": "10 > 5"
+		},
+		{
+			"code": "10 >= 5"
+		},
+		{
+			"code": "'a' < 'b'"
+		},
+		{
+			"code": "undefined >= 5"
+		},
+		{
+			"code": "`` < ``"
+		},
+		{
+			"code": "1n < 2n"
+		},
+		{
+			"code": "null >= 5"
+		},
+		{
+			"code": "5 < 10"
+		}
+	],
+	"invalid": [
+		{
+			"code": "[] && greeting",
+			"errors": 1
+		},
+		{
+			"code": "[] || greeting",
+			"errors": 1
+		},
+		{
+			"code": "[] ?? greeting",
+			"errors": 1
+		},
+		{
+			"code": "[] == true",
+			"errors": 1
+		},
+		{
+			"code": "true == []",
+			"errors": 1
+		},
+		{
+			"code": "[] != true",
+			"errors": 1
+		},
+		{
+			"code": "[] === true",
+			"errors": 1
+		},
+		{
+			"code": "[] !== true",
+			"errors": 1
+		},
+		{
+			"code": "!foo == null",
+			"errors": 1
+		},
+		{
+			"code": "!foo ?? bar",
+			"errors": 1
+		},
+		{
+			"code": "(a + b) / 2 ?? bar",
+			"errors": 1
+		},
+		{
+			"code": "String(foo.bar) ?? baz",
+			"errors": 1
+		},
+		{
+			"code": "\"hello\" + name ?? \"\"",
+			"errors": 1
+		},
+		{
+			"code": "[foo?.bar ?? \"\"] ?? []",
+			"errors": 1
+		},
+		{
+			"code": "true && hello",
+			"errors": 1
+		},
+		{
+			"code": "true || hello",
+			"errors": 1
+		},
+		{
+			"code": "true && foo",
+			"errors": 1
+		},
+		{
+			"code": "'' && foo",
+			"errors": 1
+		},
+		{
+			"code": "100 && foo",
+			"errors": 1
+		},
+		{
+			"code": "+100 && foo",
+			"errors": 1
+		},
+		{
+			"code": "-100 && foo",
+			"errors": 1
+		},
+		{
+			"code": "~100 && foo",
+			"errors": 1
+		},
+		{
+			"code": "/[a-z]/ && foo",
+			"errors": 1
+		},
+		{
+			"code": "Boolean([]) && foo",
+			"errors": 1
+		},
+		{
+			"code": "Boolean() && foo",
+			"errors": 1
+		},
+		{
+			"code": "Boolean([], n) && foo",
+			"errors": 1
+		},
+		{
+			"code": "({}) && foo",
+			"errors": 1
+		},
+		{
+			"code": "[] && foo",
+			"errors": 1
+		},
+		{
+			"code": "(() => {}) && foo",
+			"errors": 1
+		},
+		{
+			"code": "(function() {}) && foo",
+			"errors": 1
+		},
+		{
+			"code": "(class {}) && foo",
+			"errors": 1
+		},
+		{
+			"code": "(class { valueOf() { return x; } }) && foo",
+			"errors": 1
+		},
+		{
+			"code": "(class { [x]() { return x; } }) && foo",
+			"errors": 1
+		},
+		{
+			"code": "new Foo() && foo",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(unknown) && foo",
+			"errors": 1
+		},
+		{
+			"code": "(bar = false) && foo",
+			"errors": 1
+		},
+		{
+			"code": "(bar.baz = false) && foo",
+			"errors": 1
+		},
+		{
+			"code": "(bar[0] = false) && foo",
+			"errors": 1
+		},
+		{
+			"code": "`hello ${hello}` && foo",
+			"errors": 1
+		},
+		{
+			"code": "void bar && foo",
+			"errors": 1
+		},
+		{
+			"code": "!true && foo",
+			"errors": 1
+		},
+		{
+			"code": "typeof bar && foo",
+			"errors": 1
+		},
+		{
+			"code": "(bar, baz, true) && foo",
+			"errors": 1
+		},
+		{
+			"code": "undefined && foo",
+			"errors": 1
+		},
+		{
+			"code": "({}) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "([]) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(() => {}) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(function() {}) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(class {}) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "new Foo() ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "1 ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "/[a-z]/ ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "`${''}` ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a = true) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a += 1) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a -= 1) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a *= 1) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a /= 1) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a %= 1) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a <<= 1) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a >>= 1) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a >>>= 1) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a |= 1) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a ^= 1) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(a &= 1) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "undefined ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "!bar ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "void bar ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "typeof bar ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "+bar ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "-bar ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "~bar ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "++bar ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "bar++ ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "--bar ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "bar-- ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(x == y) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(x + y) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(x / y) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(x instanceof String) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "(x in y) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(x) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "String(x) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "Number(x) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "Symbol(x) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "BigInt(x) ?? foo",
+			"errors": 1
+		},
+		{
+			"code": "({}) != null",
+			"errors": 1
+		},
+		{
+			"code": "({}) == null",
+			"errors": 1
+		},
+		{
+			"code": "null == ({})",
+			"errors": 1
+		},
+		{
+			"code": "({}) == undefined",
+			"errors": 1
+		},
+		{
+			"code": "undefined == ({})",
+			"errors": 1
+		},
+		{
+			"code": "Symbol(x) != null",
+			"errors": 1
+		},
+		{
+			"code": "Symbol(x) != undefined",
+			"errors": 1
+		},
+		{
+			"code": "BigInt(x) != null",
+			"errors": 1
+		},
+		{
+			"code": "BigInt(x) != undefined",
+			"errors": 1
+		},
+		{
+			"code": "({}) != true",
+			"errors": 1
+		},
+		{
+			"code": "({}) == true",
+			"errors": 1
+		},
+		{
+			"code": "([]) == true",
+			"errors": 1
+		},
+		{
+			"code": "([a, b]) == true",
+			"errors": 1
+		},
+		{
+			"code": "(() => {}) == true",
+			"errors": 1
+		},
+		{
+			"code": "(function() {}) == true",
+			"errors": 1
+		},
+		{
+			"code": "void foo == true",
+			"errors": 1
+		},
+		{
+			"code": "typeof foo == true",
+			"errors": 1
+		},
+		{
+			"code": "![] == true",
+			"errors": 1
+		},
+		{
+			"code": "true == class {}",
+			"errors": 1
+		},
+		{
+			"code": "true == 1",
+			"errors": 1
+		},
+		{
+			"code": "undefined == true",
+			"errors": 1
+		},
+		{
+			"code": "true == undefined",
+			"errors": 1
+		},
+		{
+			"code": "`hello` == true",
+			"errors": 1
+		},
+		{
+			"code": "/[a-z]/ == true",
+			"errors": 1
+		},
+		{
+			"code": "({}) == Boolean({})",
+			"errors": 1
+		},
+		{
+			"code": "({}) == Boolean()",
+			"errors": 1
+		},
+		{
+			"code": "({}) == Boolean(() => {}, foo)",
+			"errors": 1
+		},
+		{
+			"code": "({}) !== true",
+			"errors": 1
+		},
+		{
+			"code": "({}) == !({})",
+			"errors": 1
+		},
+		{
+			"code": "({}) === true",
+			"errors": 1
+		},
+		{
+			"code": "([]) === true",
+			"errors": 1
+		},
+		{
+			"code": "(function() {}) === true",
+			"errors": 1
+		},
+		{
+			"code": "(() => {}) === true",
+			"errors": 1
+		},
+		{
+			"code": "!{} === true",
+			"errors": 1
+		},
+		{
+			"code": "typeof n === true",
+			"errors": 1
+		},
+		{
+			"code": "void n === true",
+			"errors": 1
+		},
+		{
+			"code": "+n === true",
+			"errors": 1
+		},
+		{
+			"code": "-n === true",
+			"errors": 1
+		},
+		{
+			"code": "~n === true",
+			"errors": 1
+		},
+		{
+			"code": "true === true",
+			"errors": 1
+		},
+		{
+			"code": "1 === true",
+			"errors": 1
+		},
+		{
+			"code": "'hello' === true",
+			"errors": 1
+		},
+		{
+			"code": "/[a-z]/ === true",
+			"errors": 1
+		},
+		{
+			"code": "undefined === true",
+			"errors": 1
+		},
+		{
+			"code": "(a = {}) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a += 1) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a -= 1) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a *= 1) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a %= 1) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a ** b) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a << b) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a >> b) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a >>> b) === true",
+			"errors": 1
+		},
+		{
+			"code": "--a === true",
+			"errors": 1
+		},
+		{
+			"code": "a-- === true",
+			"errors": 1
+		},
+		{
+			"code": "++a === true",
+			"errors": 1
+		},
+		{
+			"code": "a++ === true",
+			"errors": 1
+		},
+		{
+			"code": "(a + b) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a - b) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a * b) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a / b) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a % b) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a | b) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a ^ b) === true",
+			"errors": 1
+		},
+		{
+			"code": "(a & b) === true",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(0) === Boolean(1)",
+			"errors": 1
+		},
+		{
+			"code": "true === String(x)",
+			"errors": 1
+		},
+		{
+			"code": "true === Number(x)",
+			"errors": 1
+		},
+		{
+			"code": "true === Symbol(x)",
+			"errors": 1
+		},
+		{
+			"code": "true === BigInt(x)",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(0) == !({})",
+			"errors": 1
+		},
+		{
+			"code": "({}) !== null",
+			"errors": 1
+		},
+		{
+			"code": "({}) === null",
+			"errors": 1
+		},
+		{
+			"code": "([]) === null",
+			"errors": 1
+		},
+		{
+			"code": "(() => {}) === null",
+			"errors": 1
+		},
+		{
+			"code": "(function() {}) === null",
+			"errors": 1
+		},
+		{
+			"code": "(class {}) === null",
+			"errors": 1
+		},
+		{
+			"code": "new Foo() === null",
+			"errors": 1
+		},
+		{
+			"code": "`` === null",
+			"errors": 1
+		},
+		{
+			"code": "1 === null",
+			"errors": 1
+		},
+		{
+			"code": "'hello' === null",
+			"errors": 1
+		},
+		{
+			"code": "/[a-z]/ === null",
+			"errors": 1
+		},
+		{
+			"code": "true === null",
+			"errors": 1
+		},
+		{
+			"code": "null === null",
+			"errors": 1
+		},
+		{
+			"code": "a++ === null",
+			"errors": 1
+		},
+		{
+			"code": "++a === null",
+			"errors": 1
+		},
+		{
+			"code": "--a === null",
+			"errors": 1
+		},
+		{
+			"code": "a-- === null",
+			"errors": 1
+		},
+		{
+			"code": "!a === null",
+			"errors": 1
+		},
+		{
+			"code": "typeof a === null",
+			"errors": 1
+		},
+		{
+			"code": "delete a === null",
+			"errors": 1
+		},
+		{
+			"code": "void a === null",
+			"errors": 1
+		},
+		{
+			"code": "undefined === null",
+			"errors": 1
+		},
+		{
+			"code": "(x = {}) === null",
+			"errors": 1
+		},
+		{
+			"code": "(x += y) === null",
+			"errors": 1
+		},
+		{
+			"code": "(x -= y) === null",
+			"errors": 1
+		},
+		{
+			"code": "(a, b, {}) === null",
+			"errors": 1
+		},
+		{
+			"code": "Symbol(x) === null",
+			"errors": 1
+		},
+		{
+			"code": "BigInt(x) === null",
+			"errors": 1
+		},
+		{
+			"code": "({}) !== undefined",
+			"errors": 1
+		},
+		{
+			"code": "({}) === undefined",
+			"errors": 1
+		},
+		{
+			"code": "([]) === undefined",
+			"errors": 1
+		},
+		{
+			"code": "(() => {}) === undefined",
+			"errors": 1
+		},
+		{
+			"code": "(function() {}) === undefined",
+			"errors": 1
+		},
+		{
+			"code": "(class {}) === undefined",
+			"errors": 1
+		},
+		{
+			"code": "new Foo() === undefined",
+			"errors": 1
+		},
+		{
+			"code": "`` === undefined",
+			"errors": 1
+		},
+		{
+			"code": "1 === undefined",
+			"errors": 1
+		},
+		{
+			"code": "'hello' === undefined",
+			"errors": 1
+		},
+		{
+			"code": "/[a-z]/ === undefined",
+			"errors": 1
+		},
+		{
+			"code": "true === undefined",
+			"errors": 1
+		},
+		{
+			"code": "null === undefined",
+			"errors": 1
+		},
+		{
+			"code": "a++ === undefined",
+			"errors": 1
+		},
+		{
+			"code": "++a === undefined",
+			"errors": 1
+		},
+		{
+			"code": "--a === undefined",
+			"errors": 1
+		},
+		{
+			"code": "a-- === undefined",
+			"errors": 1
+		},
+		{
+			"code": "!a === undefined",
+			"errors": 1
+		},
+		{
+			"code": "typeof a === undefined",
+			"errors": 1
+		},
+		{
+			"code": "delete a === undefined",
+			"errors": 1
+		},
+		{
+			"code": "void a === undefined",
+			"errors": 1
+		},
+		{
+			"code": "undefined === undefined",
+			"errors": 1
+		},
+		{
+			"code": "(x = {}) === undefined",
+			"errors": 1
+		},
+		{
+			"code": "(x += y) === undefined",
+			"errors": 1
+		},
+		{
+			"code": "(x -= y) === undefined",
+			"errors": 1
+		},
+		{
+			"code": "(a, b, {}) === undefined",
+			"errors": 1
+		},
+		{
+			"code": "Symbol(x) === undefined",
+			"errors": 1
+		},
+		{
+			"code": "BigInt(x) === undefined",
+			"errors": 1
+		},
+		{
+			"code": "[a] == [a]",
+			"errors": 1
+		},
+		{
+			"code": "[a] != [a]",
+			"errors": 1
+		},
+		{
+			"code": "({}) == []",
+			"errors": 1
+		},
+		{
+			"code": "x === {}",
+			"errors": 1
+		},
+		{
+			"code": "x !== {}",
+			"errors": 1
+		},
+		{
+			"code": "x === []",
+			"errors": 1
+		},
+		{
+			"code": "x === (() => {})",
+			"errors": 1
+		},
+		{
+			"code": "x === (function() {})",
+			"errors": 1
+		},
+		{
+			"code": "x === (class {})",
+			"errors": 1
+		},
+		{
+			"code": "x === new Boolean()",
+			"errors": 1
+		},
+		{
+			"code": "x === new Promise()",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": 1
+		},
+		{
+			"code": "x === new WeakSet()",
+			"languageOptions": {
+				"ecmaVersion": 6
+			},
+			"errors": 1
+		},
+		{
+			"code": "x === (foo, {})",
+			"errors": 1
+		},
+		{
+			"code": "x === (y = {})",
+			"errors": 1
+		},
+		{
+			"code": "x === (y ? {} : [])",
+			"errors": 1
+		},
+		{
+			"code": "x === /[a-z]/",
+			"errors": 1
+		},
+		{
+			"code": "x === (x = {})",
+			"errors": 1
+		},
+		{
+			"code": "window.abc && false && anything",
+			"errors": 1
+		},
+		{
+			"code": "window.abc || true || anything",
+			"errors": 1
+		},
+		{
+			"code": "window.abc ?? 'non-nullish' ?? anything",
+			"errors": 1
+		}
+	],
+	"skipped": [
+		{
+			"kind": "valid",
+			"code": "x < 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "5 < x",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "x > y",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "x >= undefined",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "`${x}` < 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "5 > `${x}`",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "~x < 10",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "-x >= 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "x < /a/",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "/a/ >= x",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "5 < 10",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "5 <= 10",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "10 > 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "10 >= 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "'a' < 'b'",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "true >= false",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "undefined < 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "5 > undefined",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "`` < ``",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "`` >= 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "`foo` < `bar`",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "1n < 2n",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "null >= 5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "-5 < 10",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "10 >= +5",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "~5 <= 10",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "~1 > ~2",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "/a/ < /b/",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "/a/ >= /b/",
+			"why": "options [{\"checkRelationalComparisons\":true}]"
+		}
+	]
+}

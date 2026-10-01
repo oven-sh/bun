@@ -1,0 +1,445 @@
+"[k: string]: any"                      
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string]: any;"                     
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string]: any,"                     
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string]"                           
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string];"                          
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string]\n"                         
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string]: any\n[l: number]: any"    
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string]: any [l: number]: any"     
+     class tsc : TS1005 [29,+1) ']' expected. (n=5)
+     class lint: TS1005 [29,+1) <Expected "]" but found ":">
+     lit   tsc : TS1005 [28,+1) ']' expected. (n=5)
+     lit  Build: TS1005 [28,+1) <Expected "]" but found ":">
+"[k: string]: any; x = 1"               
+     class tsc : ok
+     class lint: ok
+     lit   tsc : TS1131 [27,+1) Property or signature expected. (n=2)
+     lit  Build: TS1131 [27,+1) <Unexpected x>
+"[k: string]: any x = 1"                
+     class tsc : TS1005 [27,+1) ';' expected. (n=1)
+     class lint: TS1005 [27,+1) <Expected ";" but found "x">
+     lit   tsc : TS1005 [26,+1) ';' expected. (n=2)
+     lit  Build: TS1005 [26,+1) <Expected ";" but found "x">
+"static [k: string]: any"               
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"readonly [k: string]: any"             
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"static readonly [k: string]: any"      
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"readonly static [k: string]: any"      
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"public [k: string]: any"               
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"private [k: string]: any"              
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"protected [k: string]: any"            
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"override [k: string]: any"             
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"declare [k: string]: any"              
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"abstract [k: string]: any"             
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"accessor [k: string]: any"             
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"async [k: string]: any"                
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"get [k: string]: any"                  
+     class tsc : TS1005 [16,+1) ']' expected. (n=3)
+     class lint: ok
+     lit   tsc : TS1005 [15,+1) ']' expected. (n=3)
+     lit  Build: TS1005 [15,+1) <Expected "]" but found ":">
+"set [k: string]: any"                  
+     class tsc : TS1005 [16,+1) ']' expected. (n=3)
+     class lint: ok
+     lit   tsc : TS1005 [15,+1) ']' expected. (n=3)
+     lit  Build: TS1005 [15,+1) <Expected "]" but found ":">
+"*[k: string]: any"                     
+     class tsc : TS1005 [13,+1) ']' expected. (n=3)
+     class lint: ok
+     lit   tsc : TS1131 [9,+1) Property or signature expected. (n=4)
+     lit  Build: TS1131 [9,+1) <Unexpected *>
+"static static [k: string]: any"        
+     class tsc : TS1434 [17,+6) Unexpected keyword or identifier. (n=1)
+     class lint: TS1005 [24,+1) <Expected ";" but found "[">
+     lit   tsc : TS1005 [23,+1) ';' expected. (n=1)
+     lit  Build: TS1005 [23,+1) <Expected ";" but found "[">
+"export [k: string]: any"               
+     class tsc : ok
+     class lint: TS1005 [17,+1) <Expected ";" but found "[">
+     lit   tsc : ok
+     lit  Build: TS1005 [16,+1) <Expected ";" but found "[">
+"const [k: string]: any"                
+     class tsc : ok
+     class lint: TS1005 [16,+1) <Expected ";" but found "[">
+     lit   tsc : TS1005 [15,+1) ';' expected. (n=1)
+     lit  Build: TS1005 [15,+1) <Expected ";" but found "[">
+"in [k: string]: any"                   
+     class tsc : ok
+     class lint: TS1005 [13,+1) <Expected ";" but found "[">
+     lit   tsc : ok
+     lit  Build: ok
+"out [k: string]: any"                  
+     class tsc : ok
+     class lint: TS1005 [14,+1) <Expected ";" but found "[">
+     lit   tsc : ok
+     lit  Build: ok
+"@d [k: string]: any"                   
+     class tsc : ok
+     class lint: ok
+     lit   tsc : TS1131 [9,+1) Property or signature expected. (n=5)
+     lit  Build: TS1131 [9,+1) <Unexpected @>
+"@d static [k: string]: any"            
+     class tsc : ok
+     class lint: ok
+     lit   tsc : TS1131 [9,+1) Property or signature expected. (n=5)
+     lit  Build: TS1131 [9,+1) <Unexpected @>
+"static @d [k: string]: any"            
+     class tsc : TS1436 [17,+1) Decorators must precede the name and all keywords of property declarations. (n=1)
+     class lint: TS1005 [17,+1) <Expected ";" but found "@">
+     lit   tsc : TS1131 [9,+6) Property or signature expected. (n=6)
+     lit  Build: TS1131 [9,+6) <Unexpected static>
+"[k: string, l: number]: any"           
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[...k: string[]]: any"                 
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k?: string]: any"                     
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k?]: any"                             
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k?,]: any"                            
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[]: any"                               
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k,]: any"                             
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string,]: any"                     
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k, l]: any"                           
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k]: any"                              
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k] = 1"                               
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k.l]: any"                            
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k = 1]: any"                          
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string = 1]: any"                  
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string = ]: any"                   
+     class tsc : TS1109 [23,+1) Expression expected. (n=1)
+     class lint: TS1005 [21,+1) <Expected "]" but found "=">
+     lit   tsc : TS1109 [22,+1) Expression expected. (n=1)
+     lit  Build: TS1109 [22,+1) <Unexpected ]>
+"[public k: string]: any"               
+     class tsc : ok
+     class lint: TS1005 [18,+1) <Expected "]" but found "k">
+     lit   tsc : ok
+     lit  Build: ok
+"[readonly k: string]: any"             
+     class tsc : ok
+     class lint: TS1005 [20,+1) <Expected "]" but found "k">
+     lit   tsc : ok
+     lit  Build: ok
+"[async x => x]: any"                   
+     class tsc : TS1005 [19,+2) ',' expected. (n=1)
+     class lint: ok
+     lit   tsc : TS1005 [18,+2) ',' expected. (n=5)
+     lit  Build: TS1005 [18,+2) <Expected "]" but found "=>">
+"[async x => x]() {}"                   
+     class tsc : TS1005 [19,+2) ',' expected. (n=4)
+     class lint: ok
+     lit   tsc : TS1005 [18,+2) ',' expected. (n=5)
+     lit  Build: TS1005 [18,+2) <Expected "]" but found "=>">
+"[static k: string]: any"               
+     class tsc : ok
+     class lint: TS1005 [18,+1) <Expected "]" but found "k">
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string]?: any"                     
+     class tsc : TS1005 [21,+1) ';' expected. (n=2)
+     class lint: TS1005 [21,+1) <Expected ";" but found "?">
+     lit   tsc : TS1005 [20,+1) ';' expected. (n=2)
+     lit  Build: TS1005 [20,+1) <Expected ";" but found "?">
+"[k: string]!: any"                     
+     class tsc : TS1005 [21,+1) ';' expected. (n=3)
+     class lint: TS1005 [21,+1) <Expected ";" but found "!">
+     lit   tsc : TS1005 [20,+1) ';' expected. (n=3)
+     lit  Build: TS1005 [20,+1) <Expected ";" but found "!">
+"[k: string](): any"                    
+     class tsc : TS1005 [21,+1) ';' expected. (n=2)
+     class lint: TS1005 [21,+1) <Expected ";" but found "(">
+     lit   tsc : TS1005 [20,+1) ';' expected. (n=1)
+     lit  Build: TS1005 [20,+1) <Expected ";" but found "(">
+"[k: string] = 1"                       
+     class tsc : TS1005 [22,+1) ';' expected. (n=1)
+     class lint: TS1005 [22,+1) <Expected ";" but found "=">
+     lit   tsc : TS1005 [21,+1) ';' expected. (n=1)
+     lit  Build: TS1005 [21,+1) <Expected ";" but found "=">
+"[k: string]: any = 1"                  
+     class tsc : TS1005 [27,+1) ';' expected. (n=1)
+     class lint: TS1005 [27,+1) <Expected ";" but found "=">
+     lit   tsc : TS1005 [26,+1) ';' expected. (n=1)
+     lit  Build: TS1005 [26,+1) <Expected ";" but found "=">
+"[k: | A]: B"                           
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string]: | | B"                    
+     class tsc : TS1110 [25,+1) Type expected. (n=1)
+     class lint: ok
+     lit   tsc : TS1110 [24,+1) Type expected. (n=1)
+     lit  Build: TS1110 [24,+1) <Unexpected |>
+"[k: A | () => void]: B"                
+     class tsc : TS1385 [17,+11) Function type notation must be parenthesized when used in a union type. (n=1)
+     class lint: ok
+     lit   tsc : TS1385 [16,+11) Function type notation must be parenthesized when used in a union type. (n=1)
+     lit  Build: TS1385 [16,+11) <Function type notation must be parenthesized when used in a union type.>
+"[k: string]: A | () => void"           
+     class tsc : TS1385 [26,+11) Function type notation must be parenthesized when used in a union type. (n=1)
+     class lint: ok
+     lit   tsc : TS1385 [25,+11) Function type notation must be parenthesized when used in a union type. (n=1)
+     lit  Build: TS1385 [25,+11) <Function type notation must be parenthesized when used in a union type.>
+"[k: ]: any"                            
+     class tsc : TS1110 [14,+1) Type expected. (n=1)
+     class lint: TS1110 [14,+1) <Unexpected ]>
+     lit   tsc : TS1110 [13,+1) Type expected. (n=1)
+     lit  Build: TS1110 [13,+1) <Unexpected ]>
+"[k: string]: "                         
+     class tsc : TS1110 [24,+1) Type expected. (n=1)
+     class lint: TS1110 [24,+1) <Unexpected }>
+     lit   tsc : TS1110 [23,+1) Type expected. (n=1)
+     lit  Build: TS1110 [23,+1) <Unexpected }>
+"[k: string]: ;"                        
+     class tsc : TS1110 [23,+1) Type expected. (n=1)
+     class lint: TS1110 [23,+1) <Unexpected ;>
+     lit   tsc : TS1110 [22,+1) Type expected. (n=1)
+     lit  Build: TS1110 [22,+1) <Unexpected ;>
+"[k: { a A }]: any"                     
+     class tsc : TS1131 [16,+1) Property or signature expected. (n=6)
+     class lint: ok
+     lit   tsc : TS1131 [15,+1) Property or signature expected. (n=6)
+     lit  Build: TS1131 [15,+1) <Unexpected a>
+"[k: string]: { a A }"                  
+     class tsc : TS1131 [25,+1) Property or signature expected. (n=2)
+     class lint: ok
+     lit   tsc : TS1131 [24,+1) Property or signature expected. (n=4)
+     lit  Build: TS1131 [24,+1) <Unexpected a>
+"[await: string]: any"                  
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[yield: string]: any"                  
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[this: string]: any"                   
+     class tsc : TS1005 [15,+1) ']' expected. (n=3)
+     class lint: TS1005 [15,+1) <Expected "]" but found ":">
+     lit   tsc : TS1005 [14,+1) ']' expected. (n=3)
+     lit  Build: TS1005 [14,+1) <Expected "]" but found ":">
+"[k as any: string]: any"               
+     class tsc : TS1005 [19,+1) ']' expected. (n=3)
+     class lint: ok
+     lit   tsc : TS1005 [18,+1) ']' expected. (n=3)
+     lit  Build: TS1005 [18,+1) <Expected "]" but found ":">
+"[(k): string]: any"                    
+     class tsc : TS1005 [14,+1) ']' expected. (n=3)
+     class lint: TS1005 [14,+1) <Expected "]" but found ":">
+     lit   tsc : TS1005 [13,+1) ']' expected. (n=3)
+     lit  Build: TS1005 [13,+1) <Expected "]" but found ":">
+"[{ a }: string]: any"                  
+     class tsc : TS1005 [16,+1) ']' expected. (n=3)
+     class lint: TS1005 [16,+1) <Expected "]" but found ":">
+     lit   tsc : TS1005 [15,+1) ']' expected. (n=3)
+     lit  Build: TS1005 [15,+1) <Expected "]" but found ":">
+"[[a]: string]: any"                    
+     class tsc : TS1005 [14,+1) ']' expected. (n=3)
+     class lint: TS1005 [14,+1) <Expected "]" but found ":">
+     lit   tsc : TS1005 [13,+1) ']' expected. (n=3)
+     lit  Build: TS1005 [13,+1) <Expected "]" but found ":">
+"[k: string]: any /* c */ ;"            
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"/* a */ static /* b */ [ /* c */ k /* d */ : /* e */ string /* f */ ] /* g */ : /* h */ any /* i */ ;"
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[\\u006b: string]: any"                
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string]: any; [k: number]: any; [k: symbol]: any"
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: `a${string}`]: any"                
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: string | number]: any"             
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k: K]: any"                           
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k in K]: any"                         
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[K in keyof T]: T[K]"                  
+     class tsc : TS1005 [22,+1) ']' expected. (n=4)
+     class lint: TS1005 [22,+1) <Expected "]" but found "T">
+     lit   tsc : ok
+     lit  Build: ok
+"['a']: any"                            
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[1]: any"                              
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[Symbol.iterator]() {}"                
+     class tsc : ok
+     class lint: ok
+     lit   tsc : TS1005 [29,+1) ';' expected. (n=2)
+     lit  Build: TS1005 [29,+1) <Expected ";" but found "{">
+"[k]"                                   
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k]?: any"                             
+     class tsc : ok
+     class lint: ok
+     lit   tsc : ok
+     lit  Build: ok
+"[k]!: any"                             
+     class tsc : ok
+     class lint: ok
+     lit   tsc : TS1005 [12,+1) ';' expected. (n=3)
+     lit  Build: TS1005 [12,+1) <Expected ";" but found "!">

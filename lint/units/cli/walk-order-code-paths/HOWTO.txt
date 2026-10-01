@@ -20,10 +20,14 @@ quirks.cjs             node quirks.cjs [--fixtures] [--cases corpus.json] [--fil
 find-quirk.cjs         the shortest sources of a corpus where removeFromArray removes the last element of a non-empty array.
 nest.cjs               node nest.cjs 1 2 4 8 12   `finally` inside `finally`: the count of the fork context doubles each level.
 fixtures-trace.txt     the trace of the probe for the 243 fixtures (9,782 lines).
-make-test-data.cjs, make-own-data.cjs -> code-path-analysis.txt
-                       251 entries (243 of upstream, 8 own: cases/own-code-paths.json): `== name`, `| ` source lines without
-                       the /*DOT blocks, `> ` lines of the expected arrows with `>>` after each code path, then the calls.
-                       Every trace gives the expected arrows on upstream's CodePathState (checked when the file is made).
+make-test-data.cjs -> code-path-analysis.txt
+                       277 entries: upstream's 243 fixtures, 8 own (cases/own-code-paths.json: three where removeFromArray
+                       removes a last element, finally in finally, leaving paths, `continue` to an outer label, dead code
+                       after try/catch, break and continue in finally), 26 sources of upstream's unit tests (unit--NN.js).
+                       `== name`, `| ` source lines (a fixture without its /*DOT blocks), `> ` arrows of each code path
+                       with `>>` after each, `! ` every event in order, then the calls on CodePathState.
+                       336 code paths, 4,687 events, 11,123 calls. While the file is made every entry is checked: the
+                       calls give these arrows and events on upstream's CodePathState, and they are ESLint's.
 gr.cjs                 node gr.cjs [--ext ts] -e "src" ...   what ESLint's getter-return reports.
 gr-model.cjs           getter-return as the port plans it (getters are marked from above; a report that depends on Object or
                        Reflect is dropped when the file declares the name anywhere), as an ESLint rule, against ESLint's rule.
@@ -34,3 +38,5 @@ cases/make.cjs         -> cases/edge-getter-return.json (146), cases/ts-getter-r
 Corpora used (under /tmp, made by ../code-path-analysis-topdown): /tmp/cpa-1b/corpus.json (every case of ESLint's rule
 tests: 25,164 JavaScript, 2,733 TypeScript), files-js.txt (2,922 files), files-ts.txt (1,734 files), gen-js.json (20,000
 generated bodies).
+pin-check.cjs           node pin-check.cjs [remove|unreachable]   replays code-path-analysis.txt on upstream's CodePathState, as it is or
+                       without one of its two quirks: which entries a port without the quirk fails (3 and 1).

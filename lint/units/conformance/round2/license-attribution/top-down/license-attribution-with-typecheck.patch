@@ -1,0 +1,25 @@
+diff --git a/LICENSE.md b/LICENSE.md
+index 3ae7d08..69e8f11 100644
+--- a/LICENSE.md
++++ b/LICENSE.md
+@@ -81,4 +81,7 @@ For compatibility reasons, the following packages are embedded into Bun's binary
+ ## Additional credits
+ 
+ - Bun's JS transpiler, CSS lexer, and Node.js module resolver source code is a port of [@evanw](https://github.com/evanw)’s [esbuild](https://github.com/evanw/esbuild) project.
++- Parts of `src/js_parser`, `src/lint`, `src/typecheck`, and `test/cli/lint/conformance/runner` are ported or copied from Microsoft's [typescript-go](https://github.com/microsoft/typescript-go) and [TypeScript](https://github.com/microsoft/TypeScript) projects. Both projects are Apache 2.0 licensed. The `UPSTREAM_PORTED` file in each directory names the upstream commits.
++- `test/cli/lint/conformance/corpus` holds test cases and error baselines copied from [TypeScript](https://github.com/microsoft/TypeScript) and [typescript-go](https://github.com/microsoft/typescript-go). `test/cli/lint/conformance/UPSTREAM` names the commits. The license and notice files of both projects are in `test/cli/lint/conformance`: `LICENSE`, `NOTICE.txt`, `LICENSE.txt`, and `ThirdPartyNoticeText.txt`.
++- Parts of `src/lint` are ports of rules from [ESLint](https://github.com/eslint/eslint), which is MIT licensed. The test cases in `test/cli/lint/rules` include cases from ESLint's own tests. `src/lint/LICENSE.eslint` holds ESLint's license.
+ - Credit to [@kipply](https://github.com/kipply) for the name "Bun"!
+\ No newline at end of file
+diff --git a/docs/project/license.mdx b/docs/project/license.mdx
+index 67dc787..9561846 100644
+--- a/docs/project/license.mdx
++++ b/docs/project/license.mdx
+@@ -87,4 +87,7 @@ For compatibility, Bun embeds the following packages into its binary and injects
+ 
+ - Bun's JS transpiler and Node.js module resolver source code is a port of [@evanw](https://github.com/evanw)’s [esbuild](https://github.com/evanw/esbuild) project.
+ - Bun's CSS parser source code is derived from the [Lightning CSS](https://github.com/parcel-bundler/lightningcss) and [Servo](https://github.com/servo/servo) projects.
++- Parts of `src/js_parser`, `src/lint`, `src/typecheck`, and `test/cli/lint/conformance/runner` are ported or copied from Microsoft's [typescript-go](https://github.com/microsoft/typescript-go) and [TypeScript](https://github.com/microsoft/TypeScript) projects. Both projects are Apache 2.0 licensed. The `UPSTREAM_PORTED` file in each directory names the upstream commits.
++- `test/cli/lint/conformance/corpus` holds test cases and error baselines copied from [TypeScript](https://github.com/microsoft/TypeScript) and [typescript-go](https://github.com/microsoft/typescript-go). `test/cli/lint/conformance/UPSTREAM` names the commits. The license and notice files of both projects are in `test/cli/lint/conformance`: `LICENSE`, `NOTICE.txt`, `LICENSE.txt`, and `ThirdPartyNoticeText.txt`.
++- Parts of `src/lint` are ports of rules from [ESLint](https://github.com/eslint/eslint), which is MIT licensed. The test cases in `test/cli/lint/rules` include cases from ESLint's own tests. `src/lint/LICENSE.eslint` holds ESLint's license.
+ - Credit to [@kipply](https://github.com/kipply) for the name "Bun".

@@ -1,0 +1,80 @@
+0	"type as = A | B;\ninterface as { a: 1 }\ntype satisfies = 1;\ninterface satisfies {}\n"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+1	"type as any;"
+	tsc : TS1005 [8,+3) '=' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[8,+3) "Expected "=" but found "any"" code=1005 ref@[8,11) "'=' expected." msgs=2
+2	"interface as any;"
+	tsc : TS1005 [13,+3) '{' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[13,+3) "Expected "{" but found "any"" code=1005 ref@[13,16) "'{' expected." msgs=2
+3	"type as = 1"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+4	"type\nas = 1"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+5	"interface as<T> extends B<T> { m(): T }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+6	"type as<T> = T[];"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+7	"const r = a ? (b): c => { type T = A | B; interface I extends J { m(): void } class K { [k: string]: any } return 1 } : e;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+8	"const r = a ? (b) : c => { type T = A | B; interface I extends J { m(): void } class K { [k: string]: any } return c };"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+9	"let x: { [class { [k: string]: any }.name]: 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+10	"class C implements (class { [k: string]: any }) {}"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+11	"f<typeof x>(class { [k: string]: any });"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+12	"((a = class { [k: string]: any }) => 1);"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+13	"async (a = class { [k: string]: any }) => 1;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+14	"(a = () => { type T = 1; interface I {} }) => 1;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+15	"<T,>(a = class { [k: string]: T }) => 1;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+16	"class C { [k: string]: any = 1 }"
+	tsc : TS1005 [27,+1) ';' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[27,+1) "Expected ";" but found "="" code=1005 ref@[27,28) "';' expected." msgs=1
+17	"class C { declare abstract [k: string]: any }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+18	"class C { static declare readonly [k: string]: any }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+19	"class C { [k: string]: any; declare x: number; m(): void; m() {} }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok

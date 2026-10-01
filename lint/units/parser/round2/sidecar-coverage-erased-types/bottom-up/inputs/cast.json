@@ -1,0 +1,22 @@
+[
+"type as = A | B;\ninterface as { a: 1 }\ntype satisfies = 1;\ninterface satisfies {}\n",
+"type as any;",
+"interface as any;",
+"type as = 1",
+"type\nas = 1",
+"interface as<T> extends B<T> { m(): T }",
+"type as<T> = T[];",
+"const r = a ? (b): c => { type T = A | B; interface I extends J { m(): void } class K { [k: string]: any } return 1 } : e;",
+"const r = a ? (b) : c => { type T = A | B; interface I extends J { m(): void } class K { [k: string]: any } return c };",
+"let x: { [class { [k: string]: any }.name]: 1 };",
+"class C implements (class { [k: string]: any }) {}",
+"f<typeof x>(class { [k: string]: any });",
+"((a = class { [k: string]: any }) => 1);",
+"async (a = class { [k: string]: any }) => 1;",
+"(a = () => { type T = 1; interface I {} }) => 1;",
+"<T,>(a = class { [k: string]: T }) => 1;",
+"class C { [k: string]: any = 1 }",
+"class C { declare abstract [k: string]: any }",
+"class C { static declare readonly [k: string]: any }",
+"class C { [k: string]: any; declare x: number; m(): void; m() {} }"
+]

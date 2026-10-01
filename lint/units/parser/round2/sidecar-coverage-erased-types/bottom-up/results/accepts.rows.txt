@@ -1,0 +1,38 @@
+// sources that tsc 6.0.2 and typescript-go 89d5d5b parse without a diagnostic; lint@HEAD: what Parser::parse_for_lint_with_codes of be1ebe5295 does.
+b"type A = intrinsic;", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"type A = intrinsic.b;", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"type A = intrinsic\n.b;", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"type A = (intrinsic);", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"type A = B<>;", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"type A<> = 1;", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I<> {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends {} {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends A, {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends A, {} {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends\n{}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I implements A {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends A implements B {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends A extends B {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends extends {}", // tsc ok; tsgo = tsc; lint@HEAD err bun@[20,+7) "Unexpected extends" code=1110 ref@[20,27) "Type expected." msgs=2
+b"interface I extends implements {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends (A) {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends A.B() {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends A! {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends string {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends keyof {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends readonly {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends this {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends null {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends class {} {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends function () {} {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends import('m').A {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends 1 {}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I extends A<T>\n{}", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I { [public k: string]: any }", // tsc ok; tsgo = tsc; lint@HEAD err bun@[22,+1) "Expected "]" but found "k"" code=1005 ref@[22,23) "']' expected." msgs=2
+b"interface I { a<const T, in out U>(x: T): U }", // tsc ok; tsgo = tsc; lint@HEAD err bun@[25,+2) "The modifier "in" is not valid here" code=0 ref@[0,0) "" msgs=1
+b"interface I { readonly readonly: 1; get: 2; set?: 3; new: 4; static a: 5 }", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I { a: 1, b: 2; c: 3\n d: 4 }", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I { [k: string] }", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"interface I { a?(): void; (): void; new (): I; <T>(a: T): T; [x]: 1; 'y': 2; 3: 4; 5n: 6; #p: 7 }", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"class C { [k: string]; [l: number]\n [m: symbol]: 1, x = 1 }", // tsc ok; tsgo = tsc; lint@HEAD ok
+b"class C { [k: string, l: number]: any; [...r: string[]]: any; [o?: string]: any; []: any; [k,]: any; [k: string = 1]: any }", // tsc ok; tsgo = tsc; lint@HEAD ok

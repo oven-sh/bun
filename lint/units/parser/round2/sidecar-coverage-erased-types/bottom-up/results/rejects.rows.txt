@@ -1,0 +1,48 @@
+// (source, code, start, end, text) of the first diagnostic of tsc 6.0.2; typescript-go 89d5d5b reports the same for every row. lint@HEAD: what Parser::parse_for_lint_with_codes of be1ebe5295 does.
+(b"type A = | | B;", 1110, 11, 12, "Type expected."), // tsgo same; lint@HEAD accepts
+(b"type A = A & | B;", 1110, 13, 14, "Type expected."), // tsgo same; lint@HEAD accepts
+(b"type A = keyof | B;", 1110, 15, 16, "Type expected."), // tsgo same; lint@HEAD accepts
+(b"type F = A | () => void;", 1385, 12, 23, "Function type notation must be parenthesized when used in a union type."), // tsgo same; lint@HEAD accepts
+(b"type A = | new () => A;", 1386, 10, 22, "Constructor type notation must be parenthesized when used in a union type."), // tsgo same; lint@HEAD accepts
+(b"type A = { a A };", 1131, 11, 12, "Property or signature expected."), // tsgo same; lint@HEAD accepts
+(b"type A = intrinsic | 1;", 1005, 19, 20, "';' expected."), // tsgo same; lint@HEAD accepts
+(b"type A = intrinsic<B>;", 1005, 18, 19, "';' expected."), // tsgo same; lint@HEAD accepts
+(b"type as = | | B;", 1110, 12, 13, "Type expected."), // tsgo same; lint@HEAD accepts
+(b"export type A = | | B;", 1110, 18, 19, "Type expected."), // tsgo same; lint@HEAD accepts
+(b"declare namespace N { type A = | | B }", 1110, 33, 34, "Type expected."), // tsgo same; lint@HEAD accepts
+(b"function f() { type A = | | B }", 1110, 26, 27, "Type expected."), // tsgo same; lint@HEAD accepts
+(b"if (a) type A = | | B;", 1110, 18, 19, "Type expected."), // tsgo same; lint@HEAD accepts
+(b"interface I { a A }", 1131, 14, 15, "Property or signature expected."), // tsgo same; lint@HEAD accepts
+(b"interface I { a: | | B }", 1110, 19, 20, "Type expected."), // tsgo same; lint@HEAD accepts
+(b"interface I { +a: 1 }", 1131, 14, 15, "Property or signature expected."), // tsgo same; lint@HEAD accepts
+(b"interface I { a!: 1 }", 1131, 14, 15, "Property or signature expected."), // tsgo same; lint@HEAD accepts
+(b"interface I { a = 1 }", 1131, 14, 15, "Property or signature expected."), // tsgo same; lint@HEAD rejects, code 0 ref@[0,0) ""
+(b"interface I { a: 1 b: 2 }", 1005, 19, 20, "';' expected."), // tsgo same; lint@HEAD rejects, code 0 ref@[0,0) ""
+(b"interface I { ; }", 1131, 14, 15, "Property or signature expected."), // tsgo same; lint@HEAD rejects, code 0 ref@[0,0) ""
+(b"interface I { default a: 1 }", 1005, 22, 23, "';' expected."), // tsgo same; lint@HEAD accepts
+(b"interface I { [k: string]?: any }", 1005, 25, 26, "';' expected."), // tsgo same; lint@HEAD accepts
+(b"interface I { a: 1; [K in keyof T]: T[K] }", 1005, 32, 33, "']' expected."), // tsgo same; lint@HEAD accepts
+(b"interface I {", 1005, 13, 13, "'}' expected."), // tsgo same; lint@HEAD rejects, code 0 ref@[0,0) ""
+(b"interface as { a A }", 1131, 15, 16, "Property or signature expected."), // tsgo same; lint@HEAD accepts
+(b"export default interface I { a A }", 1131, 29, 30, "Property or signature expected."), // tsgo same; lint@HEAD accepts
+(b"interface I extends A | B {}", 1005, 22, 23, "',' expected."), // tsgo same; lint@HEAD accepts
+(b"interface I extends A & B {}", 1005, 22, 23, "',' expected."), // tsgo same; lint@HEAD accepts
+(b"interface I extends A B {}", 1005, 22, 23, "',' expected."), // tsgo same; lint@HEAD rejects, code 1005 ref@[22,23) "'{' expected."
+(b"interface I extends A? {}", 1005, 21, 22, "',' expected."), // tsgo same; lint@HEAD rejects, code 1005 ref@[21,22) "'{' expected."
+(b"interface I extends typeof x {}", 1109, 20, 26, "Expression expected."), // tsgo same; lint@HEAD accepts
+(b"interface I extends void {}", 1109, 20, 24, "Expression expected."), // tsgo same; lint@HEAD accepts
+(b"interface I extends , A {}", 1109, 20, 21, "Expression expected."), // tsgo same; lint@HEAD rejects, code 1110 ref@[20,21) "Type expected."
+(b"interface I extends A,, B {}", 1109, 22, 23, "Expression expected."), // tsgo same; lint@HEAD rejects, code 1110 ref@[22,23) "Type expected."
+(b"interface I extends keyof A {}", 1005, 26, 27, "',' expected."), // tsgo same; lint@HEAD accepts
+(b"interface I extends A extends B ? C : D {}", 1005, 32, 33, "',' expected."), // tsgo same; lint@HEAD accepts
+(b"interface I extends () => A {}", 1109, 21, 22, "Expression expected."), // tsgo same; lint@HEAD accepts
+(b"interface I extends A<B | > {}", 1110, 26, 27, "Type expected."), // tsgo same; lint@HEAD rejects, code 1110 ref@[26,27) "Type expected."
+(b"interface I extends A", 1005, 21, 21, "'{' expected."), // tsgo same; lint@HEAD rejects, code 1005 ref@[21,21) "'{' expected."
+(b"class C { [k: string]: | | B }", 1110, 25, 26, "Type expected."), // tsgo same; lint@HEAD accepts
+(b"class C { [k: A | () => void]: B }", 1385, 17, 28, "Function type notation must be parenthesized when used in a union type."), // tsgo same; lint@HEAD accepts
+(b"class C { [k: string]: { a A } }", 1131, 25, 26, "Property or signature expected."), // tsgo same; lint@HEAD accepts
+(b"class C { [k: { a A }]: any }", 1131, 16, 17, "Property or signature expected."), // tsgo same; lint@HEAD accepts
+(b"class C { [k as any: string]: any }", 1005, 19, 20, "']' expected."), // tsgo same; lint@HEAD accepts
+(b"class C { [k: string = ]: any }", 1109, 23, 24, "Expression expected."), // tsgo same; lint@HEAD rejects, code 1005 ref@[21,22) "']' expected."
+(b"class C { [k: string]: any x = 1 }", 1005, 27, 28, "';' expected."), // tsgo same; lint@HEAD rejects, code 1005 ref@[27,28) "';' expected."
+(b"declare class C { static [k: string]: | | B }", 1110, 40, 41, "Type expected."), // tsgo same; lint@HEAD accepts

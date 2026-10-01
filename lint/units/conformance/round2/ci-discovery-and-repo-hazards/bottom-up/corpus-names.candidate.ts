@@ -15,13 +15,14 @@ test("no file of the corpus is a test file for the runner of CI", () => {
   const code = new Bun.Transpiler({ loader: "ts" }).transformSync(
     ["isJavaScript", "isNodeTest", "isClusterTest", "isTest", "isTestStrict"].map(cut).join("\n"),
   );
-  const isTest: (path: string) => boolean = new Function("basename", "sep", "isCI", "isMacOS", "isX64", `${code}\nreturn isTest;`)(
-    basename,
-    sep,
-    false,
-    false,
-    false,
-  );
+  const isTest: (path: string) => boolean = new Function(
+    "basename",
+    "sep",
+    "isCI",
+    "isMacOS",
+    "isX64",
+    `${code}\nreturn isTest;`,
+  )(basename, sep, false, false, false);
   expect(isTest(join("cli", "lint", "conformance.test.ts"))).toBe(true);
   expect(isTest(join("cli", "lint", "conformance", "corpus", "cases", "compiler", "a.test.ts"))).toBe(true);
   const taken: string[] = [];

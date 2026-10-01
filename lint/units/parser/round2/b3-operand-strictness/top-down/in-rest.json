@@ -1,0 +1,23 @@
+[
+{"g":"yield* without an operand"},
+"function* g() { yield*; }", "function* g() { yield* }", "function* g() { (yield*); }", "function* g() { [yield*]; }", "function* g() { f(yield*, 1); }", "function* g() { x ? yield* : 1; }",
+"function* g() { yield* /* c */ ; }", "function* g() { yield * ; }", "function* g() { x = yield*; }", "function* g() { yield*\n; }", "function* g() { yield*\nx; }", "function* g() { yield\n* x; }", "function* g() { yield*", "function* g() { `${yield*}`; }",
+"function* g() { yield; yield\nx; (yield); [yield]; f(yield, 1); x ? yield : 1; }", "function* g() { yield* x; yield *x; yield\n; }", "async function* g() { yield*; }", "class C { *m() { yield*; } }", "({ *m() { yield*; } });",
+"function* g() { yield* = 1; }", "function* g() { yield = 1; }", "function* g() { 1 + yield x; }", "function* g() { ++yield; }", "function* g() { yield in x; }", "function* g() { yield* in x; }",
+["js","function* g() { yield*; }"], ["js","function* g() { (yield*); }"], ["tsx","function* g() { yield*; }"],
+{"g":"a name after a dot and a line break, before a word on its line"},
+"a.\nb in c;", "a.\nb instanceof c;", "a.\nb as c;", "a.\nb satisfies c;", "for (a.\nb of c) {}", "for (a.\nb in c) {}", "a?.\nb in c;", "a.b.\nc in d;", "x = a.\nb in c;", "f(a.\nb in c);", "(a.\nb in c);",
+"a. // x\nb in c;", "a. /* x\n */ b in c;", "a./* x */\nb in c;", "a.\n/* x */ b in c;", "a\n.\nb in c;", "a .\n b  in c;", "a.\r\nb in c;", "a.\u2028b in c;",
+"a.\nb\nin c;", "a.\nb.c in d;", "a.\nb(c) in d;", "a.\nb[c] in d;", "a.\nb = c;", "a.\nb;", "a.\nb + c;", "a.b in c;", "a\n.b in c;", "a.\nb /* x\n */ in c;", "a.\nb /* x */ in c;", "a.\nb! in c;", "a.\nb++ in c;", "a.\nb<T> in c;",
+"a.\nin in c;", "a.\nclass in c;", "a.\nb\n.c in d;", "a.\nb.\nc in d;", "(a.\nb) in c;", "a.\nb in\nc;", "-a.\nb in c;", "x + a.\nb in c;", "typeof a.\nb in c;", "new a.\nb in c;", "a.\nb ? c : d;", "a.\nb of;",
+"class C { #b; m(a) { a.\n#b in c; } }", "class C { #b; m(a) { a?.\n#b in c; } }", "class C { #b; m(a) { a.\nb in c; } }", "class C { #b; static m(a) { return #b in a.\nx in c; } }",
+"class C extends a.\nb implements I {}", "class C extends a.\nb {}", "@a.\nb class C {}", "class C { @a.\nb m() {} }", "class C { @a.\nb static m() {} }", "class C { @a.\nb\nm() {} }", "@a.\nb export class C {}",
+"super.\nb in c;", "class C extends B { m() { super.\nb in c; } }", "import.meta.\nb in c;", "new.target.\nb in c;", "this.\nb in c;", "a.\nb in c, d.\ne in f;",
+"let x: A.\nB extends C ? D : E;", "type T = A.\nB extends C ? D : E;", "let x = y as A.\nB as C;", "let x: typeof a.\nb extends C ? D : E;", "let x: A.\nB;", "let x: A.\nB = c;", "let x: A.\nB | C;", "function f(x: A.\nB is) {}", "import a = b.\nc;", "type T = { [K in A.\nB as C]: D };", "let x: import('m').\nB extends C ? D : E;", "class C implements A.\nB implements D {}", "interface I extends A.\nB extends C {}",
+["js","a.\nb in c;"], ["js","a.\nb instanceof c;"], ["js","for (a.\nb of c) {}"], ["js","a?.\nb in c;"], ["js","a.\nb\nin c;"],
+["tsx","<a.\nb c='1' />;"], ["tsx","<a.\nb/>;"], ["tsx","<a.\nb></a.b>;"], ["tsx","<a.b.\nc d='1' />;"], ["jsx","<a.\nb c='1' />;"], ["tsx","<a.\nb {...c} />;"], ["tsx","<a.\nb\nc='1' />;"],
+{"g":"a member, a call or an update after a JSX element"},
+["tsx","<a/>.b;"], ["tsx","<a/>[0];"], ["tsx","<a/>(1);"], ["tsx","<a/>`x`;"], ["tsx","<a/>!;"], ["tsx","<a/>++;"], ["tsx","<a/>?.b;"], ["tsx","<a/> as T;"], ["tsx","<a/> + 1;"], ["tsx","<a/> = 1;"], ["tsx","<a/> ? 1 : 2;"], ["tsx","<a/>, 1;"],
+["tsx","<a></a>.b;"], ["tsx","<></>.b;"], ["tsx","(<a/>).b;"], ["tsx","f(<a/>.b);"], ["tsx","x = <a/>.b;"], ["tsx","<a/>\n.b;"], ["tsx","<a/>\n(1);"], ["tsx","<a/>\n[0];"], ["tsx","<a><b/>.c</a>;"], ["tsx","<a>{<b/>.c}</a>;"],
+["jsx","<a/>.b;"], ["jsx","<a/>(1);"], ["jsx","<a/>++;"], ["tsx","++<a/>;"], ["tsx","-<a/>;"], ["tsx","typeof <a/>.b;"], ["tsx","<a/><T>(x);"]
+]

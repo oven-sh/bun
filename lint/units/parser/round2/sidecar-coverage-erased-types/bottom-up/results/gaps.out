@@ -1,0 +1,256 @@
+0	"let x: { readonly #a: 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[18,+2) "Expected ";" but found "#a"" code=1005 ref@[18,20) "';' expected." msgs=1
+1	"let x: { get #a(): 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[13,+2) "Expected ";" but found "#a"" code=1005 ref@[13,15) "';' expected." msgs=1
+2	"let x: { set #a(v) };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[13,+2) "Expected ";" but found "#a"" code=1005 ref@[13,15) "';' expected." msgs=1
+3	"let x: { static #a: 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[16,+2) "Expected ";" but found "#a"" code=1005 ref@[16,18) "';' expected." msgs=1
+4	"let x: { #a: 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+5	"let x: { #a(): void };"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+6	"let x: { export a: 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[16,+1) "Expected ";" but found "a"" code=1005 ref@[16,17) "';' expected." msgs=1
+7	"let x: { export default a: 1 };"
+	tsc : TS1005 [16,+7) ';' expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: err bun@[16,+7) "Expected ";" but found "default"" code=1005 ref@[16,23) "';' expected." msgs=1
+8	"let x: { export: 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+9	"let x: { export(): void };"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+10	"let x: { export? : 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+11	"let x: { export\n a: 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+12	"let x: { export readonly a: 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[16,+8) "Expected ";" but found "readonly"" code=1005 ref@[16,24) "';' expected." msgs=1
+13	"let x: { export [k: string]: 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[16,+1) "Expected ";" but found "["" code=1005 ref@[16,17) "';' expected." msgs=1
+14	"let x: { export get a(): 1 };"
+	tsc : TS1131 [9,+6) Property or signature expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[9,+6) "Unexpected export" code=1131 ref@[9,15) "Property or signature expected." msgs=1
+15	"let x: { export * };"
+	tsc : TS1131 [9,+6) Property or signature expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: err bun@[9,+6) "Unexpected export" code=1131 ref@[9,15) "Property or signature expected." msgs=1
+16	"let x: { export as };"
+	tsc : TS1005 [16,+2) ';' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[16,+2) "Expected ";" but found "as"" code=1005 ref@[16,18) "';' expected." msgs=1
+17	"let x: { export as: 1 };"
+	tsc : TS1005 [16,+2) ';' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[16,+2) "Expected ";" but found "as"" code=1005 ref@[16,18) "';' expected." msgs=1
+18	"let x: { export type: 1 };"
+	tsc : TS1005 [16,+4) ';' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[16,+4) "Expected ";" but found "type"" code=1005 ref@[16,20) "';' expected." msgs=1
+19	"let x: { export type a: 1 };"
+	tsc : TS1131 [9,+6) Property or signature expected. (n=3)
+	tsgo: = tsc (n=3)
+	lint: err bun@[9,+6) "Unexpected export" code=1131 ref@[9,15) "Property or signature expected." msgs=1
+20	"let x: { default: 1 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+21	"let x: { default a: 1 };"
+	tsc : TS1005 [17,+1) ';' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: err bun@[17,+1) "Expected ";" but found "a"" code=1005 ref@[17,18) "';' expected." msgs=1
+22	"let x: { get a() { return 1 } };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[17,+1) "Expected ";" but found "{"" code=1005 ref@[17,18) "';' expected." msgs=1
+23	"let x: { get a() { return 1 } b: 2 };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[17,+1) "Expected ";" but found "{"" code=1005 ref@[17,18) "';' expected." msgs=1
+24	"let x: { get a() { return 1 }; b: 2 };"
+	tsc : TS1131 [29,+1) Property or signature expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: err bun@[17,+1) "Expected ";" but found "{"" code=1005 ref@[17,18) "';' expected." msgs=1
+25	"let x: { get a(): number { return 1 } };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[25,+1) "Expected ";" but found "{"" code=1005 ref@[25,26) "';' expected." msgs=1
+26	"let x: { set a(v) { } };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[18,+1) "Expected ";" but found "{"" code=1005 ref@[18,19) "';' expected." msgs=1
+27	"let x: { set a(v) { } get b() {} c(): void };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[18,+1) "Expected ";" but found "{"" code=1005 ref@[18,19) "';' expected." msgs=1
+28	"let x: { get a() { type T = 1; interface I {} return class { [k: string]: any } } };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[17,+1) "Expected ";" but found "{"" code=1005 ref@[17,18) "';' expected." msgs=1
+29	"let x: { get a() {} };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[17,+1) "Expected ";" but found "{"" code=1005 ref@[17,18) "';' expected." msgs=1
+30	"let x: { get a()\n{} };"
+	tsc : ok
+	tsgo: = tsc
+	lint: err bun@[17,+1) "Unexpected {" code=1131 ref@[17,18) "Property or signature expected." msgs=1
+31	"let x: { get() {} };"
+	tsc : TS1005 [15,+1) ';' expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: err bun@[15,+1) "Expected ";" but found "{"" code=1005 ref@[15,16) "';' expected." msgs=1
+32	"let x: { a() {} };"
+	tsc : TS1005 [13,+1) ';' expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: err bun@[13,+1) "Expected ";" but found "{"" code=1005 ref@[13,14) "';' expected." msgs=1
+33	"let x: A<const>;"
+	tsc : TS1005 [9,+5) '>' expected. (n=3)
+	tsgo: = tsc (n=3)
+	lint: ok
+34	"let x: A<const T>;"
+	tsc : TS1005 [9,+5) '>' expected. (n=3)
+	tsgo: = tsc (n=3)
+	lint: err bun@[15,+1) "Expected ">" but found "T"" code=1005 ref@[15,16) "'>' expected." msgs=2
+35	"let x: { [k: string]: any; [k: number]: any };"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+36	"interface I { get a() { return 1 } }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+37	"interface I { set a(v) { } }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+38	"interface I { get #a(): 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+39	"interface I { export a: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+40	"interface I { readonly #a: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+41	"interface I { get a() { return 1 } b: 2 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+42	"interface I { get a()\n{ return 1 } }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+43	"interface I { accessor a: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+44	"interface I { declare a: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+45	"interface I { abstract a(): void }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+46	"interface I { override a: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+47	"interface I { in a: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+48	"interface I { out a: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+49	"interface I { async: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+50	"interface I { async\n a(): void }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+51	"interface I { static\n a: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+52	"interface I { public\n a: 1 }"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+53	"interface I { a: 1; [K in keyof T]: T[K] }"
+	tsc : TS1005 [32,+1) ']' expected. (n=4)
+	tsgo: = tsc (n=4)
+	lint: ok
+54	"let x: { a: 1; [K in keyof T]: T[K] };"
+	tsc : TS1005 [27,+1) ']' expected. (n=5)
+	tsgo: = tsc (n=5)
+	lint: err bun@[27,+1) "Expected "]" but found "T"" code=1005 ref@[27,28) "']' expected." msgs=2
+55	"type A = intrinsic;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+56	"type A = intrinsic.b;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+57	"type A = intrinsic<B>;"
+	tsc : TS1005 [18,+1) ';' expected. (n=2)
+	tsgo: = tsc (n=2)
+	lint: ok
+58	"type A = intrinsic | 1;"
+	tsc : TS1005 [19,+1) ';' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+59	"type A = intrinsic[];"
+	tsc : TS1005 [18,+1) ';' expected. (n=1)
+	tsgo: = tsc (n=1)
+	lint: ok
+60	"type A = (intrinsic);"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+61	"type A<T> = intrinsic;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+62	"type A =\nintrinsic;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok
+63	"type A = intrinsic\n.b;"
+	tsc : ok
+	tsgo: = tsc
+	lint: ok

@@ -9,6 +9,17 @@
 > initial->s1_1->s1_2->s1_3->s1_2->s1_4;
 > s1_3->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -48,6 +59,18 @@ end
 > initial->s1_1->s1_2->s1_3->s1_2->s1_2;
 > s1_3->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_2 s1_2
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -89,6 +112,18 @@ end
 > s1_3->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_2 s1_2
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -128,6 +163,22 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_5->s1_2->s1_6;
 > s1_3->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_5
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -172,6 +223,19 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_5;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -213,6 +277,22 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_5->s1_2->s1_4;
 > s1_3->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_5
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -257,6 +337,19 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_4;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -300,6 +393,22 @@ end
 > s1_3->s1_6;
 > s1_2->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_5
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -346,6 +455,19 @@ end
 > s1_3->s1_5;
 > s1_2->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -389,6 +511,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -433,6 +565,18 @@ end
 > s1_2->s1_4;
 > s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -491,6 +635,26 @@ end
 > s1_4->s1_6->s1_7;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -561,6 +725,16 @@ end
 > s1_1->s1_3;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -603,6 +777,18 @@ end
 > s1_1->s1_3;
 > s1_2->s1_4->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -661,6 +847,26 @@ end
 > s1_4->s1_6->s1_7;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -733,6 +939,16 @@ end
 > s1_2->s1_4;
 > s1_1->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -779,6 +995,18 @@ end
 > s1_1->s1_4;
 > s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -827,6 +1055,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -860,6 +1098,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -893,6 +1141,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -926,6 +1184,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -959,6 +1227,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -992,6 +1270,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1025,6 +1313,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1058,6 +1356,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1091,6 +1399,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1124,6 +1442,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1159,6 +1487,26 @@ end
 > s1_5->s1_7->s1_8;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 F
@@ -1219,6 +1567,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1252,6 +1610,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1285,6 +1653,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1318,6 +1696,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1351,6 +1739,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1386,6 +1784,18 @@ end
 > s1_2->s1_5;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 F
@@ -1422,6 +1832,10 @@ end
 | a = b = c;
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -1447,6 +1861,26 @@ end
 > initial->s1_1->s1_2->s1_4->s1_5->s1_7->s1_8->s1_9;
 > s1_1->s1_3->s1_4->s1_6->s1_7->s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 F
@@ -1507,6 +1941,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1540,6 +1984,16 @@ end
 > s1_1->s1_3;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1575,6 +2029,16 @@ end
 > s1_2->s1_4;
 > s1_1->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1608,6 +2072,16 @@ end
 > s1_1->s1_3;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1641,6 +2115,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1674,6 +2158,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1709,6 +2203,16 @@ end
 > s1_2->s1_4;
 > s1_1->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1744,6 +2248,16 @@ end
 > s1_2->s1_4;
 > s1_1->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1777,6 +2291,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -1808,6 +2332,14 @@ end
 > initial->s1_1->s1_2->s1_3;
 > s1_1->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 F
@@ -1836,6 +2368,20 @@ end
 > s1_2->s1_4->s1_5;
 > s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 F
@@ -1870,6 +2416,20 @@ end
 > initial->s1_1->s1_2->s1_4->s1_5->s1_6;
 > s1_1->s1_3->s1_4->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 F
@@ -1907,6 +2467,10 @@ end
 | a &= b;
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -1926,6 +2490,10 @@ end
 | a = b;
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -1947,6 +2515,14 @@ end
 > initial->s1_1->s1_2->s1_3;
 > s1_1->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 F
@@ -1975,6 +2551,20 @@ end
 > s1_2->s1_4->s1_5;
 > s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 F
@@ -2009,6 +2599,20 @@ end
 > initial->s1_1->s1_2->s1_4->s1_5->s1_6;
 > s1_1->s1_3->s1_4->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 F
@@ -2046,6 +2650,10 @@ end
 | a += b;
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -2067,6 +2675,14 @@ end
 > initial->s1_1->s1_2->s1_3;
 > s1_1->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 F
@@ -2095,6 +2711,20 @@ end
 > s1_2->s1_4->s1_5;
 > s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 F
@@ -2129,6 +2759,20 @@ end
 > initial->s1_1->s1_2->s1_4->s1_5->s1_6;
 > s1_1->s1_3->s1_4->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 F
@@ -2170,6 +2814,19 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_5;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -2209,6 +2866,19 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_4;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -2250,6 +2920,19 @@ end
 > s1_3->s1_5;
 > s1_2->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -2297,6 +2980,18 @@ end
 > s1_1->s1_4;
 > s1_2->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushBreakContext [false,"A"]
@@ -2364,6 +3059,26 @@ end
 > s1_5->s1_8;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentStart s1_6
+! onUnreachableCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushBreakContext [false,"A"]
@@ -2439,6 +3154,14 @@ end
 > initial->s1_1->s1_2->s1_3;
 > s1_1->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onUnreachableCodePathSegmentStart s1_2
+! onUnreachableCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 pushBreakContext [false,"A"]
@@ -2468,6 +3191,10 @@ end
 | bar();
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 pushBreakContext [false,"A"]
@@ -2508,6 +3235,18 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-field-initializer
+! onCodePathSegmentStart s2_1
+! onCodePathStart s3 function
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathEnd s3
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -2539,6 +3278,14 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-field-initializer
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -2572,6 +3319,20 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-field-initializer
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -2611,6 +3372,14 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-field-initializer
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -2659,6 +3428,40 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-field-initializer
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathEnd s2
+! onCodePathStart s3 class-static-block
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathSegmentStart s3_2
+! onCodePathSegmentEnd s3_2
+! onCodePathSegmentStart s3_3
+! onCodePathSegmentEnd s3_3
+! onCodePathSegmentStart s3_4
+! onCodePathSegmentEnd s3_4
+! onCodePathEnd s3
+! onCodePathStart s4 class-field-initializer
+! onCodePathSegmentStart s4_1
+! onCodePathSegmentEnd s4_1
+! onCodePathSegmentStart s4_2
+! onCodePathSegmentEnd s4_2
+! onCodePathSegmentStart s4_3
+! onCodePathSegmentEnd s4_3
+! onCodePathSegmentStart s4_4
+! onCodePathSegmentEnd s4_4
+! onCodePathSegmentStart s4_5
+! onCodePathSegmentEnd s4_5
+! onCodePathEnd s4
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -2763,6 +3566,40 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathEnd s2
+! onCodePathStart s3 class-static-block
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathSegmentStart s3_2
+! onCodePathSegmentEnd s3_2
+! onCodePathSegmentStart s3_3
+! onCodePathSegmentEnd s3_3
+! onCodePathSegmentStart s3_4
+! onCodePathSegmentEnd s3_4
+! onCodePathEnd s3
+! onCodePathStart s4 function
+! onCodePathSegmentStart s4_1
+! onCodePathSegmentEnd s4_1
+! onCodePathSegmentStart s4_2
+! onCodePathSegmentEnd s4_2
+! onCodePathSegmentStart s4_3
+! onCodePathSegmentEnd s4_3
+! onCodePathSegmentStart s4_4
+! onCodePathSegmentEnd s4_4
+! onCodePathSegmentStart s4_5
+! onCodePathSegmentEnd s4_5
+! onCodePathEnd s4
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -2859,6 +3696,20 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-static-block
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -2906,6 +3757,14 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-static-block
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -2935,6 +3794,18 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-static-block
+! onCodePathSegmentStart s2_1
+! onCodePathStart s3 function
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathEnd s3
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -2971,6 +3842,20 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-static-block
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -3038,6 +3923,18 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-static-block
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathStart s3 class-static-block
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathEnd s3
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -3103,6 +4000,28 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-static-block
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathEnd s2
+! onCodePathStart s3 class-static-block
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathSegmentStart s3_2
+! onCodePathSegmentEnd s3_2
+! onCodePathSegmentStart s3_3
+! onCodePathSegmentEnd s3_3
+! onCodePathEnd s3
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -3160,6 +4079,14 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-static-block
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -3201,6 +4128,22 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathSegmentStart s2_5
+! onCodePathSegmentEnd s2_5
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -3262,6 +4205,18 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -3301,6 +4256,16 @@ end
 > initial->s1_1->s1_2->s1_3->s1_2->s1_4;
 > s1_3->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -3350,6 +4315,32 @@ end
 > s1_7->s1_10->s1_2;
 > s1_9->s1_10->s1_11->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onUnreachableCodePathSegmentStart s1_8
+! onUnreachableCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentLoop s1_9 s1_3
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentLoop s1_10 s1_2
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathEnd s1
 start program
 F
 F
@@ -3427,6 +4418,26 @@ end
 > s1_4->s1_7->s1_2;
 > s1_6->s1_7->s1_8->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_3
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_2
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -3486,6 +4497,21 @@ end
 > s1_3->s1_6;
 > s1_5->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -3529,6 +4555,19 @@ end
 | } while (a)
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_4->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -3576,6 +4615,36 @@ end
 > s1_6->s1_9;
 > s1_7->s1_10->s1_11->s1_12->s1_13->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onUnreachableCodePathSegmentStart s1_8
+! onUnreachableCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentLoop s1_10 s1_3
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentLoop s1_12 s1_2
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentEnd s1_13
+! onCodePathEnd s1
 start program
 F
 F
@@ -3653,6 +4722,28 @@ end
 > s1_4->s1_7->s1_8->s1_2;
 > s1_8->s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_3
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_2
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -3710,6 +4801,23 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_5->s1_6->s1_2->s1_5;
 > s1_3->s1_6->s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -3751,6 +4859,15 @@ end
 | } while (a);
 > initial->s1_1->s1_2->s1_2->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentLoop s1_2 s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -3774,6 +4891,15 @@ end
 | } while (a);
 > initial->s1_1->s1_2->s1_2->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentLoop s1_2 s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -3807,6 +4933,21 @@ end
 > initial->s1_1->s1_2->s1_3->s1_5->s1_4->s1_2->s1_6;
 > s1_3->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -3879,6 +5020,42 @@ end
 > s1_11->s1_14;
 > s1_15->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_5
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onUnreachableCodePathSegmentStart s1_12
+! onUnreachableCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentLoop s1_13 s1_7
+! onCodePathSegmentEnd s1_13
+! onCodePathSegmentStart s1_14
+! onCodePathSegmentLoop s1_14 s1_4
+! onCodePathSegmentEnd s1_14
+! onCodePathSegmentStart s1_15
+! onCodePathSegmentEnd s1_15
+! onCodePathEnd s1
 start program
 F
 F
@@ -3996,6 +5173,36 @@ end
 > s1_8->s1_11;
 > s1_12->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_5
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentLoop s1_10 s1_7
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentLoop s1_11 s1_4
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4087,6 +5294,23 @@ end
 > initial->s1_1->s1_3->s1_4->s1_5->s1_6->s1_2->s1_3->s1_6;
 > s1_4->s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4146,6 +5370,23 @@ end
 > s1_3->s1_6;
 > s1_4->s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4207,6 +5448,26 @@ end
 > s1_3->s1_7;
 > s1_5->s1_8->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentStart s1_6
+! onUnreachableCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_4
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4271,6 +5532,22 @@ end
 > s1_3->s1_5->s1_4;
 > s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_4
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4339,6 +5616,44 @@ end
 > s1_11->s1_12->s1_13;
 > s1_15->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_5
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_4
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentLoop s1_11 s1_7
+! onCodePathSegmentEnd s1_11
+! onUnreachableCodePathSegmentStart s1_12
+! onUnreachableCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentLoop s1_13 s1_7
+! onCodePathSegmentEnd s1_13
+! onCodePathSegmentStart s1_14
+! onCodePathSegmentLoop s1_14 s1_4
+! onCodePathSegmentEnd s1_14
+! onCodePathSegmentStart s1_15
+! onCodePathSegmentEnd s1_15
+! onCodePathEnd s1
 start program
 F
 F
@@ -4456,6 +5771,37 @@ end
 > s1_8->s1_9->s1_10;
 > s1_12->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_5
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_7
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentLoop s1_10 s1_7
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentLoop s1_11 s1_4
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4547,6 +5893,24 @@ end
 > initial->s1_1->s1_3->s1_4->s1_2->s1_3->s1_6->s1_2;
 > s1_4->s1_5->s1_6->s1_7;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onUnreachableCodePathSegmentStart s1_7
+! onUnreachableCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4608,6 +5972,24 @@ end
 > s1_4->s1_5->s1_6;
 > s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4671,6 +6053,27 @@ end
 > s1_5->s1_6->s1_7;
 > s1_8->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_4
+! onCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentStart s1_6
+! onUnreachableCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_4
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4736,6 +6139,30 @@ end
 > s1_5->s1_8->s1_4->s1_2;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_5
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_7
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_4
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4802,6 +6229,15 @@ end
 | }
 > initial->s1_1->s1_2->s1_2->s1_3;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentLoop s1_2 s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4826,6 +6262,32 @@ end
 > s1_7->s1_9->s1_10;
 > s1_11->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentLoop s1_10 s1_2
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_7
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4893,6 +6355,17 @@ end
 | }
 > initial->s1_1->s1_3->s1_2->s1_3->s1_4;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4933,6 +6406,17 @@ end
 | }
 > initial->s1_1->s1_2->s1_3->s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -4976,6 +6460,20 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2;
 > s1_3->s1_5;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_4
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -5019,6 +6517,20 @@ end
 | }
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_4
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -5073,6 +6585,21 @@ end
 > s1_4->s1_6;
 > s1_5->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForInStatement",null]
@@ -5137,6 +6664,42 @@ end
 > s1_11->s1_14;
 > s1_13->s1_14->s1_15->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_5
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onUnreachableCodePathSegmentStart s1_12
+! onUnreachableCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentLoop s1_13 s1_5
+! onCodePathSegmentEnd s1_13
+! onCodePathSegmentStart s1_14
+! onCodePathSegmentLoop s1_14 s1_2
+! onCodePathSegmentEnd s1_14
+! onCodePathSegmentStart s1_15
+! onCodePathSegmentEnd s1_15
+! onCodePathEnd s1
 start program
 F
 F
@@ -5238,6 +6801,36 @@ end
 > s1_8->s1_11;
 > s1_10->s1_11->s1_12->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_5
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentLoop s1_10 s1_5
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentLoop s1_11 s1_2
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForInStatement",null]
@@ -5319,6 +6912,26 @@ end
 > s1_5->s1_8;
 > s1_7->s1_8->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentStart s1_6
+! onUnreachableCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_2
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForInStatement",null]
@@ -5379,6 +6992,22 @@ end
 > s1_4->s1_6;
 > s1_5->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForInStatement",null]
@@ -5451,6 +7080,44 @@ end
 > s1_11->s1_14;
 > s1_15->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_5
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_2
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentLoop s1_11 s1_5
+! onCodePathSegmentEnd s1_11
+! onUnreachableCodePathSegmentStart s1_12
+! onUnreachableCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentLoop s1_13 s1_5
+! onCodePathSegmentEnd s1_13
+! onCodePathSegmentStart s1_14
+! onCodePathSegmentLoop s1_14 s1_2
+! onCodePathSegmentEnd s1_14
+! onCodePathSegmentStart s1_15
+! onCodePathSegmentEnd s1_15
+! onCodePathEnd s1
 start program
 F
 F
@@ -5558,6 +7225,37 @@ end
 > s1_8->s1_11;
 > s1_12->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_5
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_5
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentLoop s1_10 s1_5
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentLoop s1_11 s1_2
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForInStatement",null]
@@ -5639,6 +7337,27 @@ end
 > s1_5->s1_6->s1_7->s1_8;
 > s1_5->s1_8->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentStart s1_6
+! onUnreachableCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_2
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForInStatement",null]
@@ -5696,6 +7415,30 @@ end
 > s1_6->s1_8->s1_2;
 > s1_7->s1_8->s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_5
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_5
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_2
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForInStatement",null]
@@ -5746,6 +7489,20 @@ end
 > s1_3->s1_5;
 > s1_4->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForInStatement",null]
@@ -5782,6 +7539,20 @@ end
 > s1_3->s1_5;
 > s1_4->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForInStatement",null]
@@ -5828,6 +7599,21 @@ end
 > s1_4->s1_6;
 > s1_5->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForOfStatement",null]
@@ -5892,6 +7678,42 @@ end
 > s1_11->s1_14;
 > s1_13->s1_14->s1_15->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_5
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onUnreachableCodePathSegmentStart s1_12
+! onUnreachableCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentLoop s1_13 s1_5
+! onCodePathSegmentEnd s1_13
+! onCodePathSegmentStart s1_14
+! onCodePathSegmentLoop s1_14 s1_2
+! onCodePathSegmentEnd s1_14
+! onCodePathSegmentStart s1_15
+! onCodePathSegmentEnd s1_15
+! onCodePathEnd s1
 start program
 F
 F
@@ -5993,6 +7815,36 @@ end
 > s1_8->s1_11;
 > s1_10->s1_11->s1_12->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_5
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentLoop s1_10 s1_5
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentLoop s1_11 s1_2
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForOfStatement",null]
@@ -6074,6 +7926,26 @@ end
 > s1_5->s1_8;
 > s1_7->s1_8->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentStart s1_6
+! onUnreachableCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_2
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForOfStatement",null]
@@ -6134,6 +8006,22 @@ end
 > s1_4->s1_6;
 > s1_5->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForOfStatement",null]
@@ -6206,6 +8094,44 @@ end
 > s1_11->s1_14;
 > s1_15->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_5
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_2
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentLoop s1_11 s1_5
+! onCodePathSegmentEnd s1_11
+! onUnreachableCodePathSegmentStart s1_12
+! onUnreachableCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentLoop s1_13 s1_5
+! onCodePathSegmentEnd s1_13
+! onCodePathSegmentStart s1_14
+! onCodePathSegmentLoop s1_14 s1_2
+! onCodePathSegmentEnd s1_14
+! onCodePathSegmentStart s1_15
+! onCodePathSegmentEnd s1_15
+! onCodePathEnd s1
 start program
 F
 F
@@ -6313,6 +8239,37 @@ end
 > s1_8->s1_11;
 > s1_12->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_5
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_5
+! onCodePathSegmentEnd s1_8
+! onUnreachableCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentLoop s1_10 s1_5
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentLoop s1_11 s1_2
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForOfStatement",null]
@@ -6394,6 +8351,27 @@ end
 > s1_5->s1_6->s1_7->s1_8;
 > s1_5->s1_8->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentStart s1_6
+! onUnreachableCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_2
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForOfStatement",null]
@@ -6451,6 +8429,30 @@ end
 > s1_6->s1_8->s1_2;
 > s1_7->s1_8->s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_5
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_5
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_2
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForOfStatement",null]
@@ -6501,6 +8503,20 @@ end
 > s1_3->s1_5;
 > s1_4->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForOfStatement",null]
@@ -6537,6 +8553,20 @@ end
 > s1_3->s1_5;
 > s1_4->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForOfStatement",null]
@@ -6589,6 +8619,24 @@ end
 > initial->s1_1->s1_2->s1_4;
 > s1_1->s1_3->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathStart s3 function
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathEnd s3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -6632,6 +8680,18 @@ end
 > initial->s1_1->s1_2->s1_3;
 > s1_1->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 F
@@ -6669,6 +8729,20 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -6725,6 +8799,14 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 F
@@ -6787,6 +8869,20 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -6840,6 +8936,14 @@ end
 > initial->s1_1->s1_2->s1_3;
 > s1_1->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -6873,6 +8977,16 @@ end
 > initial->s1_1->s1_2->s1_4;
 > s1_1->s1_3->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -6926,6 +9040,26 @@ end
 > s1_4->s1_6;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -7002,6 +9136,20 @@ end
 > s1_2->final;
 > s1_4->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentStart s1_6
+! onUnreachableCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -7050,6 +9198,14 @@ end
 > s1_2->final;
 > s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -7095,6 +9251,26 @@ end
 > s1_3->s1_5->s1_6;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -7147,6 +9323,16 @@ end
 > s1_2->s1_4;
 > s1_1->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -7180,6 +9366,17 @@ end
 > initial->s1_1->s1_2->s1_3->s1_2->s1_4;
 > s1_3->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -7223,6 +9420,21 @@ end
 > s1_4->s1_6;
 > s1_5->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -7278,6 +9490,20 @@ end
 > s1_3->s1_2;
 > s1_4->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -7326,6 +9552,20 @@ end
 > s1_3->s1_5;
 > s1_4->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_2 s1_2
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -7372,6 +9612,18 @@ end
 > initial->s1_1->s1_2->s1_3->s1_2->s1_2;
 > s1_3->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_2 s1_2
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -7415,6 +9667,24 @@ end
 > s1_4->s1_2;
 > s1_5->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_2 s1_2
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -7470,6 +9740,18 @@ end
 > s1_3->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_2 s1_2
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -7519,6 +9801,24 @@ end
 > s1_3->s1_6;
 > s1_4->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_2 s1_2
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["DoWhileStatement",null]
@@ -7572,6 +9872,22 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_5->s1_2->s1_6;
 > s1_3->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_5
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -7620,6 +9936,26 @@ end
 > s1_4->s1_8;
 > s1_5->s1_8->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_2
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_7
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -7678,6 +10014,19 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_5;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -7721,6 +10070,24 @@ end
 > s1_3->s1_5;
 > s1_4->s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_6
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -7774,6 +10141,24 @@ end
 > s1_3->s1_7;
 > s1_4->s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_6
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -7827,6 +10212,21 @@ end
 > s1_3->s1_5;
 > s1_4->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -7875,6 +10275,22 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_5->s1_2->s1_4;
 > s1_3->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_5
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -7923,6 +10339,26 @@ end
 > s1_4->s1_6;
 > s1_5->s1_8->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentLoop s1_7 s1_2
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_7
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -7981,6 +10417,19 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_4;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["ForStatement",null]
@@ -8024,6 +10473,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8068,6 +10527,18 @@ end
 > s1_2->s1_4;
 > s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8127,6 +10598,26 @@ end
 > s1_5->s1_7;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8209,6 +10700,22 @@ end
 > s1_4->s1_6;
 > s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8285,6 +10792,26 @@ end
 > s1_4->s1_6;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8365,6 +10892,20 @@ end
 > s1_2->s1_4;
 > s1_3->s1_5->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8428,6 +10969,20 @@ end
 > s1_3->s1_5;
 > s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8495,6 +11050,20 @@ end
 > s1_2->s1_5;
 > s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8560,6 +11129,20 @@ end
 > s1_2->s1_5;
 > s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8625,6 +11208,20 @@ end
 > s1_2->s1_5;
 > s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8690,6 +11287,20 @@ end
 > s1_2->s1_5;
 > s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8747,6 +11358,16 @@ end
 > s1_1->s1_3;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8789,6 +11410,18 @@ end
 > s1_1->s1_3;
 > s1_2->s1_4->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8849,6 +11482,26 @@ end
 > s1_5->s1_7->s1_8;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -8929,6 +11582,22 @@ end
 > s1_3->s1_5;
 > s1_4->s1_6->s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -9005,6 +11674,26 @@ end
 > s1_4->s1_6->s1_7;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -9089,6 +11778,30 @@ end
 > s1_4->s1_6->s1_8->s1_9;
 > s1_11->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -9175,6 +11888,16 @@ end
 > s1_2->s1_4;
 > s1_1->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -9221,6 +11944,18 @@ end
 > s1_1->s1_4;
 > s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -9283,6 +12018,26 @@ end
 > s1_4->s1_7;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -9371,6 +12126,22 @@ end
 > s1_3->s1_6;
 > s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -9451,6 +12222,26 @@ end
 > s1_3->s1_6;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushChoiceContext ["test",false]
@@ -9527,6 +12318,18 @@ end
 > s1_2->s1_5;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 F
@@ -9569,6 +12372,18 @@ end
 > s1_2->s1_5;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 F
@@ -9611,6 +12426,18 @@ end
 > s1_2->s1_5;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 F
@@ -9651,6 +12478,19 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_5;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -9694,6 +12534,23 @@ end
 > s1_4->s1_7;
 > s1_5->s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -9749,6 +12606,21 @@ end
 > s1_3->s1_5;
 > s1_4->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -9797,6 +12669,21 @@ end
 > s1_3->s1_6;
 > s1_4->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -9843,6 +12730,19 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_4;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -9886,6 +12786,23 @@ end
 > s1_4->s1_6;
 > s1_5->s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -9941,6 +12858,19 @@ end
 > s1_3->s1_5;
 > s1_2->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -9990,6 +12920,23 @@ end
 > s1_3->s1_7;
 > s1_4->s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -10042,6 +12989,16 @@ end
 > initial->s1_1->s1_2->s1_4;
 > s1_1->s1_3->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 F
@@ -10086,6 +13043,36 @@ end
 > s1_9->s1_11->s1_13;
 > s1_16->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentEnd s1_13
+! onCodePathSegmentStart s1_16
+! onCodePathSegmentEnd s1_16
+! onCodePathEnd s1
 start program
 F
 F
@@ -10180,6 +13167,36 @@ end
 > s1_9->s1_11->s1_13;
 > s1_16->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentEnd s1_13
+! onCodePathSegmentStart s1_16
+! onCodePathSegmentEnd s1_16
+! onCodePathEnd s1
 start program
 F
 F
@@ -10276,6 +13293,38 @@ end
 > s1_11->s1_13->s1_15;
 > s1_16->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentEnd s1_13
+! onCodePathSegmentStart s1_14
+! onCodePathSegmentEnd s1_14
+! onCodePathSegmentStart s1_15
+! onCodePathSegmentEnd s1_15
+! onCodePathSegmentStart s1_16
+! onCodePathSegmentEnd s1_16
+! onCodePathEnd s1
 start program
 F
 F
@@ -10366,6 +13415,14 @@ end
 > initial->s1_1->s1_2->s1_3;
 > s1_1->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 F
@@ -10405,6 +13462,14 @@ end
 > initial->s1_1->s1_2->s1_3;
 > s1_1->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 F
@@ -10443,6 +13508,18 @@ end
 > s1_2->s1_7;
 > s1_3->s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 F
@@ -10486,6 +13563,14 @@ end
 > initial->s1_1->s1_2->s1_3;
 > s1_1->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 F
@@ -10543,6 +13628,32 @@ end
 > s1_9->s1_11->s1_12;
 > s1_11->s1_13->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onUnreachableCodePathSegmentStart s1_8
+! onUnreachableCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentEnd s1_13
+! onCodePathEnd s1
 start program
 F
 pushSwitchContext [true,null]
@@ -10660,6 +13771,34 @@ end
 > s1_7->final;
 > s1_14->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onUnreachableCodePathSegmentStart s1_8
+! onUnreachableCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onUnreachableCodePathSegmentStart s1_13
+! onUnreachableCodePathSegmentEnd s1_13
+! onCodePathSegmentStart s1_14
+! onCodePathSegmentEnd s1_14
+! onCodePathEnd s1
 start program
 F
 pushSwitchContext [true,null]
@@ -10772,6 +13911,32 @@ end
 > s1_9->s1_11->s1_12;
 > s1_13->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onUnreachableCodePathSegmentStart s1_8
+! onUnreachableCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentEnd s1_13
+! onCodePathEnd s1
 start program
 F
 pushSwitchContext [true,null]
@@ -10879,6 +14044,33 @@ end
 > s1_11->s1_10;
 > s1_13->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onUnreachableCodePathSegmentStart s1_8
+! onUnreachableCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentLoop s1_11 s1_10
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentEnd s1_13
+! onCodePathEnd s1
 start program
 F
 pushSwitchContext [true,null]
@@ -10985,6 +14177,31 @@ end
 > s1_11->s1_9;
 > s1_13->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onUnreachableCodePathSegmentStart s1_10
+! onUnreachableCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentLoop s1_11 s1_9
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentEnd s1_13
+! onCodePathEnd s1
 start program
 F
 pushSwitchContext [true,null]
@@ -11058,6 +14275,10 @@ end
 | }
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 pushSwitchContext [false,null]
@@ -11084,6 +14305,14 @@ end
 > initial->s1_1->s1_2->s1_4;
 > s1_1->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onUnreachableCodePathSegmentStart s1_2
+! onUnreachableCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushSwitchContext [false,null]
@@ -11115,6 +14344,10 @@ end
 | }
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 pushSwitchContext [false,null]
@@ -11318,6 +14551,162 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onUnreachableCodePathSegmentStart s2_3
+! onUnreachableCodePathSegmentEnd s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathSegmentStart s2_6
+! onCodePathSegmentEnd s2_6
+! onCodePathSegmentStart s2_8
+! onCodePathSegmentEnd s2_8
+! onCodePathSegmentStart s2_9
+! onCodePathSegmentEnd s2_9
+! onUnreachableCodePathSegmentStart s2_10
+! onUnreachableCodePathSegmentEnd s2_10
+! onCodePathSegmentStart s2_11
+! onCodePathSegmentEnd s2_11
+! onCodePathSegmentStart s2_12
+! onCodePathSegmentEnd s2_12
+! onUnreachableCodePathSegmentStart s2_13
+! onUnreachableCodePathSegmentEnd s2_13
+! onCodePathSegmentStart s2_14
+! onCodePathSegmentEnd s2_14
+! onCodePathSegmentStart s2_15
+! onCodePathSegmentEnd s2_15
+! onCodePathSegmentStart s2_16
+! onCodePathSegmentEnd s2_16
+! onUnreachableCodePathSegmentStart s2_17
+! onUnreachableCodePathSegmentEnd s2_17
+! onCodePathSegmentStart s2_18
+! onCodePathSegmentEnd s2_18
+! onCodePathSegmentStart s2_19
+! onCodePathSegmentEnd s2_19
+! onUnreachableCodePathSegmentStart s2_20
+! onUnreachableCodePathSegmentEnd s2_20
+! onCodePathSegmentStart s2_21
+! onCodePathSegmentEnd s2_21
+! onCodePathSegmentStart s2_22
+! onCodePathSegmentEnd s2_22
+! onCodePathSegmentStart s2_23
+! onCodePathSegmentEnd s2_23
+! onCodePathSegmentStart s2_24
+! onCodePathSegmentEnd s2_24
+! onUnreachableCodePathSegmentStart s2_25
+! onUnreachableCodePathSegmentEnd s2_25
+! onCodePathSegmentStart s2_26
+! onCodePathSegmentEnd s2_26
+! onCodePathSegmentStart s2_27
+! onCodePathSegmentEnd s2_27
+! onUnreachableCodePathSegmentStart s2_28
+! onUnreachableCodePathSegmentEnd s2_28
+! onCodePathSegmentStart s2_29
+! onCodePathSegmentEnd s2_29
+! onCodePathSegmentStart s2_30
+! onCodePathSegmentEnd s2_30
+! onUnreachableCodePathSegmentStart s2_31
+! onUnreachableCodePathSegmentEnd s2_31
+! onCodePathSegmentStart s2_32
+! onCodePathSegmentEnd s2_32
+! onCodePathSegmentStart s2_34
+! onCodePathSegmentEnd s2_34
+! onCodePathSegmentStart s2_36
+! onCodePathSegmentEnd s2_36
+! onCodePathSegmentStart s2_38
+! onCodePathSegmentEnd s2_38
+! onCodePathSegmentStart s2_39
+! onCodePathSegmentEnd s2_39
+! onUnreachableCodePathSegmentStart s2_40
+! onUnreachableCodePathSegmentEnd s2_40
+! onCodePathSegmentStart s2_41
+! onCodePathSegmentEnd s2_41
+! onCodePathSegmentStart s2_43
+! onCodePathSegmentEnd s2_43
+! onCodePathSegmentStart s2_45
+! onCodePathSegmentEnd s2_45
+! onCodePathSegmentStart s2_47
+! onCodePathSegmentEnd s2_47
+! onCodePathSegmentStart s2_49
+! onCodePathSegmentEnd s2_49
+! onCodePathSegmentStart s2_51
+! onCodePathSegmentEnd s2_51
+! onCodePathSegmentStart s2_52
+! onCodePathSegmentEnd s2_52
+! onUnreachableCodePathSegmentStart s2_53
+! onUnreachableCodePathSegmentEnd s2_53
+! onCodePathSegmentStart s2_54
+! onCodePathSegmentEnd s2_54
+! onCodePathSegmentStart s2_56
+! onCodePathSegmentEnd s2_56
+! onCodePathSegmentStart s2_58
+! onCodePathSegmentEnd s2_58
+! onCodePathSegmentStart s2_59
+! onCodePathSegmentEnd s2_59
+! onUnreachableCodePathSegmentStart s2_60
+! onUnreachableCodePathSegmentEnd s2_60
+! onCodePathSegmentStart s2_61
+! onCodePathSegmentEnd s2_61
+! onCodePathSegmentStart s2_63
+! onCodePathSegmentEnd s2_63
+! onCodePathSegmentStart s2_64
+! onCodePathSegmentEnd s2_64
+! onUnreachableCodePathSegmentStart s2_65
+! onUnreachableCodePathSegmentEnd s2_65
+! onCodePathSegmentStart s2_66
+! onCodePathSegmentEnd s2_66
+! onCodePathSegmentStart s2_68
+! onCodePathSegmentEnd s2_68
+! onCodePathSegmentStart s2_70
+! onCodePathSegmentEnd s2_70
+! onCodePathSegmentStart s2_71
+! onCodePathSegmentEnd s2_71
+! onUnreachableCodePathSegmentStart s2_72
+! onUnreachableCodePathSegmentEnd s2_72
+! onCodePathSegmentStart s2_73
+! onCodePathSegmentEnd s2_73
+! onCodePathSegmentStart s2_74
+! onCodePathSegmentEnd s2_74
+! onCodePathSegmentStart s2_75
+! onCodePathSegmentEnd s2_75
+! onUnreachableCodePathSegmentStart s2_76
+! onUnreachableCodePathSegmentEnd s2_76
+! onCodePathSegmentStart s2_77
+! onCodePathSegmentEnd s2_77
+! onCodePathSegmentStart s2_78
+! onCodePathSegmentEnd s2_78
+! onUnreachableCodePathSegmentStart s2_79
+! onUnreachableCodePathSegmentEnd s2_79
+! onCodePathSegmentStart s2_80
+! onCodePathSegmentEnd s2_80
+! onCodePathSegmentStart s2_81
+! onCodePathSegmentEnd s2_81
+! onCodePathSegmentStart s2_82
+! onCodePathSegmentEnd s2_82
+! onUnreachableCodePathSegmentStart s2_83
+! onUnreachableCodePathSegmentEnd s2_83
+! onCodePathSegmentStart s2_84
+! onCodePathSegmentEnd s2_84
+! onUnreachableCodePathSegmentStart s2_85
+! onUnreachableCodePathSegmentEnd s2_85
+! onCodePathSegmentStart s2_86
+! onCodePathSegmentEnd s2_86
+! onCodePathSegmentStart s2_87
+! onCodePathSegmentEnd s2_87
+! onUnreachableCodePathSegmentStart s2_88
+! onUnreachableCodePathSegmentEnd s2_88
+! onCodePathSegmentStart s2_89
+! onCodePathSegmentEnd s2_89
+! onUnreachableCodePathSegmentStart s2_90
+! onUnreachableCodePathSegmentEnd s2_90
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -11693,6 +15082,12 @@ end
 | }
 > initial->s1_1->s1_3->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 pushSwitchContext [true,null]
@@ -11723,6 +15118,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushSwitchContext [true,null]
@@ -11784,6 +15189,24 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathSegmentStart s2_6
+! onCodePathSegmentStart s2_7
+! onCodePathSegmentEnd s2_7
+! onCodePathSegmentEnd s2_6
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -11856,6 +15279,16 @@ end
 > s1_1->s1_3;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushTryContext [false]
@@ -11905,6 +15338,18 @@ end
 > s1_2->s1_5->final;
 > s1_3->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushTryContext [false]
@@ -11965,6 +15410,24 @@ end
 > s1_3->final;
 > s1_9->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentStart s1_6
+! onUnreachableCodePathSegmentEnd s1_6
+! onUnreachableCodePathSegmentStart s1_7
+! onUnreachableCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathEnd s1
 start program
 F
 pushTryContext [false]
@@ -12047,6 +15510,30 @@ end
 > s1_12->final;
 > s1_10->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onUnreachableCodePathSegmentStart s1_8
+! onUnreachableCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onUnreachableCodePathSegmentStart s1_11
+! onUnreachableCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathEnd s1
 start program
 F
 pushTryContext [false]
@@ -12129,6 +15616,20 @@ end
 > s1_6->final;
 > s1_7->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushTryContext [true]
@@ -12202,6 +15703,18 @@ end
 > s1_2->s1_5;
 > s1_3->s1_6->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onUnreachableCodePathSegmentStart s1_2
+! onUnreachableCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushTryContext [true]
@@ -12289,6 +15802,28 @@ end
 > s1_11->final;
 > s1_12->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentStart s1_6
+! onUnreachableCodePathSegmentEnd s1_6
+! onUnreachableCodePathSegmentStart s1_7
+! onUnreachableCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentEnd s1_11
+! onCodePathEnd s1
 start program
 F
 pushTryContext [true]
@@ -12372,6 +15907,16 @@ end
 > s1_3->final;
 > s1_4->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 pushTryContext [true]
@@ -12427,6 +15972,16 @@ end
 > s1_1->s1_4;
 > s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onUnreachableCodePathSegmentStart s1_2
+! onUnreachableCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathEnd s1
 start program
 F
 pushTryContext [true]
@@ -12477,6 +16032,18 @@ end
 > s1_2->s1_5;
 > s1_3->s1_5->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushTryContext [true]
@@ -12550,6 +16117,32 @@ end
 > s1_5->s1_9->s1_15->final;
 > s1_15->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onUnreachableCodePathSegmentStart s1_6
+! onUnreachableCodePathSegmentEnd s1_6
+! onUnreachableCodePathSegmentStart s1_7
+! onUnreachableCodePathSegmentEnd s1_7
+! onUnreachableCodePathSegmentStart s1_8
+! onCodePathSegmentStart s1_9
+! onUnreachableCodePathSegmentEnd s1_8
+! onCodePathSegmentEnd s1_9
+! onUnreachableCodePathSegmentStart s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onUnreachableCodePathSegmentEnd s1_11
+! onUnreachableCodePathSegmentStart s1_14
+! onCodePathSegmentStart s1_15
+! onCodePathSegmentEnd s1_15
+! onUnreachableCodePathSegmentEnd s1_14
+! onCodePathEnd s1
 start program
 F
 pushTryContext [true]
@@ -12653,6 +16246,28 @@ end
 > s1_11->final;
 > s1_12->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentEnd s1_11
+! onCodePathEnd s1
 start program
 F
 pushTryContext [true]
@@ -12735,6 +16350,24 @@ end
 > s1_3->s1_7;
 > s1_6->s1_8->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathEnd s1
 start program
 F
 pushTryContext [false]
@@ -12787,6 +16420,26 @@ end
 > s1_4->s1_6->s1_7;
 > s1_5->s1_6->s1_8->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_2
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathEnd s1
 start program
 F
 pushTryContext [false]
@@ -12854,6 +16507,20 @@ end
 > s1_6->final;
 > s1_7->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 F
@@ -12936,6 +16603,20 @@ end
 > s1_6->final;
 > s1_7->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushTryContext [true]
@@ -13014,6 +16695,20 @@ end
 > s1_6->final;
 > s1_7->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushTryContext [true]
@@ -13092,6 +16787,20 @@ end
 > s1_6->final;
 > s1_7->thrown;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
 start program
 F
 pushTryContext [true]
@@ -13166,6 +16875,22 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onUnreachableCodePathSegmentStart s2_2
+! onUnreachableCodePathSegmentEnd s2_2
+! onUnreachableCodePathSegmentStart s2_3
+! onUnreachableCodePathSegmentEnd s2_3
+! onUnreachableCodePathSegmentStart s2_4
+! onUnreachableCodePathSegmentEnd s2_4
+! onUnreachableCodePathSegmentStart s2_5
+! onUnreachableCodePathSegmentEnd s2_5
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -13218,6 +16943,18 @@ end
 > initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_5;
 > s1_3->s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -13273,6 +17010,36 @@ end
 > s1_9->s1_12;
 > s1_13->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onUnreachableCodePathSegmentStart s1_7
+! onUnreachableCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onUnreachableCodePathSegmentStart s1_10
+! onUnreachableCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentLoop s1_11 s1_4
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentLoop s1_12 s1_2
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentEnd s1_13
+! onCodePathEnd s1
 start program
 F
 F
@@ -13361,6 +17128,31 @@ end
 > s1_7->s1_10;
 > s1_11->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onUnreachableCodePathSegmentStart s1_8
+! onUnreachableCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentLoop s1_10 s1_2
+! onCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentEnd s1_11
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -13443,6 +17235,30 @@ end
 > s1_6->s1_9;
 > s1_10->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onUnreachableCodePathSegmentStart s1_7
+! onUnreachableCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_4
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentLoop s1_9 s1_2
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -13502,6 +17318,23 @@ end
 > s1_3->s1_6;
 > s1_4->s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -13549,6 +17382,19 @@ end
 > s1_3->s1_4->s1_2;
 > s1_5->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onUnreachableCodePathSegmentStart s1_4
+! onUnreachableCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -13600,6 +17446,38 @@ end
 > s1_9->s1_10->s1_11;
 > s1_13->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onUnreachableCodePathSegmentStart s1_7
+! onUnreachableCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentLoop s1_9 s1_4
+! onCodePathSegmentEnd s1_9
+! onUnreachableCodePathSegmentStart s1_10
+! onUnreachableCodePathSegmentEnd s1_10
+! onCodePathSegmentStart s1_11
+! onCodePathSegmentLoop s1_11 s1_4
+! onCodePathSegmentEnd s1_11
+! onCodePathSegmentStart s1_12
+! onCodePathSegmentLoop s1_12 s1_2
+! onCodePathSegmentEnd s1_12
+! onCodePathSegmentStart s1_13
+! onCodePathSegmentEnd s1_13
+! onCodePathEnd s1
 start program
 F
 F
@@ -13683,6 +17561,31 @@ end
 > s1_6->s1_7->s1_8;
 > s1_10->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_4
+! onCodePathSegmentEnd s1_6
+! onUnreachableCodePathSegmentStart s1_7
+! onUnreachableCodePathSegmentEnd s1_7
+! onCodePathSegmentStart s1_8
+! onCodePathSegmentLoop s1_8 s1_4
+! onCodePathSegmentEnd s1_8
+! onCodePathSegmentStart s1_9
+! onCodePathSegmentLoop s1_9 s1_2
+! onCodePathSegmentEnd s1_9
+! onCodePathSegmentStart s1_10
+! onCodePathSegmentEnd s1_10
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -13744,6 +17647,24 @@ end
 > s1_4->s1_5->s1_6;
 > s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onUnreachableCodePathSegmentStart s1_5
+! onUnreachableCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -13792,6 +17713,24 @@ end
 > s1_4->s1_6->s1_2;
 > s1_7->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentLoop s1_5 s1_4
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentLoop s1_6 s1_2
+! onCodePathSegmentEnd s1_6
+! onCodePathSegmentStart s1_7
+! onCodePathSegmentEnd s1_7
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -13824,6 +17763,17 @@ end
 | }
 > initial->s1_1->s1_2->s1_3->s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -13847,6 +17797,17 @@ end
 | }
 > initial->s1_1->s1_2->s1_3->s1_2->s1_4->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
 start program
 F
 pushLoopContext ["WhileStatement",null]
@@ -13882,6 +17843,48 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathStart s3 function
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathSegmentStart s3_2
+! onCodePathSegmentEnd s3_2
+! onCodePathSegmentStart s3_3
+! onCodePathSegmentLoop s3_3 s3_2
+! onCodePathSegmentEnd s3_3
+! onCodePathSegmentStart s3_4
+! onCodePathSegmentEnd s3_4
+! onUnreachableCodePathSegmentStart s3_5
+! onUnreachableCodePathSegmentEnd s3_5
+! onCodePathSegmentStart s3_6
+! onCodePathSegmentEnd s3_6
+! onCodePathSegmentStart s3_7
+! onCodePathSegmentEnd s3_7
+! onCodePathSegmentStart s3_8
+! onCodePathSegmentLoop s3_8 s3_7
+! onCodePathSegmentEnd s3_8
+! onUnreachableCodePathSegmentStart s3_9
+! onUnreachableCodePathSegmentEnd s3_9
+! onUnreachableCodePathSegmentStart s3_10
+! onUnreachableCodePathSegmentEnd s3_10
+! onUnreachableCodePathSegmentStart s3_11
+! onUnreachableCodePathSegmentEnd s3_11
+! onUnreachableCodePathSegmentStart s3_12
+! onCodePathStart s4 function
+! onCodePathSegmentStart s4_1
+! onCodePathSegmentEnd s4_1
+! onCodePathEnd s4
+! onUnreachableCodePathSegmentEnd s3_12
+! onUnreachableCodePathSegmentStart s3_13
+! onUnreachableCodePathSegmentEnd s3_13
+! onCodePathEnd s3
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -14029,6 +18032,76 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathStart s3 function
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathSegmentStart s3_2
+! onCodePathSegmentEnd s3_2
+! onCodePathSegmentStart s3_3
+! onCodePathSegmentEnd s3_3
+! onCodePathSegmentStart s3_4
+! onCodePathSegmentEnd s3_4
+! onCodePathSegmentStart s3_6
+! onCodePathSegmentEnd s3_6
+! onCodePathSegmentStart s3_7
+! onCodePathSegmentEnd s3_7
+! onCodePathSegmentStart s3_8
+! onCodePathSegmentEnd s3_8
+! onCodePathSegmentStart s3_9
+! onCodePathSegmentEnd s3_9
+! onCodePathSegmentStart s3_10
+! onCodePathSegmentLoop s3_10 s3_7
+! onCodePathSegmentEnd s3_10
+! onCodePathSegmentStart s3_11
+! onCodePathSegmentLoop s3_11 s3_7
+! onCodePathSegmentEnd s3_11
+! onCodePathSegmentStart s3_13
+! onCodePathSegmentEnd s3_13
+! onCodePathEnd s3
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentLoop s2_4 s2_2
+! onCodePathSegmentEnd s2_4
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentLoop s2_3 s2_4
+! onCodePathSegmentEnd s2_3
+! onUnreachableCodePathSegmentStart s2_5
+! onUnreachableCodePathSegmentEnd s2_5
+! onUnreachableCodePathSegmentStart s2_6
+! onUnreachableCodePathSegmentEnd s2_6
+! onUnreachableCodePathSegmentStart s2_7
+! onUnreachableCodePathSegmentEnd s2_7
+! onUnreachableCodePathSegmentStart s2_8
+! onUnreachableCodePathSegmentEnd s2_8
+! onUnreachableCodePathSegmentStart s2_9
+! onUnreachableCodePathSegmentEnd s2_9
+! onUnreachableCodePathSegmentStart s2_10
+! onUnreachableCodePathSegmentEnd s2_10
+! onUnreachableCodePathSegmentStart s2_11
+! onUnreachableCodePathSegmentEnd s2_11
+! onUnreachableCodePathSegmentStart s2_12
+! onUnreachableCodePathSegmentEnd s2_12
+! onUnreachableCodePathSegmentStart s2_13
+! onUnreachableCodePathSegmentEnd s2_13
+! onUnreachableCodePathSegmentStart s2_14
+! onUnreachableCodePathSegmentEnd s2_14
+! onUnreachableCodePathSegmentStart s2_15
+! onUnreachableCodePathSegmentEnd s2_15
+! onUnreachableCodePathSegmentStart s2_16
+! onUnreachableCodePathSegmentEnd s2_16
+! onUnreachableCodePathSegmentStart s2_17
+! onUnreachableCodePathSegmentEnd s2_17
+! onUnreachableCodePathSegmentStart s2_18
+! onUnreachableCodePathSegmentEnd s2_18
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -14227,6 +18300,117 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathSegmentStart s2_6
+! onCodePathSegmentLoop s2_6 s2_4
+! onCodePathSegmentEnd s2_6
+! onCodePathSegmentStart s2_5
+! onCodePathSegmentEnd s2_5
+! onCodePathSegmentStart s2_7
+! onCodePathSegmentEnd s2_7
+! onCodePathSegmentStart s2_8
+! onCodePathSegmentStart s2_9
+! onCodePathSegmentEnd s2_8
+! onCodePathSegmentEnd s2_9
+! onCodePathSegmentStart s2_10
+! onCodePathSegmentStart s2_11
+! onCodePathSegmentLoop s2_10 s2_10
+! onCodePathSegmentLoop s2_11 s2_11
+! onCodePathSegmentEnd s2_10
+! onCodePathSegmentEnd s2_11
+! onUnreachableCodePathSegmentStart s2_12
+! onUnreachableCodePathSegmentStart s2_13
+! onUnreachableCodePathSegmentEnd s2_12
+! onUnreachableCodePathSegmentEnd s2_13
+! onUnreachableCodePathSegmentStart s2_14
+! onUnreachableCodePathSegmentStart s2_15
+! onUnreachableCodePathSegmentEnd s2_14
+! onUnreachableCodePathSegmentEnd s2_15
+! onUnreachableCodePathSegmentStart s2_16
+! onUnreachableCodePathSegmentStart s2_17
+! onUnreachableCodePathSegmentEnd s2_16
+! onUnreachableCodePathSegmentEnd s2_17
+! onUnreachableCodePathSegmentStart s2_18
+! onUnreachableCodePathSegmentStart s2_19
+! onCodePathStart s3 function
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathEnd s3
+! onUnreachableCodePathSegmentEnd s2_18
+! onUnreachableCodePathSegmentEnd s2_19
+! onUnreachableCodePathSegmentStart s2_20
+! onUnreachableCodePathSegmentStart s2_21
+! onUnreachableCodePathSegmentEnd s2_20
+! onUnreachableCodePathSegmentEnd s2_21
+! onUnreachableCodePathSegmentStart s2_22
+! onUnreachableCodePathSegmentStart s2_23
+! onUnreachableCodePathSegmentEnd s2_22
+! onUnreachableCodePathSegmentEnd s2_23
+! onUnreachableCodePathSegmentStart s2_24
+! onUnreachableCodePathSegmentStart s2_25
+! onUnreachableCodePathSegmentEnd s2_24
+! onUnreachableCodePathSegmentEnd s2_25
+! onUnreachableCodePathSegmentStart s2_26
+! onUnreachableCodePathSegmentStart s2_27
+! onUnreachableCodePathSegmentEnd s2_26
+! onUnreachableCodePathSegmentEnd s2_27
+! onUnreachableCodePathSegmentStart s2_28
+! onUnreachableCodePathSegmentStart s2_29
+! onUnreachableCodePathSegmentEnd s2_28
+! onUnreachableCodePathSegmentEnd s2_29
+! onUnreachableCodePathSegmentStart s2_30
+! onUnreachableCodePathSegmentStart s2_31
+! onUnreachableCodePathSegmentEnd s2_30
+! onUnreachableCodePathSegmentEnd s2_31
+! onUnreachableCodePathSegmentStart s2_32
+! onUnreachableCodePathSegmentStart s2_33
+! onUnreachableCodePathSegmentEnd s2_32
+! onUnreachableCodePathSegmentEnd s2_33
+! onUnreachableCodePathSegmentStart s2_34
+! onUnreachableCodePathSegmentStart s2_35
+! onUnreachableCodePathSegmentEnd s2_34
+! onUnreachableCodePathSegmentEnd s2_35
+! onUnreachableCodePathSegmentStart s2_36
+! onUnreachableCodePathSegmentStart s2_37
+! onUnreachableCodePathSegmentEnd s2_36
+! onUnreachableCodePathSegmentEnd s2_37
+! onUnreachableCodePathSegmentStart s2_38
+! onUnreachableCodePathSegmentStart s2_39
+! onUnreachableCodePathSegmentEnd s2_38
+! onUnreachableCodePathSegmentEnd s2_39
+! onUnreachableCodePathSegmentStart s2_40
+! onUnreachableCodePathSegmentStart s2_41
+! onUnreachableCodePathSegmentEnd s2_40
+! onUnreachableCodePathSegmentEnd s2_41
+! onUnreachableCodePathSegmentStart s2_42
+! onUnreachableCodePathSegmentStart s2_43
+! onUnreachableCodePathSegmentEnd s2_43
+! onUnreachableCodePathSegmentEnd s2_42
+! onUnreachableCodePathSegmentStart s2_44
+! onUnreachableCodePathSegmentEnd s2_44
+! onUnreachableCodePathSegmentStart s2_45
+! onUnreachableCodePathSegmentEnd s2_45
+! onUnreachableCodePathSegmentStart s2_46
+! onUnreachableCodePathSegmentEnd s2_46
+! onUnreachableCodePathSegmentStart s2_47
+! onUnreachableCodePathSegmentEnd s2_47
+! onUnreachableCodePathSegmentStart s2_48
+! onUnreachableCodePathSegmentEnd s2_48
+! onUnreachableCodePathSegmentStart s2_50
+! onUnreachableCodePathSegmentEnd s2_50
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -14507,6 +18691,56 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_3
+! onCodePathSegmentEnd s2_4
+! onCodePathSegmentStart s2_5
+! onCodePathSegmentStart s2_6
+! onCodePathSegmentEnd s2_5
+! onCodePathSegmentEnd s2_6
+! onCodePathSegmentStart s2_7
+! onCodePathSegmentStart s2_8
+! onCodePathSegmentStart s2_9
+! onCodePathSegmentStart s2_10
+! onCodePathSegmentEnd s2_7
+! onCodePathSegmentEnd s2_8
+! onCodePathSegmentEnd s2_9
+! onCodePathSegmentEnd s2_10
+! onCodePathSegmentStart s2_11
+! onCodePathSegmentStart s2_12
+! onCodePathSegmentStart s2_13
+! onCodePathSegmentStart s2_14
+! onCodePathSegmentEnd s2_11
+! onCodePathSegmentEnd s2_12
+! onCodePathSegmentEnd s2_13
+! onCodePathSegmentEnd s2_14
+! onCodePathSegmentStart s2_15
+! onCodePathSegmentStart s2_16
+! onCodePathSegmentStart s2_17
+! onCodePathSegmentStart s2_18
+! onCodePathSegmentStart s2_19
+! onCodePathSegmentStart s2_20
+! onCodePathSegmentStart s2_21
+! onCodePathSegmentStart s2_22
+! onCodePathSegmentEnd s2_19
+! onCodePathSegmentEnd s2_20
+! onCodePathSegmentEnd s2_21
+! onCodePathSegmentEnd s2_22
+! onCodePathSegmentEnd s2_17
+! onCodePathSegmentEnd s2_18
+! onCodePathSegmentEnd s2_16
+! onCodePathSegmentEnd s2_15
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -14611,6 +18845,96 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onUnreachableCodePathSegmentStart s2_3
+! onUnreachableCodePathSegmentEnd s2_3
+! onUnreachableCodePathSegmentStart s2_4
+! onCodePathSegmentStart s2_5
+! onUnreachableCodePathSegmentEnd s2_4
+! onCodePathSegmentEnd s2_5
+! onUnreachableCodePathSegmentStart s2_6
+! onCodePathSegmentStart s2_7
+! onUnreachableCodePathSegmentEnd s2_6
+! onCodePathSegmentEnd s2_7
+! onUnreachableCodePathSegmentStart s2_8
+! onUnreachableCodePathSegmentStart s2_9
+! onUnreachableCodePathSegmentEnd s2_8
+! onUnreachableCodePathSegmentEnd s2_9
+! onUnreachableCodePathSegmentStart s2_10
+! onCodePathSegmentStart s2_11
+! onUnreachableCodePathSegmentEnd s2_10
+! onCodePathSegmentEnd s2_11
+! onUnreachableCodePathSegmentStart s2_12
+! onCodePathSegmentStart s2_13
+! onUnreachableCodePathSegmentEnd s2_12
+! onCodePathSegmentEnd s2_13
+! onUnreachableCodePathSegmentStart s2_16
+! onCodePathSegmentStart s2_17
+! onUnreachableCodePathSegmentStart s2_18
+! onCodePathSegmentStart s2_19
+! onUnreachableCodePathSegmentEnd s2_16
+! onCodePathSegmentEnd s2_17
+! onUnreachableCodePathSegmentEnd s2_18
+! onCodePathSegmentEnd s2_19
+! onUnreachableCodePathSegmentStart s2_20
+! onCodePathSegmentStart s2_21
+! onUnreachableCodePathSegmentStart s2_22
+! onCodePathSegmentStart s2_23
+! onUnreachableCodePathSegmentEnd s2_20
+! onCodePathSegmentEnd s2_21
+! onUnreachableCodePathSegmentEnd s2_22
+! onCodePathSegmentEnd s2_23
+! onUnreachableCodePathSegmentStart s2_24
+! onCodePathSegmentStart s2_25
+! onUnreachableCodePathSegmentStart s2_26
+! onCodePathSegmentStart s2_27
+! onUnreachableCodePathSegmentEnd s2_24
+! onCodePathSegmentEnd s2_25
+! onUnreachableCodePathSegmentEnd s2_26
+! onCodePathSegmentEnd s2_27
+! onUnreachableCodePathSegmentStart s2_28
+! onCodePathSegmentStart s2_29
+! onUnreachableCodePathSegmentStart s2_30
+! onCodePathSegmentStart s2_31
+! onUnreachableCodePathSegmentEnd s2_28
+! onCodePathSegmentEnd s2_29
+! onUnreachableCodePathSegmentEnd s2_30
+! onCodePathSegmentEnd s2_31
+! onUnreachableCodePathSegmentStart s2_36
+! onCodePathSegmentStart s2_37
+! onUnreachableCodePathSegmentStart s2_38
+! onCodePathSegmentStart s2_39
+! onCodePathSegmentLoop s2_37 s2_21
+! onCodePathSegmentLoop s2_39 s2_23
+! onUnreachableCodePathSegmentEnd s2_36
+! onCodePathSegmentEnd s2_37
+! onUnreachableCodePathSegmentEnd s2_38
+! onCodePathSegmentEnd s2_39
+! onUnreachableCodePathSegmentStart s2_40
+! onUnreachableCodePathSegmentStart s2_41
+! onUnreachableCodePathSegmentStart s2_42
+! onUnreachableCodePathSegmentStart s2_43
+! onUnreachableCodePathSegmentEnd s2_40
+! onUnreachableCodePathSegmentEnd s2_41
+! onUnreachableCodePathSegmentEnd s2_42
+! onUnreachableCodePathSegmentEnd s2_43
+! onUnreachableCodePathSegmentStart s2_44
+! onCodePathSegmentStart s2_45
+! onUnreachableCodePathSegmentStart s2_46
+! onCodePathSegmentStart s2_47
+! onUnreachableCodePathSegmentEnd s2_46
+! onCodePathSegmentEnd s2_47
+! onCodePathSegmentEnd s2_45
+! onUnreachableCodePathSegmentEnd s2_44
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -14692,6 +19016,22 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_3
+! onCodePathSegmentEnd s2_3
+! onUnreachableCodePathSegmentStart s2_4
+! onUnreachableCodePathSegmentEnd s2_4
+! onCodePathSegmentStart s2_5
+! onCodePathSegmentEnd s2_5
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -14730,6 +19070,22 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onUnreachableCodePathSegmentStart s2_2
+! onUnreachableCodePathSegmentEnd s2_2
+! onUnreachableCodePathSegmentStart s2_3
+! onUnreachableCodePathSegmentEnd s2_3
+! onUnreachableCodePathSegmentStart s2_5
+! onCodePathSegmentStart s2_6
+! onCodePathSegmentEnd s2_6
+! onUnreachableCodePathSegmentEnd s2_5
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -14784,6 +19140,31 @@ end
 >>
 > initial->s1_1->final;
 >>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathSegmentStart s2_6
+! onCodePathSegmentEnd s2_6
+! onCodePathSegmentStart s2_7
+! onCodePathSegmentStart s2_8
+! onCodePathSegmentLoop s2_7 s2_2
+! onCodePathSegmentEnd s2_7
+! onCodePathSegmentEnd s2_8
+! onUnreachableCodePathSegmentStart s2_9
+! onUnreachableCodePathSegmentStart s2_10
+! onUnreachableCodePathSegmentEnd s2_10
+! onUnreachableCodePathSegmentEnd s2_9
+! onCodePathSegmentStart s2_11
+! onCodePathSegmentEnd s2_11
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
 start program
 F
 start function
@@ -14821,5 +19202,1256 @@ F
 F
 F
 end
+F
+end
+== unit--01.js
+| class Foo { a = () => b }
+> initial->s3_1->final;
+>>
+> initial->s2_1->final;
+>>
+> initial->s1_1->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-field-initializer
+! onCodePathSegmentStart s2_1
+! onCodePathStart s3 function
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathEnd s3
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
+start program
+F
+F
+F
+F
+start class-field-initializer
+start function
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+end
+end
+F
+F
+F
+F
+end
+== unit--02.js
+| foo(); bar(); baz();
+> initial->s1_1->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
+start program
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== unit--03.js
+| function foo() {}
+> initial->s2_1->final;
+>>
+> initial->s1_1->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
+start program
+F
+start function
+F
+F
+F
+F
+end
+F
+end
+== unit--04.js
+| let foo = () => {}
+> initial->s2_1->final;
+>>
+> initial->s1_1->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
+start program
+F
+F
+F
+F
+F
+start function
+F
+F
+F
+F
+end
+F
+F
+F
+end
+== unit--05.js
+| class Foo { a=1; }
+> initial->s2_1->final;
+>>
+> initial->s1_1->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-field-initializer
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
+start program
+F
+F
+F
+F
+start class-field-initializer
+F
+F
+end
+F
+F
+F
+F
+end
+== unit--06.js
+| class Foo { static { this.a=1; } }
+> initial->s2_1->final;
+>>
+> initial->s1_1->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 class-static-block
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
+start program
+F
+F
+F
+start class-static-block
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+F
+F
+end
+F
+F
+F
+end
+== unit--07.js
+| if (a) foo(); else bar(); baz();
+> initial->s1_1->s1_2->s1_4;
+> s1_1->s1_3->s1_4->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
+start program
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeIfAlternate
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== unit--08.js
+| switch (a) { case 0: foo(); break; case 1: bar(); } baz();
+> initial->s1_1->s1_2->s1_3->s1_5->s1_6;
+> s1_1->s1_4->s1_5;
+> s1_2->s1_6;
+> s1_4->s1_6->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onUnreachableCodePathSegmentStart s1_3
+! onUnreachableCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
+start program
+F
+pushSwitchContext [true,null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+makeBreak [null]
+F-unless-reachable
+forkPath
+F
+F
+F
+makeSwitchCaseBody [false,false]
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F-unless-reachable
+popSwitchContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== unit--09.js
+| while (a) foo(); bar();
+> initial->s1_1->s1_2->s1_3->s1_2->s1_4->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+popLoopContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== unit--10.js
+| for (var i = 0; i < 10; ++i) foo(i); bar();
+> initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_5->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_4
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+popLoopContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== unit--11.js
+| for (var key in obj) foo(key); bar();
+> initial->s1_1->s1_3->s1_2->s1_4->s1_2;
+> s1_3->s1_5;
+> s1_4->s1_5->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
+start program
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForInOfBody
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+popLoopContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== unit--12.js
+| try { foo(); } catch (e) { bar(); } baz();
+> initial->s1_1->s1_2->s1_3->s1_4;
+> s1_1->s1_3;
+> s1_2->s1_4->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
+start program
+F
+pushTryContext [false]
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeCatchBlock
+F
+F
+F
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+popTryContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== unit--13.js
+| if (a) { if (b) { foo(); } bar(); } else { out1(); } out2();
+> initial->s1_1->s1_2->s1_3->s1_4->s1_6;
+> s1_1->s1_5->s1_6;
+> s1_2->s1_4;
+> s1_6->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathSegmentStart s1_6
+! onCodePathSegmentEnd s1_6
+! onCodePathEnd s1
+start program
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== unit--14.js
+| if (a) { if (b) { foo(); } bar(); } out1();
+> initial->s1_1->s1_2->s1_3->s1_4->s1_5;
+> s1_1->s1_5;
+> s1_2->s1_4;
+> s1_5->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
+start program
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popChoiceContext
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== unit--15.js
+| a; while (b) { c; }
+> initial->s1_1->s1_2->s1_3->s1_2->s1_4->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
+start program
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+popLoopContext
+F
+F
+end
+== unit--16.js
+| function foo(a) { if (a) return 0; else throw new Error(); }
+> initial->s2_1->s2_2->s2_3->s2_6;
+> s2_1->s2_4->s2_5->s2_6;
+> s2_2->final;
+> s2_4->thrown;
+>>
+> initial->s1_1->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onUnreachableCodePathSegmentStart s2_6
+! onUnreachableCodePathSegmentEnd s2_6
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
+start program
+F
+start function
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+F
+makeReturn
+makeIfAlternate
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+makeThrow
+popChoiceContext
+F
+F
+F
+end
+F
+end
+== unit--17.js
+| foo(); function bar() {} var baz = function() {}; var qux = () => {};
+> initial->s2_1->final;
+>>
+> initial->s3_1->final;
+>>
+> initial->s4_1->final;
+>>
+> initial->s1_1->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathEnd s2
+! onCodePathStart s3 function
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onCodePathEnd s3
+! onCodePathStart s4 function
+! onCodePathSegmentStart s4_1
+! onCodePathSegmentEnd s4_1
+! onCodePathEnd s4
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
+start program
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+start function
+F
+F
+F
+F
+end
+F
+F
+F
+F
+start function
+F
+F
+F
+F
+end
+F
+F
+F
+F
+F
+F
+start function
+F
+F
+F
+F
+end
+F
+F
+F
+end
+== unit--18.js
+| throw 'boom'; foo();
+> initial->s1_1->s1_2;
+> s1_1->thrown;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onUnreachableCodePathSegmentStart s1_2
+! onUnreachableCodePathSegmentEnd s1_2
+! onCodePathEnd s1
+start program
+F
+F
+F
+F
+F
+makeThrow
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+end
+== unit--19.js
+| function foo() { return; foo(); }
+> initial->s2_1->s2_2;
+> s2_1->final;
+>>
+> initial->s1_1->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onUnreachableCodePathSegmentStart s2_2
+! onUnreachableCodePathSegmentEnd s2_2
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
+start program
+F
+start function
+F
+F
+F
+F
+makeReturn
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+F
+end
+F
+end
+== unit--20.js
+| function foo() { if (bar) { return; foo(); } else {} }
+> initial->s2_1->s2_2->s2_3->s2_5;
+> s2_1->s2_4->s2_5;
+> s2_2->final;
+> s2_5->final;
+>>
+> initial->s1_1->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onCodePathSegmentStart s2_2
+! onCodePathSegmentEnd s2_2
+! onUnreachableCodePathSegmentStart s2_3
+! onUnreachableCodePathSegmentEnd s2_3
+! onCodePathSegmentStart s2_4
+! onCodePathSegmentEnd s2_4
+! onCodePathSegmentStart s2_5
+! onCodePathSegmentEnd s2_5
+! onCodePathEnd s2
+! onCodePathSegmentEnd s1_1
+! onCodePathEnd s1
+start program
+F
+start function
+F
+F
+pushChoiceContext ["test",false]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeIfConsequent
+F
+F
+F
+makeReturn
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeIfAlternate
+F
+F
+popChoiceContext
+F
+F
+F
+end
+F
+end
+== unit--21.js
+| foo(); function bar() { return; } var baz = function() { return; }; var qux = () => { return; }; throw 'boom';
+> initial->s2_1->s2_2;
+> s2_1->final;
+>>
+> initial->s3_1->s3_2;
+> s3_1->final;
+>>
+> initial->s4_1->s4_2;
+> s4_1->final;
+>>
+> initial->s1_1->s1_2;
+> s1_1->thrown;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathStart s2 function
+! onCodePathSegmentStart s2_1
+! onCodePathSegmentEnd s2_1
+! onUnreachableCodePathSegmentStart s2_2
+! onUnreachableCodePathSegmentEnd s2_2
+! onCodePathEnd s2
+! onCodePathStart s3 function
+! onCodePathSegmentStart s3_1
+! onCodePathSegmentEnd s3_1
+! onUnreachableCodePathSegmentStart s3_2
+! onUnreachableCodePathSegmentEnd s3_2
+! onCodePathEnd s3
+! onCodePathStart s4 function
+! onCodePathSegmentStart s4_1
+! onCodePathSegmentEnd s4_1
+! onUnreachableCodePathSegmentStart s4_2
+! onUnreachableCodePathSegmentEnd s4_2
+! onCodePathEnd s4
+! onCodePathSegmentEnd s1_1
+! onUnreachableCodePathSegmentStart s1_2
+! onUnreachableCodePathSegmentEnd s1_2
+! onCodePathEnd s1
+start program
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+start function
+F
+F
+F
+F
+makeReturn
+F
+F
+end
+F
+F
+F
+F
+start function
+F
+F
+F
+F
+makeReturn
+F
+F
+end
+F
+F
+F
+F
+F
+F
+start function
+F
+F
+F
+F
+makeReturn
+F
+F
+end
+F
+F
+F
+F
+F
+F
+makeThrow
+F
+end
+== unit--22.js
+| while (a) { foo(); }
+> initial->s1_1->s1_2->s1_3->s1_2->s1_4->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentEnd s1_4
+! onCodePathEnd s1
+start program
+F
+pushLoopContext ["WhileStatement",null]
+F
+makeWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== unit--23.js
+| do { foo(); } while (a);
+> initial->s1_1->s1_2->s1_2->s1_3->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentLoop s1_2 s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentEnd s1_3
+! onCodePathEnd s1
+start program
+F
+pushLoopContext ["DoWhileStatement",null]
+F
+makeDoWhileBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeDoWhileTest [null]
+F
+makeFirstThrowablePathInTryOrCatchBlock
+popLoopContext
+F
+F
+end
+== unit--24.js
+| for (var i = 0; i < 10; ++i) { foo(); }
+> initial->s1_1->s1_2->s1_3->s1_4->s1_2->s1_5->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_4
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
+start program
+F
+pushLoopContext ["ForStatement",null]
+F
+F
+F
+F
+F
+F
+F
+F
+F
+makeForTest [null]
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+makeForUpdate
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+F
+makeForBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== unit--25.js
+| for (var k in obj) { foo(); }
+> initial->s1_1->s1_3->s1_2->s1_4->s1_2;
+> s1_3->s1_5;
+> s1_4->s1_5->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
+start program
+F
+pushLoopContext ["ForInStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForInOfBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
+F
+end
+== unit--26.js
+| for (var x of xs) { foo(); }
+> initial->s1_1->s1_3->s1_2->s1_4->s1_2;
+> s1_3->s1_5;
+> s1_4->s1_5->final;
+>>
+! onCodePathStart s1 program
+! onCodePathSegmentStart s1_1
+! onCodePathSegmentEnd s1_1
+! onCodePathSegmentStart s1_2
+! onCodePathSegmentEnd s1_2
+! onCodePathSegmentStart s1_3
+! onCodePathSegmentLoop s1_3 s1_2
+! onCodePathSegmentEnd s1_3
+! onCodePathSegmentStart s1_4
+! onCodePathSegmentLoop s1_4 s1_2
+! onCodePathSegmentEnd s1_4
+! onCodePathSegmentStart s1_5
+! onCodePathSegmentEnd s1_5
+! onCodePathEnd s1
+start program
+F
+pushLoopContext ["ForOfStatement",null]
+F
+makeForInOfLeft
+F
+F
+F
+F
+F
+F
+makeForInOfRight
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeForInOfBody
+F
+F
+F
+F
+makeFirstThrowablePathInTryOrCatchBlock
+makeFirstThrowablePathInTryOrCatchBlock
+F
+F
+F
+popLoopContext
+F
 F
 end

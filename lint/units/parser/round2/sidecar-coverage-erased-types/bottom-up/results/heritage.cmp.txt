@@ -1,0 +1,710 @@
+"A"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A, B"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<T>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<T>, B.C<T[]>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A.B.C"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A.B.C<D>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<B<C>>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<B>>"
+   iface tsc: TS1005 [24,+1) ',' expected. (n=1)
+   iface lint@HEAD(skip): TS1005 [24,+1) <Expected "{" but found ">">
+   class tsc: TS1005 [23,+1) ',' expected. (n=1)
+   class lint@HEAD(Build entry): TS1005 [23,+1) <Expected "{" but found ">">
+"A,"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): TS1005 [24,+0) <Expected "{" but found end of file>
+", A"
+   iface tsc: TS1109 [20,+1) Expression expected. (n=1)
+   iface lint@HEAD(skip): TS1110 [20,+1) <Unexpected ,>
+   class tsc: TS1109 [19,+1) Expression expected. (n=1)
+   class lint@HEAD(Build entry): TS1109 [19,+1) <Unexpected ,>
+"A,, B"
+   iface tsc: TS1109 [22,+1) Expression expected. (n=1)
+   iface lint@HEAD(skip): TS1110 [22,+1) <Unexpected ,>
+   class tsc: TS1109 [21,+1) Expression expected. (n=1)
+   class lint@HEAD(Build entry): TS1109 [21,+1) <Unexpected ,>
+"A B"
+   iface tsc: TS1005 [22,+1) ',' expected. (n=1)
+   iface lint@HEAD(skip): TS1005 [22,+1) <Expected "{" but found "B">
+   class tsc: TS1005 [21,+1) ',' expected. (n=1)
+   class lint@HEAD(Build entry): TS1005 [21,+1) <Expected "{" but found "B">
+"A | B"
+   iface tsc: TS1005 [22,+1) ',' expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1005 [21,+1) ',' expected. (n=2)
+   class lint@HEAD(Build entry): TS1005 [21,+1) <Expected "{" but found "|">
+"A & B"
+   iface tsc: TS1005 [22,+1) ',' expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1005 [21,+1) ',' expected. (n=2)
+   class lint@HEAD(Build entry): TS1005 [21,+1) <Expected "{" but found "&">
+"A[]"
+   iface tsc: TS1011 [22,+0) An element access expression should take an argument. (n=1)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1011 [21,+0) An element access expression should take an argument. (n=1)
+   class lint@HEAD(Build entry): TS1109 [21,+1) <Unexpected ]>
+"A[0]"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A['b']"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A?"
+   iface tsc: TS1005 [21,+1) ',' expected. (n=1)
+   iface lint@HEAD(skip): TS1005 [21,+1) <Expected "{" but found "?">
+   class tsc: TS1005 [20,+1) ',' expected. (n=1)
+   class lint@HEAD(Build entry): TS1005 [20,+1) <Expected "{" but found "?">
+"A!"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A!.b"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A?.b"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A?.b<c>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"(A)"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"(A)<B>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"(A.B)"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A.B()"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A()"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<B>()"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A``"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"new A"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"new A()"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"new A<B>()"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"typeof x"
+   iface tsc: TS1109 [20,+6) Expression expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1109 [19,+6) Expression expected. (n=2)
+   class lint@HEAD(Build entry): ok
+"keyof A"
+   iface tsc: TS1005 [26,+1) ',' expected. (n=1)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1005 [25,+1) ',' expected. (n=1)
+   class lint@HEAD(Build entry): TS1005 [25,+1) <Expected "{" but found "A">
+"readonly A[]"
+   iface tsc: TS1005 [29,+1) ',' expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1005 [28,+1) ',' expected. (n=2)
+   class lint@HEAD(Build entry): TS1005 [28,+1) <Expected "{" but found "A">
+"void"
+   iface tsc: TS1109 [20,+4) Expression expected. (n=1)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1109 [19,+4) Expression expected. (n=1)
+   class lint@HEAD(Build entry): TS1005 [26,+0) <Expected "{" but found end of file>
+"void 0"
+   iface tsc: TS1109 [20,+4) Expression expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1109 [19,+4) Expression expected. (n=2)
+   class lint@HEAD(Build entry): ok
+"null"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"undefined"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"true"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"this"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"this.a"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"super"
+   iface tsc: TS1034 [26,+1) 'super' must be followed by an argument list or member access. (n=1)
+   iface lint@HEAD(skip): TS0 [20,+5) <Unexpected super>
+   class tsc: TS1034 [25,+1) 'super' must be followed by an argument list or member access. (n=1)
+   class lint@HEAD(Build entry): ok
+"super.a"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"string"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"number"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"any"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"object"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"unknown"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"never"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"symbol"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"1"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"'a'"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"`a`"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"1n"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"-1"
+   iface tsc: TS1109 [20,+1) Expression expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1109 [19,+1) Expression expected. (n=2)
+   class lint@HEAD(Build entry): ok
+"[A]"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"[A, B]"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"{}"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"{} "
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"{ a: 1 }"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"{ a: 1 }, B"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A, {}"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A, { a: 1 }"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"function () {}"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"class {}"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"class A {}"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"() => A"
+   iface tsc: TS1109 [21,+1) Expression expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1109 [20,+1) Expression expected. (n=2)
+   class lint@HEAD(Build entry): TS1109 [20,+1) <Unexpected )>
+"(a) => A"
+   iface tsc: TS1005 [24,+2) ',' expected. (n=1)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1005 [23,+2) ',' expected. (n=1)
+   class lint@HEAD(Build entry): TS1005 [23,+2) <Expected "{" but found "=>">
+"new () => A"
+   iface tsc: TS1109 [25,+1) Expression expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1109 [24,+1) Expression expected. (n=2)
+   class lint@HEAD(Build entry): TS1109 [24,+1) <Unexpected )>
+"import('m')"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"import('m').A"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"import('m').A<B>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"import.meta"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"a.b<c>.d"
+   iface tsc: TS1477 [23,+3) An instantiation expression cannot be followed by a property access. (n=1)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1477 [22,+3) An instantiation expression cannot be followed by a property access. (n=1)
+   class lint@HEAD(Build entry): ok
+"a<b>.c"
+   iface tsc: TS1477 [21,+3) An instantiation expression cannot be followed by a property access. (n=1)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1477 [20,+3) An instantiation expression cannot be followed by a property access. (n=1)
+   class lint@HEAD(Build entry): ok
+"A<>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<B | >"
+   iface tsc: TS1110 [26,+1) Type expected. (n=1)
+   iface lint@HEAD(skip): TS1110 [26,+1) <Unexpected >>
+   class tsc: TS1110 [25,+1) Type expected. (n=1)
+   class lint@HEAD(Build entry): TS1110 [25,+1) <Unexpected >>
+"A<B,>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<,>"
+   iface tsc: TS1110 [22,+1) Type expected. (n=1)
+   iface lint@HEAD(skip): TS1110 [22,+1) <Unexpected ,>
+   class tsc: TS1110 [21,+1) Type expected. (n=1)
+   class lint@HEAD(Build entry): TS1110 [21,+1) <Unexpected ,>
+"A."
+   iface tsc: TS1003 [23,+1) Identifier expected. (n=1)
+   iface lint@HEAD(skip): TS1003 [23,+1) <Expected identifier but found "{">
+   class tsc: TS1003 [22,+1) Identifier expected. (n=1)
+   class lint@HEAD(Build entry): TS1003 [22,+1) <Expected identifier but found "{">
+"A.#b"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A.b."
+   iface tsc: TS1003 [25,+1) Identifier expected. (n=1)
+   iface lint@HEAD(skip): TS1003 [25,+1) <Expected identifier but found "{">
+   class tsc: TS1003 [24,+1) Identifier expected. (n=1)
+   class lint@HEAD(Build entry): TS1003 [24,+1) <Expected identifier but found "{">
+"#a"
+   iface tsc: TS1109 [20,+2) Expression expected. (n=2)
+   iface lint@HEAD(skip): TS0 [20,+2) <Unexpected #a>
+   class tsc: TS1109 [19,+2) Expression expected. (n=2)
+   class lint@HEAD(Build entry): ok
+"async"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"await"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"yield"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"let"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"static"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"implements"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"extends"
+   iface tsc: ok
+   iface lint@HEAD(skip): TS1110 [20,+7) <Unexpected extends>
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"type"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"of"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"as"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A as B"
+   iface tsc: TS1005 [22,+2) ',' expected. (n=2)
+   iface lint@HEAD(skip): TS1005 [22,+2) <Expected "{" but found "as">
+   class tsc: TS1005 [21,+2) ',' expected. (n=2)
+   class lint@HEAD(Build entry): TS1005 [21,+2) <Expected "{" but found "as">
+"A satisfies B"
+   iface tsc: TS1005 [22,+9) ',' expected. (n=2)
+   iface lint@HEAD(skip): TS1005 [22,+9) <Expected "{" but found "satisfies">
+   class tsc: TS1005 [21,+9) ',' expected. (n=2)
+   class lint@HEAD(Build entry): TS1005 [21,+9) <Expected "{" but found "satisfies">
+"<T>A"
+   iface tsc: TS1109 [20,+1) Expression expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1109 [19,+1) Expression expected. (n=2)
+   class lint@HEAD(Build entry): ok
+"A extends B ? C : D"
+   iface tsc: TS1005 [32,+1) ',' expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1005 [31,+1) ',' expected. (n=2)
+   class lint@HEAD(Build entry): TS1005 [21,+7) <Expected "{" but found "extends">
+"A implements B"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): TS1005 [21,+10) <Expected "{" but found "implements">
+"A extends B"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): TS1005 [21,+7) <Expected "{" but found "extends">
+"A\n"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<T>\n"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"\nA"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A /* c */"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"/* c */ A /* d */ < /* e */ B /* f */ > /* g */"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A // c\n"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"\\u0041"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A.\\u0042"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<B>.C"
+   iface tsc: TS1477 [21,+3) An instantiation expression cannot be followed by a property access. (n=1)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1477 [20,+3) An instantiation expression cannot be followed by a property access. (n=1)
+   class lint@HEAD(Build entry): ok
+"A.B<C>.D<E>"
+   iface tsc: TS1477 [23,+3) An instantiation expression cannot be followed by a property access. (n=1)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1477 [22,+3) An instantiation expression cannot be followed by a property access. (n=1)
+   class lint@HEAD(Build entry): ok
+"A<typeof b>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<(x: number) => void>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<{ a: 1 }>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<B>[C]"
+   iface tsc: TS1005 [24,+1) ',' expected. (n=1)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1005 [23,+1) ',' expected. (n=1)
+   class lint@HEAD(Build entry): TS1005 [23,+1) <Expected "{" but found "[">
+"A<B>!"
+   iface tsc: TS1005 [24,+1) ',' expected. (n=1)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1005 [23,+1) ',' expected. (n=1)
+   class lint@HEAD(Build entry): TS1005 [23,+1) <Expected "{" but found "!">
+"a.b!"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"a!.b!"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"a[b]"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"a[b].c"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"a.b[c]"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"a().b"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"a`x`.b"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"new.target"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"@d A"
+   iface tsc: TS1109 [20,+1) Expression expected. (n=3)
+   iface lint@HEAD(skip): TS1110 [20,+1) <Unexpected @>
+   class tsc: TS1109 [19,+1) Expression expected. (n=3)
+   class lint@HEAD(Build entry): TS1005 [22,+1) <Expected "class" but found "A">
+"...A"
+   iface tsc: TS1109 [20,+3) Expression expected. (n=1)
+   iface lint@HEAD(skip): TS1110 [20,+3) <Unexpected ...>
+   class tsc: TS1109 [19,+3) Expression expected. (n=1)
+   class lint@HEAD(Build entry): TS1109 [19,+3) <Unexpected ...>
+"A = B"
+   iface tsc: TS1005 [22,+1) ',' expected. (n=1)
+   iface lint@HEAD(skip): TS1005 [22,+1) <Expected "{" but found "=">
+   class tsc: TS1005 [21,+1) ',' expected. (n=1)
+   class lint@HEAD(Build entry): TS1005 [21,+1) <Expected "{" but found "=">
+"A ? B : C"
+   iface tsc: TS1005 [22,+1) ',' expected. (n=2)
+   iface lint@HEAD(skip): TS1005 [22,+1) <Expected "{" but found "?">
+   class tsc: TS1005 [21,+1) ',' expected. (n=2)
+   class lint@HEAD(Build entry): TS1005 [21,+1) <Expected "{" but found "?">
+"A + B"
+   iface tsc: TS1005 [22,+1) ',' expected. (n=2)
+   iface lint@HEAD(skip): TS1005 [22,+1) <Expected "{" but found "+">
+   class tsc: TS1005 [21,+1) ',' expected. (n=2)
+   class lint@HEAD(Build entry): TS1005 [21,+1) <Expected "{" but found "+">
+"++A"
+   iface tsc: TS1109 [20,+2) Expression expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1109 [19,+2) Expression expected. (n=2)
+   class lint@HEAD(Build entry): ok
+"A++"
+   iface tsc: TS1005 [21,+2) ',' expected. (n=1)
+   iface lint@HEAD(skip): TS1005 [21,+2) <Expected "{" but found "++">
+   class tsc: TS1005 [20,+2) ',' expected. (n=1)
+   class lint@HEAD(Build entry): TS1005 [20,+2) <Expected "{" but found "++">
+"!A"
+   iface tsc: TS1109 [20,+1) Expression expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1109 [19,+1) Expression expected. (n=2)
+   class lint@HEAD(Build entry): ok
+"delete A"
+   iface tsc: TS1109 [20,+6) Expression expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1109 [19,+6) Expression expected. (n=2)
+   class lint@HEAD(Build entry): ok
+"A in B"
+   iface tsc: TS1005 [22,+2) ',' expected. (n=2)
+   iface lint@HEAD(skip): TS1005 [22,+2) <Expected "{" but found "in">
+   class tsc: TS1005 [21,+2) ',' expected. (n=2)
+   class lint@HEAD(Build entry): TS1005 [21,+2) <Expected "{" but found "in">
+"A instanceof B"
+   iface tsc: TS1005 [22,+10) ',' expected. (n=2)
+   iface lint@HEAD(skip): TS1005 [22,+10) <Expected "{" but found "instanceof">
+   class tsc: TS1005 [21,+10) ',' expected. (n=2)
+   class lint@HEAD(Build entry): TS1005 [21,+10) <Expected "{" but found "instanceof">
+"A, B, C, D"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<B, C>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<B extends C ? D : E>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<infer B>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"A<const>"
+   iface tsc: TS1005 [22,+5) '>' expected. (n=2)
+   iface lint@HEAD(skip): ok
+   class tsc: TS1005 [21,+5) '>' expected. (n=2)
+   class lint@HEAD(Build entry): ok
+"A<const B>"
+   iface tsc: TS1005 [22,+5) '>' expected. (n=2)
+   iface lint@HEAD(skip): TS1005 [28,+1) <Expected ">" but found "B">
+   class tsc: TS1005 [21,+5) '>' expected. (n=2)
+   class lint@HEAD(Build entry): TS1005 [27,+1) <Expected ">" but found "B">
+"Array<number>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok
+"Promise<Array<Map<string, number>>>"
+   iface tsc: ok
+   iface lint@HEAD(skip): ok
+   class tsc: ok
+   class lint@HEAD(Build entry): ok

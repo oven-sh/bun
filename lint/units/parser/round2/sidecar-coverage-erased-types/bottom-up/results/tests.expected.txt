@@ -1,0 +1,34 @@
+"type A<T> = T extends string ? { a: T } : never;\nexport type B = | A<1> | (() => void);\ndeclare type C = intrinsic;\ntype D = typeof import(\"m\");\nnamespace N { export type E = [a: string, b?: number] }\nfunction f() { type F = keyof D }\ntype as = `x${string}`;\ntype type = A<2>[]\ntype G = intrinsic.H;\n"
+  type-alias [0,48) name=A@[5,6) = ConditionalType[12,47) TypeReference[12,13) StringKeyword[22,28) TypeLiteral[31,39) TypeReference[36,37) NeverKeyword[42,47)
+  type-alias [49,87) name=B@[61,62) = UnionType[65,86) TypeReference[67,71)<69,70> LiteralType[69,70) ParenthesizedType[74,86) FunctionType[75,85) VoidKeyword[81,85)
+  type-alias [88,115) name=C@[101,102) = IntrinsicKeyword[105,114)
+  type-alias [116,144) name=D@[121,122) = ImportType[125,143) LiteralType[139,142)
+  type-alias [159,198) name=E@[171,172) = TupleType[175,198) NamedTupleMember[176,185) StringKeyword[179,185) NamedTupleMember[187,197) NumberKeyword[191,197)
+  type-alias [216,232) name=F@[221,222) = TypeOperator[225,232) TypeReference[231,232)
+  type-alias [235,258) name=as@[240,242) = TemplateLiteralType[245,257) StringKeyword[249,255)
+  type-alias [259,277) name=type@[264,268) = ArrayType[271,277) TypeReference[271,275)<273,274> LiteralType[273,274)
+  type-alias [278,299) name=G@[283,284) = TypeReference[287,298)
+"interface I<T> extends A<T>, B.C { a: T; m?(x: number): void; [k: string]: T }\ninterface J extends A {}\nexport default interface K { readonly r: 1, new (x: K): K; (): void; get g(): 1; set g(v: 1) }\ninterface L extends {} {}\ninterface M implements A {}\ninterface O extends A extends B {}\ninterface P extends string, (Q), r.s<T>, U<V> {}\ninterface as {}\ndeclare namespace N { interface X { [x]: 1; 'y'?: 2 } }\ninterface R extends A, {}\ninterface S extends\n{}\ninterface W extends A.B.C<D<E>>\n{ a\n b }\n"
+  interface [0,78) name=I@[10,11) extends[15,32)(23,32): TypeReference[23,27)<25,26> TypeReference[25,26) TypeReference[29,32) members(34,76): PropertySignature[35,40) MethodSignature[41,61) IndexSignature[62,76) types: TypeReference[38,39) NumberKeyword[47,53) VoidKeyword[56,60) StringKeyword[66,72) TypeReference[75,76)
+  interface [79,103) name=J@[89,90) extends[91,100)(99,100): TypeReference[99,100) members(102,102):
+  interface [104,198) name=K@[129,130) members(132,196): PropertySignature[133,147) ConstructSignature[148,162) CallSignature[163,172) GetAccessor[173,184) SetAccessor[185,196) types: LiteralType[145,146) TypeReference[156,157) TypeReference[160,161) VoidKeyword[167,171) LiteralType[182,183) LiteralType[194,195)
+  interface [199,224) name=L@[209,210) extends[211,221)(219,221): ExpressionWithTypeArguments[219,221) members(223,223):
+  interface [225,252) name=M@[235,236) implements[237,249)(248,249): ExpressionWithTypeArguments[248,249) members(251,251):
+  interface [253,287) name=O@[263,264) extends[265,274)(273,274): TypeReference[273,274) extends[275,284)(283,284): TypeReference[283,284) members(286,286):
+  interface [288,336) name=P@[298,299) extends[300,333)(308,333): TypeReference[308,314) ExpressionWithTypeArguments[316,319) TypeReference[321,327)<325,326> TypeReference[325,326) TypeReference[329,333)<331,332> TypeReference[331,332) members(335,335):
+  interface [337,352) name=as@[347,349) members(351,351):
+  interface [375,406) name=X@[385,386) members(388,404): PropertySignature[389,396) PropertySignature[397,404) types: LiteralType[394,395) LiteralType[403,404)
+  interface [409,434) name=R@[419,420) extends[421,431)(429,431): TypeReference[429,430) members(433,433):
+  interface [435,457) name=S@[445,446) extends[447,454)(454,454): members(456,456):
+  interface [458,498) name=W@[468,469) extends[470,489)(478,489): TypeReference[478,489)<484,488> TypeReference[484,488)<486,487> TypeReference[486,487) members(491,496): PropertySignature[492,493) PropertySignature[495,496)
+"class C { [k: string]: any; static readonly [n: number]: string; declare [s: symbol]: unknown }\nabstract class D { abstract [k: string]: 1, x = 1; [a: string, b?: number]: 2 }\nconst E = class { public [k: `a${string}`]: 1 };\nclass F { @d static [k: string]: any; @a.b() @(c) readonly [n: number]: 1; @readonly [s: symbol]: 2; x: static\n[t: string]: 3 }\n"
+  member index-signature [10,27) modifiers: - parameters(11,20): Parameter[11,20) types: StringKeyword[14,20) AnyKeyword[23,26)
+  member index-signature [28,64) modifiers: StaticKeyword[28,34) ReadonlyKeyword[35,43) parameters(45,54): Parameter[45,54) types: NumberKeyword[48,54) StringKeyword[57,63)
+  member index-signature [65,93) modifiers: DeclareKeyword[65,72) parameters(74,83): Parameter[74,83) types: SymbolKeyword[77,83) UnknownKeyword[86,93)
+  member index-signature [115,139) modifiers: AbstractKeyword[115,123) parameters(125,134): Parameter[125,134) types: StringKeyword[128,134) LiteralType[137,138)
+  member index-signature [147,173) modifiers: - parameters(148,169): Parameter[148,157) Parameter[159,169) types: StringKeyword[151,157) NumberKeyword[163,169) LiteralType[172,173)
+  member index-signature [194,221) modifiers: PublicKeyword[194,200) parameters(202,217): Parameter[202,217) types: TemplateLiteralType[205,217) StringKeyword[209,215) LiteralType[220,221)
+  member index-signature [235,262) modifiers: Decorator[235,237) StaticKeyword[238,244) parameters(246,255): Parameter[246,255) types: StringKeyword[249,255) AnyKeyword[258,261)
+  member index-signature [263,299) modifiers: Decorator[263,269) Decorator[270,274) ReadonlyKeyword[275,283) parameters(285,294): Parameter[285,294) types: NumberKeyword[288,294) LiteralType[297,298)
+  member index-signature [300,325) modifiers: Decorator[300,309) parameters(311,320): Parameter[311,320) types: SymbolKeyword[314,320) LiteralType[323,324)
+  member index-signature [336,350) modifiers: - parameters(337,346): Parameter[337,346) types: StringKeyword[340,346) LiteralType[349,350)

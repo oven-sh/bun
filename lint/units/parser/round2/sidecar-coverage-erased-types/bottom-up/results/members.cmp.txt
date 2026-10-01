@@ -1,0 +1,730 @@
+"a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: 1; b: 2"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: 1, b: 2,"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: 1\nb: 2"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a?"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a?: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a?(): void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a(): void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a<T>(x: T): T"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"(): void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"<T>(x: T): T"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"new (): I"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"new <T>(x: T): T"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"new"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"new: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"new?: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"get"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"set"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"get: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"get?: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"get(): 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"get a(): 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"set a(v: number)"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"get a(): 1; set a(v)"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"get a() { return 1 }"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): TS1005 bun@[17,+1) ref@[17,18) "';' expected."
+"set a(v) { }"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): TS1005 bun@[18,+1) ref@[18,19) "';' expected."
+"get [k](): 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"get 'a'(): 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"get 1(): 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"get #a(): 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): TS1005 bun@[13,+2) ref@[13,15) "';' expected."
+"readonly a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"readonly readonly: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"readonly"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"readonly?: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"public a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"private a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"protected a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"static a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"static static: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"static\na: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"readonly\na: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"abstract a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"declare a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"override a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"accessor a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"async a(): void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"export a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): TS1005 bun@[16,+1) ref@[16,17) "';' expected."
+"default a: 1"
+   iface tsc: TS1005 [22,+1) ';' expected.   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: TS1005 [17,+1) ';' expected.
+   literal lint(HEAD, Build): TS1005 bun@[17,+1) ref@[17,18) "';' expected."
+"const a: 1"
+   iface tsc: TS1005 [20,+1) ';' expected.   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: TS1005 [15,+1) ';' expected.
+   literal lint(HEAD, Build): TS1005 bun@[15,+1) ref@[15,16) "';' expected."
+"in a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"out a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"in: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"out: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"const: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"default: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"export: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k: string]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k: string]"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k: string]: any;"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k: string]: any,"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"readonly [k: string]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"static [k: string]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"public [k: string]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k: string, l: number]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[...k: string[]]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k?: string]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k.l]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k = 1]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k: string = 1]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[public k: string]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): TS1005 bun@[22,+1) "Expected "]" but found "
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k,]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k: string,]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[k: string]?: any"
+   iface tsc: TS1005 [25,+1) ';' expected.   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: TS1005 [20,+1) ';' expected.
+   literal lint(HEAD, Build): TS1005 bun@[20,+1) ref@[20,21) "';' expected."
+"[k: string](): any"
+   iface tsc: TS1005 [25,+1) ';' expected.   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: TS1005 [20,+1) ';' expected.
+   literal lint(HEAD, Build): TS1005 bun@[20,+1) ref@[20,21) "';' expected."
+"[k in K]: any"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[K in keyof T]: T[K]"
+   iface tsc: TS1005 [26,+1) ']' expected.   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"'a': 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"1: 2"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"1n: 2"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"#p: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[x]: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[x]?: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[x](): 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[x + y]: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"['a']: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"[Symbol.iterator](): Iterator<number>"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: number = 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a = 1"
+   iface tsc: TS1131 [14,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[16,+1) "Unexpected =" code=0 ref@[0,0) ""
+   literal tsc: TS1131 [9,+1) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[9,+1) ref@[9,10) "Property or signature expected."
+"a?: number = 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a(): void = 1"
+   iface tsc: TS1005 [24,+1) ';' expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[24,+1) "Unexpected =" code=0 ref@[0,0) ""
+   literal tsc: TS1005 [19,+1) ';' expected.
+   literal lint(HEAD, Build): TS1005 bun@[19,+1) ref@[19,20) "';' expected."
+"a: 1 b: 2"
+   iface tsc: TS1005 [19,+1) ';' expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[19,+1) "Unexpected b" code=0 ref@[0,0) ""
+   literal tsc: TS1005 [14,+1) ';' expected.
+   literal lint(HEAD, Build): TS1005 bun@[14,+1) ref@[14,15) "';' expected."
+"a(): void b(): void"
+   iface tsc: TS1005 [24,+1) ';' expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[24,+1) "Unexpected b" code=0 ref@[0,0) ""
+   literal tsc: TS1005 [19,+1) ';' expected.
+   literal lint(HEAD, Build): TS1005 bun@[19,+1) ref@[19,20) "';' expected."
+"a(): void {}"
+   iface tsc: TS1005 [24,+1) ';' expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[24,+1) "Unexpected {" code=0 ref@[0,0) ""
+   literal tsc: TS1005 [19,+1) ';' expected.
+   literal lint(HEAD, Build): TS1005 bun@[19,+1) ref@[19,20) "';' expected."
+"a() {}"
+   iface tsc: TS1005 [18,+1) ';' expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[18,+1) "Unexpected {" code=0 ref@[0,0) ""
+   literal tsc: TS1005 [13,+1) ';' expected.
+   literal lint(HEAD, Build): TS1005 bun@[13,+1) ref@[13,14) "';' expected."
+"a!: 1"
+   iface tsc: TS1131 [14,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: TS1131 [9,+1) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[9,+1) ref@[9,10) "Property or signature expected."
+"a: 1;;"
+   iface tsc: TS1131 [19,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[19,+1) "Unexpected ;" code=0 ref@[0,0) ""
+   literal tsc: TS1131 [14,+1) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[14,+1) ref@[14,15) "Property or signature expected."
+";"
+   iface tsc: TS1131 [14,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[14,+1) "Unexpected ;" code=0 ref@[0,0) ""
+   literal tsc: TS1131 [9,+1) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[9,+1) ref@[9,10) "Property or signature expected."
+","
+   iface tsc: TS1131 [14,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[14,+1) "Unexpected ," code=0 ref@[0,0) ""
+   literal tsc: TS1131 [9,+1) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[9,+1) ref@[9,10) "Property or signature expected."
+"a: (b: number) => void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: new () => I"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a(this: I): void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a(b?: number, ...c: string[]): void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a(b = 1): void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a({ b }: C, [d]: E): void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a(public b: number): void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a<const T, in out U>(x: T): U"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[25,+2) "The modifier "in" is not valid here"
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: typeof b"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: typeof import('m')"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: import('m').B"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: asserts b"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[25,+1) "Unexpected b" code=0 ref@[0,0) ""
+   literal tsc: ok
+   literal lint(HEAD, Build): TS1005 bun@[20,+1) ref@[20,21) "';' expected."
+"a(b): asserts b"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a(b): b is string"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a(): this is I"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a(): asserts this"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: unique symbol"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: { b: { c: 1 } }"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: [b: 1, c?: 2, ...d: 3[]]"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: `x${string}`"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: A extends B ? C : D"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: infer"
+   iface tsc: TS1003 [23,+1) Identifier expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS1003 bun@[23,+1) "Expected identifier but found "}""
+   literal tsc: TS1003 [18,+1) Identifier expected.
+   literal lint(HEAD, Build): TS1003 bun@[18,+1) ref@[18,19) "Identifier expected."
+"a: keyof typeof b[number]"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"+a: 1"
+   iface tsc: TS1131 [14,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: TS1131 [9,+1) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[9,+1) ref@[9,10) "Property or signature expected."
+"-a: 1"
+   iface tsc: TS1131 [14,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: TS1131 [9,+1) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[9,+1) ref@[9,10) "Property or signature expected."
+"+readonly a: 1"
+   iface tsc: TS1131 [14,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: TS1005 [19,+1) '[' expected.
+   literal lint(HEAD, Build): TS1005 bun@[19,+1) ref@[19,20) "'[' expected."
+"*a(): void"
+   iface tsc: TS1131 [14,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[14,+1) "Unexpected *" code=0 ref@[0,0) ""
+   literal tsc: TS1131 [9,+1) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[9,+1) ref@[9,10) "Property or signature expected."
+"...a"
+   iface tsc: TS1131 [14,+3) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[14,+3) "Unexpected ..." code=0 ref@[0,0) ""
+   literal tsc: TS1131 [9,+3) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[9,+3) ref@[9,12) "Property or signature expected."
+"@d a: 1"
+   iface tsc: TS1131 [14,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[14,+1) "Unexpected @" code=0 ref@[0,0) ""
+   literal tsc: TS1131 [9,+1) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[9,+1) ref@[9,10) "Property or signature expected."
+"a.b: 1"
+   iface tsc: TS1131 [14,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[15,+1) "Unexpected ." code=0 ref@[0,0) ""
+   literal tsc: TS1131 [9,+1) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[9,+1) ref@[9,10) "Property or signature expected."
+"a-b: 1"
+   iface tsc: TS1131 [14,+1) Property or signature expected.   tsgo: =
+   iface lint(HEAD, skip grammar): TS0 bun@[15,+1) "Unexpected -" code=0 ref@[0,0) ""
+   literal tsc: TS1131 [9,+1) Property or signature expected.
+   literal lint(HEAD, Build): TS1131 bun@[9,+1) ref@[9,10) "Property or signature expected."
+"class: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"if(): void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"function(): void"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: 1 }; type T = { b: 2"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"/** doc */ a: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a: 1 // c\n b: 2"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a /*c*/ : /*d*/ 1 /*e*/ ; /*f*/"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"\\u0061: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"a\\u0062: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"\"a\\nb\": 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"0x10: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"1e3: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+".5: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok
+"1_000: 1"
+   iface tsc: ok   tsgo: =
+   iface lint(HEAD, skip grammar): ok
+   literal tsc: ok
+   literal lint(HEAD, Build): ok

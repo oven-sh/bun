@@ -274,7 +274,8 @@ public:
     // A LazyProperty allows neither. Null means an exception is pending, which asking again is.
     JSC::JSFunction* utilInspectFunction();
     JSC::JSFunction* utilInspectStylizeColorFunction();
-    bool isLoadingUtilInspectFunction() const { return m_isLoadingUtilInspectFunction; }
+    // m_utilInspectFunction is empty, then null while node:util loads, then the function.
+    bool isLoadingUtilInspectFunction() const { return m_utilInspectFunction.get().isNull(); }
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
 
     JSC::JSFunction* wasmStreamingConsumeStreamFunction() const { return m_wasmStreamingConsumeStreamFunction.getInitializedOnMainThread(this); }
@@ -366,7 +367,6 @@ public:
     Ref<Bun::GlobalEventScope> globalEventScope;
     RefPtr<WebCore::MessagePort> m_nodeParentPort;
     bool m_nodeWorkerEntrySettled { false };
-    bool m_isLoadingUtilInspectFunction { false };
 
     void resetOnEachMicrotaskTick();
 
@@ -627,7 +627,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketHandlersStructure)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
-    V(private, WriteBarrier<JSFunction>, m_utilInspectFunction)                                              \
+    V(private, WriteBarrier<JSC::Unknown>, m_utilInspectFunction)                                            \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_utilInspectOptionsStructure)                         \
     V(private, WriteBarrier<JSFunction>, m_utilInspectStylizeColorFunction)                                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \

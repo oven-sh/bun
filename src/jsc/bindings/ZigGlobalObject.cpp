@@ -3152,50 +3152,6 @@ extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globa
     return globalObject->drainMicrotasks();
 }
 
-JSC::JSFunction* GlobalObject::utilInspectFunction()
-{
-    if (auto* function = m_utilInspectFunction.get())
-        return function;
-
-    auto& vm = this->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (m_isLoadingUtilInspectFunction) {
-        throwTypeError(this, scope, "util.inspect is not available while node:util is loading"_s);
-        return nullptr;
-    }
-    SetForScope isLoading(m_isLoadingUtilInspectFunction, true);
-    JSValue nodeUtilValue = internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_ASSERT(nodeUtilValue.isObject());
-    auto prop = nodeUtilValue.getObject()->getIfPropertyExists(this, Identifier::fromString(vm, "inspect"_s));
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    ASSERT(prop);
-    auto* function = uncheckedDowncast<JSFunction>(prop);
-    m_utilInspectFunction.set(vm, this, function);
-    return function;
-}
-
-JSC::JSFunction* GlobalObject::utilInspectStylizeColorFunction()
-{
-    if (auto* function = m_utilInspectStylizeColorFunction.get())
-        return function;
-
-    auto& vm = this->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::MarkedArgumentBuffer args;
-    args.append(utilInspectFunction());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSC::JSFunction* getStylize = JSC::JSFunction::create(vm, this, utilInspectGetStylizeWithColorCodeGenerator(vm), this);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    auto result = JSC::profiledCall(this, ProfilingReason::API, getStylize, JSC::getCallData(getStylize), jsNull(), args);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* function = uncheckedDowncast<JSFunction>(result);
-    m_utilInspectStylizeColorFunction.set(vm, this, function);
-    return function;
-}
-
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, T& anything)
 {
     anything.visit(visitor);

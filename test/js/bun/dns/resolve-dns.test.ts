@@ -1,12 +1,17 @@
 import { SystemError, dns } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, withoutAggressiveGC } from "harness";
 import { isIP, isIPv4, isIPv6 } from "node:net";
+import { join } from "node:path";
 
 const backends = ["system", "libc", "c-ares"];
 const validHostnames = ["localhost", "example.com"];
 const invalidHostnames = ["adsfa.asdfasdf.asdf.com"]; // known invalid
-const malformedHostnames = [" ", ".", " .", "localhost:80", "this is not a hostname"];
+// Not host names at all: rejected before any resolver is asked, so the answer
+// does not depend on what the network's DNS server does with a label that has
+// a space in it (some never answer, and mDNSResponder then waits out its 5s or
+// 30s timeout).
+const malformedHostnames = [" ", ".", " .", "localhost:80", "this is not a hostname", "a..b", "foo bar.example.com"];
 
 describe("dns", () => {
   describe.each(backends)("lookup() [backend: %s]", backend => {
@@ -110,8 +115,10 @@ describe("dns", () => {
     test.concurrent.each(malformedHostnames)("'%s'", async hostname => {
       // @ts-expect-error
       await expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
-        code: expect.stringMatching(/^DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP$/),
+        code: "DNS_ENOTFOUND",
         name: "DNSException",
+        syscall: "getaddrinfo",
+        hostname,
       });
     });
   });
@@ -120,7 +127,8 @@ describe("dns", () => {
   // backends (bun.PathBuffer, which is MAX_PATH_BYTES: 1024 on macOS, 4096 on
   // Linux, ~98302 on Windows) previously overflowed when writing the NUL
   // terminator. They must reject cleanly on every backend. 100 000 bytes
-  // exceeds the buffer on every platform so the doLookup guard is what fires.
+  // exceeds the buffer on every platform so the doLookup guard (a host name is
+  // at most 253 bytes) is what fires.
   test.each(backends)("lookup() with oversized hostname rejects [backend: %s]", async backend => {
     const long = Buffer.alloc(100_000, "a").toString();
     // @ts-expect-error
@@ -167,10 +175,66 @@ describe("dns", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The pending-host-cache slot holds a Box<[u8]> clone of the hostname so
+  // concurrent lookups for the same name can coalesce. When process.exit()
+  // tears the VM down (BUN_DESTRUCT_VM_ON_EXIT=1, set by the CI runner) while
+  // a libc getaddrinfo is still on the work pool, the Resolver is dropped
+  // with that slot still occupied. HiveArray used to skip Drop on its slots,
+  // so the hostname Box leaked. Only observable via LSan, so ASAN-only.
+  test.skipIf(!isASAN || isWindows)(
+    "pending-cache hostname is freed when VM tears down mid-lookup",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const net = require("net");
+            const server = net.createServer(() => {});
+            server.listen(0, "127.0.0.1", () => {
+              const port = server.address().port;
+              // node:net's connect("localhost") routes through Bun.dns.lookup
+              // with the libc backend, which populates pending_host_cache_native.
+              for (let i = 0; i < 20; i++) {
+                const s = net.connect(port, "localhost");
+                s.on("error", () => {});
+                s.destroy();
+              }
+              process.exit(0);
+            });
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    },
+    // LSan symbolizes the leak stack through llvm-symbolizer before the child
+    // can exit, which is several seconds against the debug binary.
+    30_000,
+  );
+
   test("lookup with non-object second argument should not crash", async () => {
     // Non-object cell values (like strings) passed as options should be ignored, not crash.
     // @ts-expect-error
     const result = await dns.lookup("localhost", "cat");
+    expect(result).toBeArray();
+    expect(result.length).toBeGreaterThan(0);
+    expect(isIP(result[0].address)).toBeGreaterThan(0);
+  });
+
+  test("lookup with null flags treats them as unset", async () => {
+    // `family: null` already meant unset; `flags: null` must too (node:dns
+    // forwards a null `hints` here). https://github.com/oven-sh/bun/issues/37318
+    // @ts-expect-error
+    const result = await dns.lookup("localhost", { flags: null });
     expect(result).toBeArray();
     expect(result.length).toBeGreaterThan(0);
     expect(isIP(result[0].address)).toBeGreaterThan(0);
@@ -230,7 +294,7 @@ describe("dns", () => {
     test("resolve() with a UTF-16 invalid record type throws TypeError", () => {
       // @ts-expect-error
       expect(() => Bun.dns.resolve("localhost", utf16("BOGUS"))).toThrow(
-        `The property "record" is invalid. Expected one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT, received type string ('BOGUS')`,
+        `The property "record" is invalid. Expected one of: A, AAAA, ANY, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT, received type string ('BOGUS')`,
       );
     });
   });

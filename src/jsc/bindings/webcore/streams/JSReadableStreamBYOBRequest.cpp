@@ -4,6 +4,7 @@
 #include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "ErrorCode.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMExceptionHandling.h"
@@ -12,6 +13,8 @@
 #include "JSDOMWrapperCache.h"
 #include "JSReadableByteStreamController.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -20,6 +23,7 @@
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
@@ -30,6 +34,7 @@ using namespace Bun::WebStreams;
 
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respond);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respondWithNewView);
+static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototype_inspectCustom);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamBYOBRequestPrototypeGetter_view);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamBYOBRequestPrototypeGetter_constructor);
 
@@ -38,7 +43,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSReadableStreamBYOBRequestPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSReadableStreamBYOBRequestPrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableStreamBYOBRequestPrototype>(vm)) JSReadableStreamBYOBRequestPrototype(vm, structure);
+        JSReadableStreamBYOBRequestPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableStreamBYOBRequestPrototype))) JSReadableStreamBYOBRequestPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -52,7 +57,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -80,11 +85,7 @@ template<> JSValue JSReadableStreamBYOBRequestConstructor::prototypeForStructure
 
 template<> void JSReadableStreamBYOBRequestConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "ReadableStreamBYOBRequest"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSReadableStreamBYOBRequest::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "ReadableStreamBYOBRequest"_s, JSReadableStreamBYOBRequest::prototype(vm, globalObject));
 }
 
 // JSReadableStreamBYOBRequestPrototype
@@ -98,11 +99,26 @@ static const HashTableValue JSReadableStreamBYOBRequestPrototypeTableValues[] = 
 
 const ClassInfo JSReadableStreamBYOBRequestPrototype::s_info = { "ReadableStreamBYOBRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamBYOBRequestPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSReadableStreamBYOBRequest>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "view"_s), thisObject->m_view.get() ? JSValue(thisObject->m_view.get()) : jsNull(), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "controller"_s), thisObject->m_controller.get() ? JSValue(thisObject->m_controller.get()) : jsUndefined(), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStreamBYOBRequest"_s, data));
+}
+
 void JSReadableStreamBYOBRequestPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSReadableStreamBYOBRequest::info(), JSReadableStreamBYOBRequestPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSReadableStreamBYOBRequest::info(), JSReadableStreamBYOBRequestPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamBYOBRequestPrototype_inspectCustom);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSReadableStreamBYOBRequest
@@ -129,7 +145,7 @@ JSReadableStreamBYOBRequest* JSReadableStreamBYOBRequest::create(VM& vm, Structu
 
 Structure* JSReadableStreamBYOBRequest::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSReadableStreamBYOBRequest::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -151,12 +167,7 @@ JSValue JSReadableStreamBYOBRequest::getConstructor(VM& vm, const JSGlobalObject
 
 GCClient::IsoSubspace* JSReadableStreamBYOBRequest::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamBYOBRequest, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamBYOBRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamBYOBRequest = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableStreamBYOBRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamBYOBRequest = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSReadableStreamBYOBRequest, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableStreamBYOBRequest, m_subspaceForReadableStreamBYOBRequest));
 }
 
 DEFINE_VISIT_CHILDREN(JSReadableStreamBYOBRequest);
@@ -167,8 +178,17 @@ void JSReadableStreamBYOBRequest::visitChildrenImpl(JSCell* cell, Visitor& visit
     auto* thisObject = uncheckedDowncast<JSReadableStreamBYOBRequest>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_controller);
-    visitor.append(thisObject->m_view);
+    visitor.appendHidden(thisObject->m_controller);
+    visitor.appendHidden(thisObject->m_view);
+}
+
+void JSReadableStreamBYOBRequest::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableStreamBYOBRequest>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_view, "view"_s);
 }
 
 // Prototype host functions
@@ -209,7 +229,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respond, (
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: This BYOB request has been invalidated"_s);
     ASSERT(request->m_view);
     if (request->m_view->isDetached())
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot respond to a ReadableStreamBYOBRequest whose view has a detached ArrayBuffer"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot respond to a ReadableStreamBYOBRequest whose view has a detached ArrayBuffer"_s);
     ASSERT(request->m_view->byteLength() > 0);
 
     readableByteStreamControllerRespond(lexicalGlobalObject, request->m_controller.get(), bytesWritten);
@@ -232,7 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respondWit
     if (!request->m_controller)
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: This BYOB request has been invalidated"_s);
     if (view->isDetached())
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot respond with a view whose ArrayBuffer is detached"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot respond with a view whose ArrayBuffer is detached"_s);
 
     readableByteStreamControllerRespondWithNewView(lexicalGlobalObject, request->m_controller.get(), view);
     RETURN_IF_EXCEPTION(scope, {});

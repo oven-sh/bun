@@ -7,17 +7,6 @@ pub struct PasswordMessage {
     pub password: Data,
 }
 
-impl Default for PasswordMessage {
-    fn default() -> Self {
-        Self {
-            password: Data::Empty,
-        }
-    }
-}
-
-// `Data` owns its buffer and implements `Drop`, so no explicit `Drop` impl is
-// needed here.
-
 impl PasswordMessage {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
@@ -32,12 +21,5 @@ impl PasswordMessage {
         writer.write(&header)?;
         writer.string(password)?;
         Ok(())
-    }
-
-    pub fn write<Context: super::new_writer::WriterContext>(
-        &self,
-        writer: &mut NewWriter<Context>,
-    ) -> Result<(), AnyPostgresError> {
-        self.write_internal(writer)
     }
 }

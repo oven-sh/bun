@@ -33,7 +33,14 @@ function addAbortSignalNoValidate(signal, stream) {
         stream.destroy($makeAbortError(undefined, { cause: signal.reason }));
       }
     : () => {
-        stream[kControllerErrorFunction]($makeAbortError(undefined, { cause: signal.reason }));
+        const error = $makeAbortError(undefined, { cause: signal.reason });
+        // Bun's web streams error natively rather than through Node's symbol, which a
+        // userland or polyfilled stream may still define.
+        if (stream[kControllerErrorFunction] !== undefined) {
+          stream[kControllerErrorFunction](error);
+        } else {
+          $webStreamControllerError(stream, error);
+        }
       };
   if (signal.aborted) {
     onAbort();

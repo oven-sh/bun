@@ -358,11 +358,14 @@ public-hoist-pattern[]=!no-deps`,
       // Manually write invalid bunfig
       await write(
         join(packageDir, "bunfig.toml"),
-        `[install]
-cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "${registry.registryUrl()}"
-linker = "isolated"
-publicHoistPattern = 123`,
+        Bun.TOML.stringify({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: registry.registryUrl(),
+            linker: "isolated",
+            publicHoistPattern: 123,
+          },
+        }),
       );
 
       const { stderr, exited } = spawn({
@@ -394,11 +397,14 @@ publicHoistPattern = 123`,
       // Should error from boolean in the array
       await write(
         join(packageDir, "bunfig.toml"),
-        `[install]
-cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "${registry.registryUrl()}"
-linker = "isolated"
-publicHoistPattern = ["*types*", true]`,
+        Bun.TOML.stringify({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: registry.registryUrl(),
+            linker: "isolated",
+            publicHoistPattern: ["*types*", true],
+          },
+        }),
       );
 
       const { stderr, exited } = spawn({

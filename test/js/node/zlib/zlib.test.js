@@ -105,6 +105,36 @@ describe("zlib", () => {
     const data = new TextEncoder().encode("Hello World!".repeat(1));
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
+
+  describe("libdeflate level validation", () => {
+    const data = Buffer.alloc(64, "a");
+    // libdeflate_alloc_compressor returns NULL for level outside [0, 12]; that NULL must
+    // surface as an invalid-argument error, not "Out of memory".
+    for (const fn of [gzipSync, deflateSync]) {
+      it(`${fn.name}: out-of-range level throws an argument error, not OOM`, () => {
+        for (const level of [-2, -1, 13, 100]) {
+          let err;
+          try {
+            fn(data, { library: "libdeflate", level });
+          } catch (e) {
+            err = e;
+          }
+          expect(err).toBeDefined();
+          expect(err.message).not.toContain("memory");
+          expect(err.message).toContain("Compression level must be between 0 and 12");
+        }
+      });
+
+      it(`${fn.name}: in-range levels 0..12 succeed and round-trip`, () => {
+        const decompress = fn === gzipSync ? gunzipSync : inflateSync;
+        for (const level of [0, 1, 6, 9, 12]) {
+          const out = fn(data, { library: "libdeflate", level });
+          expect(out.length).toBeGreaterThan(0);
+          expect(Buffer.from(decompress(out, { library: "libdeflate" }))).toEqual(data);
+        }
+      });
+    }
+  });
 });
 
 function* window(buffer, size, advance = size) {
@@ -128,6 +158,89 @@ describe("zlib.gunzip", () => {
         expect(buffer.Buffer.isBuffer(data)).toBe(true);
         resolve(true);
       });
+    });
+  });
+});
+
+describe("one-shot results", () => {
+  const input = Buffer.alloc(1024, "a");
+  const pairs = [
+    ["gzip", "gunzip"],
+    ["deflate", "inflate"],
+    ["deflateRaw", "inflateRaw"],
+    ["gzip", "unzip"],
+    ["brotliCompress", "brotliDecompress"],
+    ["zstdCompress", "zstdDecompress"],
+  ];
+  const backingStores = (compressed, decompressed) => ({
+    compressed: compressed.buffer.byteLength,
+    decompressed: decompressed.buffer.byteLength,
+  });
+
+  it.each(pairs)("%sSync and %sSync do not keep the 16 KB output chunk alive", (compress, decompress) => {
+    const compressed = zlib[`${compress}Sync`](input);
+    const decompressed = zlib[`${decompress}Sync`](compressed);
+    expect(decompressed).toEqual(input);
+    expect(backingStores(compressed, decompressed)).toEqual({
+      compressed: compressed.byteLength,
+      decompressed: decompressed.byteLength,
+    });
+  });
+
+  it.each(pairs)("%s and %s do not keep the 16 KB output chunk alive", async (compress, decompress) => {
+    const compressed = await util.promisify(zlib[compress])(input);
+    const decompressed = await util.promisify(zlib[decompress])(compressed);
+    expect(decompressed).toEqual(input);
+    expect(backingStores(compressed, decompressed)).toEqual({
+      compressed: compressed.byteLength,
+      decompressed: decompressed.byteLength,
+    });
+  });
+
+  // Random bytes do not compress, so both directions produce the same number of chunks.
+  // A fractional chunkSize is valid. It makes the offsets into the chunk fractional.
+  describe.each([
+    ["exactly one chunk", 16 * 1024, undefined],
+    ["full chunks and a small rest", 3 * 16 * 1024 + 5, undefined],
+    ["a large part of one large chunk", 40_000, 64 * 1024],
+    ["many small chunks", 10_000, 64],
+    ["a fractional chunkSize", 1000, 100.5],
+    ["a fractional chunkSize above the input size", 1000, 16 * 1024 + 0.5],
+  ])("%s", (_, size, chunkSize) => {
+    const data = randomFillSync(Buffer.alloc(size));
+    const options = { chunkSize };
+
+    it("round-trips with the sync functions", () => {
+      expect(zlib.inflateRawSync(zlib.deflateRawSync(data, options), options)).toEqual(data);
+      expect(zlib.zstdDecompressSync(zlib.zstdCompressSync(data, options), options)).toEqual(data);
+    });
+
+    it("round-trips with the callback functions", async () => {
+      const deflated = await util.promisify(zlib.deflateRaw)(data, options);
+      expect(await util.promisify(zlib.inflateRaw)(deflated, options)).toEqual(data);
+      const compressed = await util.promisify(zlib.zstdCompress)(data, options);
+      expect(await util.promisify(zlib.zstdDecompress)(compressed, options)).toEqual(data);
+    });
+
+    it("round-trips with _processChunk on one engine", () => {
+      const deflated = zlib.deflateRawSync(data);
+      const engine = new zlib.InflateRaw(options);
+      const half = deflated.length >> 1;
+      // The sync _processChunk closes the handle when it is done. minizlib keeps it open like this.
+      const handle = engine._handle;
+      const close = handle.close;
+      handle.close = () => {};
+      const parts = [];
+      try {
+        parts.push(Buffer.from(engine._processChunk(deflated.subarray(0, half), zlib.constants.Z_SYNC_FLUSH)));
+        engine._handle = handle;
+        parts.push(Buffer.from(engine._processChunk(deflated.subarray(half), zlib.constants.Z_SYNC_FLUSH)));
+      } finally {
+        handle.close = close;
+        engine._handle = handle;
+        engine.close();
+      }
+      expect(Buffer.concat(parts)).toEqual(data);
     });
   });
 });
@@ -526,6 +639,13 @@ describe("zlib.zstd", () => {
     expect(roundtrip.toString()).toEqual(inputString);
   });
 
+  it.each([undefined, null])("zstdCompress accepts explicit %p options", async opts => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    zlib.zstdCompress(inputString, opts, (err, out) => (err ? reject(err) : resolve(out)));
+    const compressed = await promise;
+    expect(compressed.toString("base64")).toEqual(compressedString);
+  });
+
   it("zstdCompressSync", () => {
     const compressed = zlib.zstdCompressSync(inputString);
     expect(compressed.toString("base64")).toEqual(compressedString);
@@ -534,6 +654,12 @@ describe("zlib.zstd", () => {
   it("zstdDecompressSync", () => {
     const roundtrip = zlib.zstdDecompressSync(compressedBuffer);
     expect(roundtrip.toString()).toEqual(inputString);
+  });
+
+  it("zstdDecompressSync decodes concatenated frames", () => {
+    const f1 = zlib.zstdCompressSync(Buffer.from("first\n"));
+    const f2 = zlib.zstdCompressSync(Buffer.from("second\n"));
+    expect(zlib.zstdDecompressSync(Buffer.concat([f1, f2])).toString()).toBe("first\nsecond\n");
   });
 
   it("can compress streaming", async () => {
@@ -682,6 +808,35 @@ describe("async write buffer lifetime", () => {
   });
 });
 
+describe("async write pins are released", () => {
+  it("transfer() detaches once several async writes through the same buffers have completed", async () => {
+    const deflate = zlib.createDeflate();
+    try {
+      const handle = deflate._handle;
+      const input = new Uint8Array(new ArrayBuffer(64)).fill(97);
+      const out = new Uint8Array(new ArrayBuffer(4096));
+      for (let i = 0; i < 5; i++) {
+        const { promise, resolve } = Promise.withResolvers();
+        handle.buffer = input;
+        handle.cb = resolve;
+        handle.availOutBefore = out.byteLength;
+        handle.availInBefore = input.byteLength;
+        handle.inOff = 0;
+        handle.flushFlag = zlib.constants.Z_NO_FLUSH;
+        handle.write(zlib.constants.Z_NO_FLUSH, input, 0, input.byteLength, out, 0, out.byteLength);
+        await promise;
+      }
+      // Every write pinned both buffers; every completion must have unpinned them, or they stay undetachable.
+      out.buffer.transfer();
+      input.buffer.transfer();
+      expect(out.buffer.detached).toBe(true);
+      expect(input.buffer.detached).toBe(true);
+    } finally {
+      deflate.close();
+    }
+  });
+});
+
 describe("dictionary buffer lifetime", () => {
   it("decompresses correctly when the dictionary's ArrayBuffer is detached after stream creation", async () => {
     const dictText = "hello hello hello world world world ";
@@ -726,5 +881,22 @@ describe("dictionary buffer lifetime", () => {
     await promise;
 
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
+  });
+});
+
+describe("crc32", () => {
+  it("rejects String objects", () => {
+    expect(() => zlib.crc32(new String("abc"))).toThrow(TypeError);
+    expect(() => zlib.crc32(String.prototype)).toThrow(TypeError);
+    expect(zlib.crc32("abc")).toBe(891568578);
+  });
+
+  it("handles missing and undefined arguments", () => {
+    // No data argument: ERR_INVALID_ARG_TYPE (not a crash, not a different error).
+    expect(() => zlib.crc32()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    // Explicit undefined behaves the same as no argument.
+    expect(() => zlib.crc32(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    // Omitted second arg defaults to value=0.
+    expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
   });
 });

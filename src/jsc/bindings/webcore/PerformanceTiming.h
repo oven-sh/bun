@@ -30,14 +30,16 @@
 
 #pragma once
 
-// #include "LocalDOMWindowProperty.h"
+#include "ScriptWrappable.h"
 #include <wtf/MonotonicTime.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
 namespace WebCore {
 
-class PerformanceTiming : public RefCounted<PerformanceTiming> {
+class PerformanceTiming : public ScriptWrappable, public RefCounted<PerformanceTiming> {
+    WTF_MAKE_TZONE_ALLOCATED(PerformanceTiming);
+
 public:
     static Ref<PerformanceTiming> create() { return adoptRef(*new PerformanceTiming()); }
 
@@ -65,30 +67,6 @@ public:
 
 private:
     explicit PerformanceTiming();
-
-    unsigned long long monotonicTimeToIntegerMilliseconds(MonotonicTime) const;
-
-    // mutable unsigned long long m_navigationStart { 0 };
-    // mutable unsigned long long m_unloadEventStart { 0 };
-    // mutable unsigned long long m_unloadEventEnd { 0 };
-    // mutable unsigned long long m_redirectStart { 0 };
-    // mutable unsigned long long m_redirectEnd { 0 };
-    // mutable unsigned long long m_fetchStart { 0 };
-    // mutable unsigned long long m_domainLookupStart { 0 };
-    // mutable unsigned long long m_domainLookupEnd { 0 };
-    // mutable unsigned long long m_connectStart { 0 };
-    // mutable unsigned long long m_connectEnd { 0 };
-    // mutable unsigned long long m_secureConnectionStart { 0 };
-    // mutable unsigned long long m_requestStart { 0 };
-    // mutable unsigned long long m_responseStart { 0 };
-    // mutable unsigned long long m_responseEnd { 0 };
-    // mutable unsigned long long m_domLoading { 0 };
-    // mutable unsigned long long m_domInteractive { 0 };
-    // mutable unsigned long long m_domContentLoadedEventStart { 0 };
-    // mutable unsigned long long m_domContentLoadedEventEnd { 0 };
-    // mutable unsigned long long m_domComplete { 0 };
-    // mutable unsigned long long m_loadEventStart { 0 };
-    // mutable unsigned long long m_loadEventEnd { 0 };
 };
 
 } // namespace WebCore

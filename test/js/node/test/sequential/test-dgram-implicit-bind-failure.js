@@ -5,6 +5,7 @@ const assert = require('assert');
 const EventEmitter = require('events');
 const dgram = require('dgram');
 const dns = require('dns');
+const { kStateSymbol } = require('internal/dgram');
 const mockError = new Error('fake DNS');
 
 // Monkey patch dns.lookup() so that it always fails.
@@ -18,16 +19,12 @@ socket.on(EventEmitter.errorMonitor, common.mustCall((err) => {
   // The DNS lookup should fail since it is monkey patched. At that point in
   // time, the send queue should be populated with the send() operation.
   assert.strictEqual(err, mockError);
-  const kStateSymbol = Object.getOwnPropertySymbols(socket).filter(sym => sym.description == "state symbol")[0];
-  assert(kStateSymbol);
   assert(Array.isArray(socket[kStateSymbol].queue));
   assert.strictEqual(socket[kStateSymbol].queue.length, 1);
 }, 3));
 
 socket.on('error', common.mustCall((err) => {
   assert.strictEqual(err, mockError);
-  const kStateSymbol = Object.getOwnPropertySymbols(socket).filter(sym => sym.description == "state symbol")[0];
-  assert(kStateSymbol);
   assert.strictEqual(socket[kStateSymbol].queue, undefined);
 }, 3));
 

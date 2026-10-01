@@ -42,10 +42,10 @@ describe.skipIf(!isDockerEnabled())("autobahn", () => {
     wsOptions = process.env.BUN_AUTOBAHN_HOST_HEADER
       ? { headers: { Host: process.env.BUN_AUTOBAHN_HOST_HEADER } }
       : undefined;
-    // Cold container start is bounded by `compose up --wait-timeout 60` plus
+    // Cold container start is bounded by `compose up --wait-timeout 180` plus
     // a `compose build` step; the default 5s hook timeout fires long before
     // that on a cold cache.
-  }, 120_000);
+  }, 240_000);
 
   function getCaseStatus(testID: number) {
     return new Promise((resolve, reject) => {

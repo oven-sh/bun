@@ -10,7 +10,9 @@
 
 #include "root.h"
 #include "StreamsForward.h"
+#include "VectorSizeLimit.h"
 
+#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/WriteBarrier.h>
@@ -38,6 +40,18 @@ struct BunTextAccumulator {
     bool hasString { false };
     bool hasBuffer { false };
 
+    // Script adds a piece per write(), so growth is fallible. On false the caller throws after it drops the lock.
+    bool tryAppendPieces(const WTF::AbstractLocker&, JSC::VM& vm, JSC::JSCell* owner, JSC::JSString* flushedRope, JSC::JSValue chunk)
+    {
+        using Piece = JSC::WriteBarrier<JSC::Unknown>;
+        if (flushedRope) {
+            if (pieces.size() >= Bun::maxVectorSize<Piece>() || !pieces.tryAppend(Piece(vm, owner, flushedRope))) [[unlikely]]
+                return false;
+            rope.clear();
+        }
+        return pieces.size() < Bun::maxVectorSize<Piece>() && pieces.tryAppend(Piece(vm, owner, chunk));
+    }
+
     // Releases everything accumulated. Called as soon as the final result string has
     // been materialized so a long-lived owner (the direct stream's controller) does
     // not retain the whole payload until it is collected. Takes the owning cell's
@@ -58,7 +72,18 @@ struct BunTextAccumulator {
     void visit(const WTF::AbstractLocker&, Visitor& visitor)
     {
         for (auto& piece : pieces)
-            visitor.append(piece);
+            visitor.appendHidden(piece);
+    }
+
+    // Reports every barrier in `pieces` as an index edge for heap-snapshot retainers.
+    // Called from the OWNING cell's analyzeHeap, inside that cell's single cellLock() scope.
+    void analyzeHeap(const WTF::AbstractLocker&, JSC::JSCell* from, JSC::HeapAnalyzer& analyzer)
+    {
+        for (uint32_t i = 0; i < pieces.size(); ++i) {
+            JSC::JSValue v = pieces[i].get();
+            if (v && v.isCell())
+                analyzer.analyzeIndexEdge(from, v.asCell(), i);
+        }
     }
 };
 
@@ -81,6 +106,7 @@ public:
     // visitChildrenImpl MUST visit the barrier container m_accumulator.pieces (via
     // m_accumulator.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope).
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

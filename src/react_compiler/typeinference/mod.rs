@@ -31,4 +31,4 @@
 
 pub mod infer_types;
 
-pub use infer_types::infer_types;
+pub(crate) use infer_types::infer_types;

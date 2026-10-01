@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { describe, test } from "bun:test";
-import "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -105,12 +105,32 @@ describe("css tests", () => {
     minify_test(":root { --a: x / * / * y }", ":root{--a:x/ * / *y}");
     minify_test(".foo { unknown-prop: a / * b }", ".foo{unknown-prop:a/ *b}");
     minify_test(":root { --a: f(x / * y) }", ":root{--a:f(x/ *y)}");
+    minify_test(":root { --a: x / *= y }", ":root{--a:x/ *= y}");
     // A lone `/` or `*` delim must still minify without extra whitespace.
     minify_test(":root { --a: 16 / 9 }", ":root{--a:16/9}");
     minify_test(":root { --a: x * y }", ":root{--a:x*y}");
     minify_test(":root { --a: x / / y }", ":root{--a:x//y}");
     // Non-minified output is unchanged.
     cssTest(":root { --a: x / * y }", ":root {\n  --a: x / * y;\n}\n");
+
+    // Leading/trailing whitespace around a custom-property value is dropped.
+    minify_test(":root{--a: x}", ":root{--a:x}");
+    minify_test(":root{--a:x }", ":root{--a:x}");
+    minify_test(":root{--a: x }", ":root{--a:x}");
+    minify_test(":root{--a:x y}", ":root{--a:x y}");
+    minify_test(":root{--a: x y }", ":root{--a:x y}");
+    // A value that is only whitespace is preserved as a single space.
+    minify_test(":root{--a: }", ":root{--a: }");
+    minify_test(":root{--a:  }", ":root{--a: }");
+    // Same trimming applies inside function arguments.
+    minify_test(":root{--a:f(x y z)}", ":root{--a:f(x y z)}");
+    minify_test(":root{--a:f( x y z )}", ":root{--a:f(x y z)}");
+
+    // An rgb() whose alpha is only known at runtime is parsed into its channels
+    // and printed back from them, in order; the legacy comma form is not a color
+    // here and is left as written.
+    minify_test(":root{--a: rgb(4.7% 13.3% 22% / var(--alpha))}", ":root{--a:rgb(12 34 56/var(--alpha))}");
+    minify_test(":root{--a: rgb(12, 34, 56, var(--alpha))}", ":root{--a:rgb(12,34,56,var(--alpha))}");
   });
 
   describe("pseudo-class edge case", () => {
@@ -166,6 +186,41 @@ describe("css tests", () => {
     minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
+  });
+  describe("clamp() simplification", () => {
+    // The cases lightningcss asserts in its calc tests.
+    minify_test(`.foo { border-width: clamp(1px, 2px, 3px) }`, `.foo{border-width:2px}`);
+    minify_test(`.foo { border-width: clamp(1px, 10px, 3px) }`, `.foo{border-width:3px}`);
+    minify_test(`.foo { border-width: clamp(5px, 2px, 10px) }`, `.foo{border-width:5px}`);
+    minify_test(`.foo { border-width: clamp(100px, 2px, 10px) }`, `.foo{border-width:100px}`);
+    minify_test(`.foo { border-width: clamp(5px + 5px, 5px + 7px, 10px + 20px) }`, `.foo{border-width:12px}`);
+    minify_test(`.foo { border-width: clamp(1px, 2pt, 1in) }`, `.foo{border-width:2pt}`);
+    minify_test(`.foo { border-width: clamp(1em, 2px, 4vh) }`, `.foo{border-width:clamp(1em,2px,4vh)}`);
+    minify_test(`.foo { border-width: clamp(1em, 2em, 4vh) }`, `.foo{border-width:clamp(1em,2em,4vh)}`);
+    minify_test(`.foo { border-width: clamp(1em, 2vh, 4vh) }`, `.foo{border-width:max(1em,2vh)}`);
+    minify_test(`.foo { border-width: clamp(1px, 1px + 2em, 4px) }`, `.foo{border-width:clamp(1px,1px + 2em,4px)}`);
+    minify_test(`.foo { width: clamp(-100px, 0px, 50% - 50vw) }`, `.foo{width:clamp(-100px,0px,50% - 50vw)}`);
+    // The center is equal to one of the bounds.
+    minify_test(`a { width: clamp(2px, 2px, 3px) }`, `a{width:2px}`);
+    minify_test(`a { width: clamp(1px, 2px, 2px) }`, `a{width:2px}`);
+    // The minimum wins over a smaller maximum. The two WPT rows only pass when the minimum is
+    // compared with the center after the maximum has replaced it.
+    minify_test(`a { width: clamp(20px, 15px, 10px) }`, `a{width:20px}`);
+    minify_test(`a { width: clamp(30px, 100px, 20px) }`, `a{width:30px}`);
+    minify_test(`a { width: clamp(-10px, 100px, -30px) }`, `a{width:-10px}`);
+    // A lower bound that cannot be compared at parse time is kept, whether or not the center
+    // was above the maximum.
+    minify_test(`a { width: clamp(10vw, 5px, 20px) }`, `a{width:max(10vw,5px)}`);
+    minify_test(`a { width: clamp(10vw, 30px, 20px) }`, `a{width:max(10vw,20px)}`);
+    // A center that cannot be compared with the maximum leaves the clamp() alone, even when
+    // it could be compared with the minimum.
+    minify_test(`a { width: clamp(10px, 5px, 20vw) }`, `a{width:clamp(10px,5px,20vw)}`);
+    // Other value types.
+    minify_test(`a { width: clamp(10%, 5%, 20%) }`, `a{width:10%}`);
+    minify_test(`a { width: clamp(10%, 25%, 20%) }`, `a{width:20%}`);
+    minify_test(`a { rotate: clamp(0deg, 45deg, 30deg) }`, `a{rotate:30deg}`);
+    minify_test(`a { transition-duration: clamp(1s, 500ms, 2s) }`, `a{transition-duration:1s}`);
+    minify_test(`a { width: calc(clamp(1px, 2px, 3px) + 1px) }`, `a{width:3px}`);
   });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128
@@ -2920,6 +2975,34 @@ describe("css tests", () => {
     );
     minify_test(".foo { background: transparent }", ".foo{background:0 0}");
 
+    // The shorthand prints <box> twice when origin != clip. A single <box>
+    // token sets both origin and clip, so dropping a border-box clip after a
+    // non-default origin would change the declared clip value.
+    minify_test(".foo { background: red content-box border-box }", ".foo{background:red content-box border-box}");
+    minify_test(".foo { background: red border-box content-box }", ".foo{background:red border-box content-box}");
+    minify_test(".foo { background: red border-box padding-box }", ".foo{background:red border-box padding-box}");
+    minify_test(".foo { background: red padding-box border-box }", ".foo{background:red}");
+    minify_test(".foo { background: red border-box border-box }", ".foo{background:red border-box}");
+    cssTest(
+      `
+      .foo {
+        background-color: red;
+        background-position: 0% 0%;
+        background-size: auto;
+        background-repeat: repeat;
+        background-clip: border-box;
+        background-origin: content-box;
+        background-attachment: scroll;
+        background-image: none
+      }
+    `,
+      indoc`
+      .foo {
+        background: red content-box border-box;
+      }
+    `,
+    );
+
     minify_test(
       ".foo { background: url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\") }",
       ".foo{background:url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\")}",
@@ -5253,6 +5336,8 @@ describe("css tests", () => {
     minify_test('[foo="foo bar"] {color:red}', "[foo=foo\\ bar]{color:red}");
     minify_test('[foo="foo bar baz"] {color:red}', '[foo="foo bar baz"]{color:red}');
     minify_test('[foo=""] {color:red}', '[foo=""]{color:red}');
+    minify_test('[foo="123"] {color:red}', '[foo="123"]{color:red}');
+    minify_test('[foo="\\\\"] {color:red}', "[foo=\\\\]{color:red}");
     minify_test('.test:not([foo="bar"]) {color:red}', ".test:not([foo=bar]){color:red}");
     minify_test(".test + .foo {color:red}", ".test+.foo{color:red}");
     minify_test(".test ~ .foo {color:red}", ".test~.foo{color:red}");
@@ -5672,6 +5757,7 @@ describe("css tests", () => {
       "view-transition-image-pair",
       "view-transition-new",
       "view-transition-old",
+      "view-transition-group-children",
     ]) {
       minify_test(`:root::${name}(*) {position: fixed}`, `:root::${name}(*){position:fixed}`);
       minify_test(`:root::${name}(foo) {position: fixed}`, `:root::${name}(foo){position:fixed}`);
@@ -5679,6 +5765,18 @@ describe("css tests", () => {
       // Test class selector syntax (.class-name)
       minify_test(`:root::${name}(.slide-out) {position: fixed}`, `:root::${name}(.slide-out){position:fixed}`);
       minify_test(`:root::${name}(.fade-in) {animation-name: fade}`, `:root::${name}(.fade-in){animation-name:fade}`);
+      // <pt-name-and-class-selector>: a name or `*` followed by classes, or classes alone.
+      minify_test(`:root::${name}(*.class) {position: fixed}`, `:root::${name}(*.class){position:fixed}`);
+      minify_test(`:root::${name}(*.class.class) {position: fixed}`, `:root::${name}(*.class.class){position:fixed}`);
+      minify_test(`:root::${name}(foo.class) {position: fixed}`, `:root::${name}(foo.class){position:fixed}`);
+      minify_test(`:root::${name}(foo.bar.baz) {position: fixed}`, `:root::${name}(foo.bar.baz){position:fixed}`);
+      minify_test(
+        `:root::${name}(foo.bar.baz):only-child {position: fixed}`,
+        `:root::${name}(foo.bar.baz):only-child{position:fixed}`,
+      );
+      minify_test(`:root::${name}(.foo.bar) {position: fixed}`, `:root::${name}(.foo.bar){position:fixed}`);
+      minify_test(`:root::${name}(  .foo.bar  ) {position: fixed}`, `:root::${name}(.foo.bar){position:fixed}`);
+      minify_test(`:root::${name}(  foo.bar  ) {position: fixed}`, `:root::${name}(foo.bar){position:fixed}`);
       error_test(
         `:root::${name}(foo):first-child {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterPseudoElement)",
@@ -5687,6 +5785,23 @@ describe("css tests", () => {
         `:root::${name}(foo)::before {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidState)",
       );
+      // White space is not allowed between the name and a class, or inside the classes.
+      test.each([
+        ["*.*", "Expected identifier after '.' in class selector, found: *"],
+        ["*. cls", "Expected identifier after '.' in class selector"],
+        [". cls", "Expected identifier after '.' in class selector"],
+        ["foo .bar", "Unexpected token: ."],
+        [".foo .bar", "Unexpected token: ."],
+        ["*.cls. c", "Expected identifier after '.' in class selector"],
+        ["*.cls>cls", "Unexpected token: >"],
+        ["*.cls.foo.*", "Expected identifier after '.' in class selector, found: *"],
+        ["foo.bar baz", "Unexpected token: baz"],
+        ["foo.inherit", "Unexpected token: inherit"],
+        ["inherit.foo", "Unexpected token: inherit"],
+        ["", "Unexpected end of input"],
+      ])(`ERROR: :root::${name}(%s) {position: fixed}`, (argument, message) => {
+        expect(() => minify_test_with_options(`:root::${name}(${argument}) {position: fixed}`, "")).toThrow(message);
+      });
     }
 
     minify_test(".foo ::deep .bar {width: 20px}", ".foo ::deep .bar{width:20px}");
@@ -7795,6 +7910,135 @@ describe("css tests", () => {
       );
     });
 
+    // rgb()/hsl() whose alpha is only known at runtime (var(), calc(var()), ...)
+    // are downleveled to the legacy comma syntax for targets without
+    // space-separated color notation. Every component, including the alpha,
+    // has to be comma separated there or the declaration is invalid.
+    describe("unresolved alpha downleveled to rgba()/hsla()", () => {
+      const legacyOnly = { chrome: 60 << 16 };
+      const modern = { chrome: 90 << 16 };
+
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha, 50%)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, var(--alpha, 50%));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / calc(var(--alpha) * 2)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, calc(var(--alpha) * 2));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(5% 50% 100% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgba(13, 128, 255, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { --x: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { box-shadow: 0 0 4px rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            box-shadow: 0 0 4px rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(from light-dark(yellow, red) r g b / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: var(--buncss-light, rgba(255, 255, 0, var(--alpha))) var(--buncss-dark, rgba(255, 0, 0, var(--alpha)));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: light-dark(rgb(12 34 56 / var(--alpha)), hsl(200 30% 40% / var(--alpha))); }",
+        indoc`
+          .foo {
+            color: var(--buncss-light, rgba(12, 34, 56, var(--alpha))) var(--buncss-dark, hsla(200, 30%, 40%, var(--alpha)));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: hsla(200, 30%, 40%, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { --x: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: hsla(200, 30%, 40%, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+
+      // Targets that support the modern syntax keep it as written.
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgb(12 34 56 / var(--alpha));
+          }
+        `,
+        modern,
+      );
+      prefix_test(
+        ".foo { --x: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: rgb(12 34 56 / var(--alpha));
+          }
+        `,
+        modern,
+      );
+      prefix_test(
+        ".foo { color: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: hsl(200 30% 40% / var(--alpha));
+          }
+        `,
+        modern,
+      );
+    });
+
     // Deeply nested @keyframes with invalid percentages
     describe("nested keyframes", () => {
       cssTest(
@@ -7850,5 +8094,27 @@ describe("css tests", () => {
       const output = await Bun.file(join(__dirname, "unicode_expected.css")).text();
       cssTest(input, output);
     });
+  });
+
+  test("deeply nested rules keep two spaces of indentation per level", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { _test } = require("bun:internal-for-testing").cssInternals;
+let css = "color: red";
+for (let i = 0; i < 150; i++) css = ".a { " + css + " }";
+const output = _test(css, "");
+const line = output.split("\\n").find(l => l.includes("color: red"));
+console.log(line.length - line.trimStart().length);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("300");
+    expect(exitCode).toBe(0);
   });
 });

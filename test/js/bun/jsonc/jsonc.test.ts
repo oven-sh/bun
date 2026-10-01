@@ -34,6 +34,19 @@ test("Bun.JSONC.parse handles a comment after a scalar on the same line", () => 
   expect(Bun.JSONC.parse(jsonc)).toEqual({ a: 1, b: true, c: null, d: -2.5 });
 });
 
+test("Bun.JSONC.parse nested empty object is spreadable after adding a property", () => {
+  // The JSON rows builder sized the object with inline capacity 0 for an
+  // empty {}, so spreading it tripped JSC's hasInlineStorage() debug assert
+  // once a property was added.
+  const o = Bun.JSONC.parse('{"a": {}}').a;
+  o.x = 1;
+  expect({ ...o }).toEqual({ x: 1 });
+
+  const t = Bun.TOML.parse("[a]\n").a;
+  t.y = 2;
+  expect({ ...t }).toEqual({ y: 2 });
+});
+
 test("Bun.JSONC.parse handles trailing commas", () => {
   const jsonc = `{
     "name": "test",
@@ -123,6 +136,49 @@ test("Bun.JSONC.parse throws on invalid JSON", () => {
   expect(() => {
     Bun.JSONC.parse("{ invalid json }");
   }).toThrow();
+});
+
+test("Bun.JSONC.parse throws a SyntaxError on invalid input", () => {
+  for (const input of ["{ not valid", '{"a": }', "[1, 2", '"abc', "   ", ""]) {
+    let thrown: unknown;
+    try {
+      Bun.JSONC.parse(input);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown, `input: ${JSON.stringify(input)}`).toBeInstanceOf(SyntaxError);
+    expect(thrown, `input: ${JSON.stringify(input)}`).toBeInstanceOf(Error);
+    expect((thrown as Error).name).toBe("SyntaxError");
+    expect((thrown as Error).message).toContain("JSONC Parse error");
+  }
+});
+
+test("Bun.JSONC.parse throws on undefined and null input", () => {
+  expect(() => Bun.JSONC.parse(undefined as any)).toThrow("Expected a string to parse");
+  expect(() => (Bun.JSONC.parse as any)()).toThrow("Expected a string to parse");
+  expect(() => Bun.JSONC.parse(null as any)).toThrow("Expected a string to parse");
+});
+
+test("Bun.JSONC.parse stringifies non-string input like JSON.parse does", () => {
+  expect(Bun.JSONC.parse(42 as any)).toBe(42);
+  expect(Bun.JSONC.parse({ toString: () => "[1, 2,] // ok" } as any)).toEqual([1, 2]);
+  // A Buffer stringifies to its text; a Blob stringifies to "[object Blob]"
+  // rather than being read as bytes (unlike Bun.TOML.parse and friends).
+  expect(Bun.JSONC.parse(Buffer.from('{"a": 1, /* c */}') as any)).toEqual({ a: 1 });
+  expect(() => Bun.JSONC.parse(new Blob(['{"a": 1}']) as any)).toThrow(SyntaxError);
+  expect(() => JSON.parse(new Blob(['{"a": 1}']) as any)).toThrow(SyntaxError);
+});
+
+test("Bun.JSONC.parse SyntaxError names the actual error, not a preceding warning", () => {
+  let thrown: unknown;
+  try {
+    Bun.JSONC.parse('{"a":1,"a":2,');
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown).toBeInstanceOf(SyntaxError);
+  expect((thrown as Error).message).toMatchInlineSnapshot(`"JSONC Parse error: Expected string but found end of file"`);
+  expect((thrown as Error).message).not.toContain("Duplicate key");
 });
 
 test("Bun.JSONC.parse handles empty object", () => {
@@ -363,6 +419,17 @@ test("Bun.JSONC.parse throws on documents that only parse with error recovery", 
     expect(() => Bun.JSONC.parse(doc), doc).toThrow();
     expect(() => JSON.parse(doc), doc).toThrow();
   }
+});
+
+test("Bun.JSONC.parse builds objects the way JSON.parse does: index keys first, __proto__ own, keys of every kind", () => {
+  const doc = `{"b":1,"0":2,"a":3,"__proto__":{"x":1},"ünï":4,"${"k".repeat(40)}":5,"1":6,"":7,"s":"","t":"x","u":"${"y".repeat(40)}","v":"ünï"}`;
+  const parsed = Bun.JSONC.parse(doc) as any;
+  const reference = JSON.parse(doc);
+  expect(parsed).toEqual(reference);
+  expect(Object.keys(parsed)).toEqual(Object.keys(reference));
+  expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+  expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+  expect(Bun.JSONC.parse(`[[],[1,"a",{}],[[["deep"]]]]`)).toEqual([[], [1, "a", {}], [[["deep"]]]]);
 });
 
 describe("structural index window seams", () => {

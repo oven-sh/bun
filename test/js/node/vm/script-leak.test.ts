@@ -1,10 +1,10 @@
 const vm = require("vm");
 const { describe, it, expect } = require("bun:test");
-const { isASAN } = require("harness");
+const { isASAN, rss } = require("harness");
 
 describe("vm.Script", () => {
   it("shouldn't leak memory", () => {
-    const initialUsage = process.memoryUsage.rss();
+    const initialUsage = rss();
 
     {
       const source = `/*\n${Buffer.alloc(10000, " * aaaaa\n").toString("utf8")}\n*/ Buffer.alloc(10, 'hello');`;
@@ -21,7 +21,7 @@ describe("vm.Script", () => {
 
     Bun.gc(true);
 
-    const finalUsage = process.memoryUsage.rss();
+    const finalUsage = rss();
     const megabytes = Math.round(((finalUsage - initialUsage) / 1024 / 1024) * 100) / 100;
     // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
     // deltas run far higher under bun-asan; widen the threshold there.

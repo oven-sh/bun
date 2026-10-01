@@ -42,7 +42,7 @@ static constexpr auto ALG256 = "A256KW"_s;
 
 static inline bool usagesAreInvalidForCryptoAlgorithmAES_KW(CryptoKeyUsageBitmap usages)
 {
-    return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt);
+    return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageKemMask);
 }
 
 Ref<CryptoAlgorithm> CryptoAlgorithmAES_KW::create()
@@ -58,7 +58,7 @@ CryptoAlgorithmIdentifier CryptoAlgorithmAES_KW::identifier() const
 void CryptoAlgorithmAES_KW::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
     if (usagesAreInvalidForCryptoAlgorithmAES_KW(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 
@@ -76,12 +76,13 @@ void CryptoAlgorithmAES_KW::importKey(CryptoKeyFormat format, KeyData&& data, co
     using namespace CryptoAlgorithmAES_KWInternal;
 
     if (usagesAreInvalidForCryptoAlgorithmAES_KW(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 
     RefPtr<CryptoKeyAES> result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
     case CryptoKeyFormat::Raw:
         result = CryptoKeyAES::importRaw(parameters.identifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
@@ -123,6 +124,7 @@ void CryptoAlgorithmAES_KW::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& k
 
     KeyData result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
     case CryptoKeyFormat::Raw:
         result = Vector<uint8_t>(aesKey.key());
         break;

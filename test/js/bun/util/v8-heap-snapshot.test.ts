@@ -88,3 +88,26 @@ test("v8.writeHeapSnapshot() with path", async () => {
   const path = join(String(dir), "test.heapsnapshot");
   expect(await runFixture("write-path", { args: [path] })).toEqual({ returnedPath: path, ...structure });
 });
+
+test("v8 heap snapshot labels Web Streams internal edges", async () => {
+  const edges = await runFixture("stream-edges");
+  // Every WriteBarrier member reported by analyzeHeap shows up as a named
+  // property edge in the snapshot, so retainer paths are readable.
+  expect(edges.ReadableStream).toEqual(expect.arrayContaining(["controller", "reader"]));
+  expect(edges.ReadableStreamDefaultController).toEqual(expect.arrayContaining(["stream", "underlyingSource"]));
+  expect(edges.ReadableStreamDefaultReader).toEqual(expect.arrayContaining(["stream", "closedPromise"]));
+  expect(edges.WritableStream).toEqual(expect.arrayContaining(["controller", "writer"]));
+  expect(edges.WritableStreamDefaultController).toEqual(
+    expect.arrayContaining(["stream", "underlyingSink", "writeAlgorithm", "abortController"]),
+  );
+  expect(edges.WritableStreamDefaultWriter).toEqual(
+    expect.arrayContaining(["stream", "closedPromise", "readyPromise"]),
+  );
+  expect(edges.TransformStream).toEqual(expect.arrayContaining(["readable", "writable", "controller"]));
+  expect(edges.TransformStreamDefaultController).toEqual(
+    expect.arrayContaining(["stream", "transformer", "transformAlgorithm"]),
+  );
+  expect(edges.StreamPipeToOperation).toEqual(
+    expect.arrayContaining(["source", "destination", "reader", "writer", "promise"]),
+  );
+});

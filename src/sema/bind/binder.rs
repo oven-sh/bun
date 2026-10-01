@@ -1526,6 +1526,7 @@ impl<'f> Binder<'f> {
         self.b.specifiers.retain(|s| seen.insert(*s));
         self.b.ambient_specifiers.retain(|s| seen.insert(*s));
         self.mark_what_is_beyond_flow(&idents);
+        self.say_what_flow_is_about(&idents);
         self.b.symbols.shrink_to_fit();
         self.b.flow.shrink_to_fit();
         self.b
@@ -1729,6 +1730,353 @@ impl<'f> Binder<'f> {
         }
         self.b.beyond_flow_as_root = as_root;
         self.b.beyond_flow = alone;
+    }
+
+    /// Going back through the flow of control from a reference, nearly every node on the way is about something else. Each gets a set of the
+    /// names it may be about, 64 bits that the names share, so that it can be passed over at a glance. Where paths meet, the set is of
+    /// all there is between there and the last node every path has come through, so that a whole statement can.
+    ///
+    /// What goes for `mark_what_is_beyond_flow` goes here: a constant counts for what it is initialized with as well, and what one pattern
+    /// binds, or the parameters of one function, share a bit.
+    fn say_what_flow_is_about(&mut self, idents: &[(ExprId, ScopeId)]) {
+        if self.f.is_js || self.b.flow.len() < 8 {
+            return;
+        }
+        const ALL: u64 = u64::MAX;
+        let (f, b) = (self.f, &self.b);
+        let spread = flow_bit_of_number;
+
+        // The bit of each symbol.
+        let mut bit: Vec<u8> = (0..b.symbols.len() as u32).map(spread).collect();
+        for i in 0..f.pats.len() {
+            let symbol = b.pat_symbol[i];
+            if symbol.is_none() {
+                continue;
+            }
+            let mut root = b.pat_parent[i];
+            let mut is_nested = false;
+            while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) = root {
+                root = b.pat_parent[outer.idx()];
+                is_nested = true;
+            }
+            match root {
+                PatParent::Param(param) => {
+                    bit[symbol.idx()] = spread(0x4000_0000 | b.param_fn[param.idx()].0);
+                }
+                PatParent::Var(decl) if is_nested => {
+                    bit[symbol.idx()] = spread(0x2000_0000 | decl.0);
+                }
+                _ => {}
+            }
+        }
+        // What writing the name of a symbol counts for: itself, and what it is initialized with if it is a constant.
+        let mut counts_for: Vec<u64> = bit.iter().map(|&b| 1u64 << b).collect();
+        let counts = |counts_for: &[u64], e: ExprId| -> u64 {
+            let symbol = b.expr_symbol[e.idx()];
+            if symbol.is_some() {
+                return counts_for[symbol.idx()];
+            }
+            match f[e].kind {
+                ExprKind::Ident(name) => 1 << flow_bit_of_free_name(name),
+                _ => 0,
+            }
+        };
+
+        // The expressions nodes are about get a slot each.
+        let mut slot_of = vec![u32::MAX; f.exprs.len()];
+        let mut slots = 0u32;
+        let mut give_slot = |e: ExprId| {
+            if e.is_some() && slot_of[e.idx()] == u32::MAX {
+                slot_of[e.idx()] = slots;
+                slots += 1;
+            }
+        };
+        for node in &b.flow {
+            match *node {
+                Flow::Cond { expr, .. }
+                | Flow::Call { call: expr, .. }
+                | Flow::ArrayMutation { expr, .. }
+                | Flow::Assign {
+                    target: FlowTarget::Expr(expr),
+                    ..
+                } => give_slot(expr),
+                Flow::Switch { stmt, .. } => {
+                    if let StmtKind::Switch { expr, cases } = f[stmt].kind {
+                        give_slot(expr);
+                        for case in cases.iter() {
+                            give_slot(f[case].test);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        // For each identifier, the slots it is written in, and the constant whose initializer it is written in.
+        let mut written_in: Vec<(ExprId, u32)> = Vec::new();
+        let mut initializes: Vec<(ExprId, VarDeclId)> = Vec::new();
+        for &(e, _) in idents {
+            let mut at = e;
+            loop {
+                if slot_of[at.idx()] != u32::MAX {
+                    written_in.push((e, slot_of[at.idx()]));
+                }
+                at = match b.expr_parent[at.idx()] {
+                    Parent::Expr(parent) | Parent::Key(parent) => parent,
+                    Parent::Prop(prop) => b.prop_owner[prop.idx()],
+                    Parent::VarInit(decl) => {
+                        if f[decl].kind == VarKind::Const {
+                            initializes.push((e, decl));
+                        }
+                        break;
+                    }
+                    _ => break,
+                };
+                if at.is_none() {
+                    break;
+                }
+            }
+        }
+        // The symbols each declaration binds.
+        let mut bound_by: Vec<(VarDeclId, SymbolId)> = Vec::new();
+        for i in 0..f.pats.len() {
+            let symbol = b.pat_symbol[i];
+            if symbol.is_none() {
+                continue;
+            }
+            let mut root = b.pat_parent[i];
+            while let PatParent::Prop(outer, _) | PatParent::Elem(outer, _) = root {
+                root = b.pat_parent[outer.idx()];
+            }
+            if let PatParent::Var(decl) = root {
+                bound_by.push((decl, symbol));
+            }
+        }
+        bound_by.sort_unstable_by_key(|x| x.0.0);
+        let symbols_of = |decl: VarDeclId| {
+            let from = bound_by.partition_point(|x| x.0.0 < decl.0);
+            bound_by[from..]
+                .iter()
+                .take_while(move |x| x.0 == decl)
+                .map(|x| x.1)
+        };
+        loop {
+            let mut changed = false;
+            for &(e, decl) in &initializes {
+                let adds = counts(&counts_for, e);
+                for symbol in symbols_of(decl) {
+                    if counts_for[symbol.idx()] | adds != counts_for[symbol.idx()] {
+                        counts_for[symbol.idx()] |= adds;
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let mut about_slot = vec![0u64; slots as usize];
+        for &(e, slot) in &written_in {
+            about_slot[slot as usize] |= counts(&counts_for, e);
+        }
+        let about_expr = |e: ExprId| {
+            if e.is_some() {
+                about_slot[slot_of[e.idx()] as usize]
+            } else {
+                0
+            }
+        };
+
+        // Each node on its own.
+        let n = b.flow.len();
+        let mut about = vec![0u64; n];
+        let mut dominator = vec![FlowId::NONE; n];
+        for (i, node) in b.flow.iter().enumerate() {
+            (about[i], dominator[i]) = match *node {
+                Flow::Cond { before, expr, .. } | Flow::ArrayMutation { before, expr } => {
+                    (about_expr(expr), before)
+                }
+                Flow::Call { before, call } => (about_expr(call) | FLOW_HAS_CALL, before),
+                Flow::Assign { before, target } => (
+                    match target {
+                        FlowTarget::Expr(e) => about_expr(e),
+                        FlowTarget::Var(decl) => {
+                            symbols_of(decl).fold(0, |all, s| all | 1 << bit[s.idx()])
+                        }
+                        FlowTarget::Pat(pat) => {
+                            let symbol = b.pat_symbol[pat.idx()];
+                            if symbol.is_some() {
+                                1 << bit[symbol.idx()]
+                            } else {
+                                ALL
+                            }
+                        }
+                    },
+                    before,
+                ),
+                Flow::Switch { before, stmt, .. } => (
+                    match f[stmt].kind {
+                        StmtKind::Switch { expr, cases } => cases
+                            .iter()
+                            .fold(about_expr(expr), |all, case| all | about_expr(f[case].test)),
+                        _ => ALL,
+                    },
+                    before,
+                ),
+                Flow::Reduce { before, .. } => (ALL, before),
+                Flow::Label { .. } | Flow::Loop { .. } => (0, FlowId::NONE),
+                Flow::Unreachable | Flow::Start { .. } | Flow::StartInvoked { .. } => {
+                    (ALL, FlowId::NONE)
+                }
+            };
+        }
+
+        // How far each node is from where its flow starts, by way of the dominators, which are found on the way. A loop is come into by its
+        // first edge. The others come round from inside it.
+        let edges = |i: usize| -> &[FlowId] {
+            match b.flow[i] {
+                Flow::Label { start, len } | Flow::Loop { start, len } => {
+                    &b.flow_edges[start as usize..(start + len) as usize]
+                }
+                _ => &[],
+            }
+        };
+        const UNKNOWN: u32 = u32::MAX;
+        let mut depth = vec![UNKNOWN; n];
+        let mut pending: Vec<u32> = Vec::new();
+        let mut is_pending = vec![false; n];
+        for first in 0..n as u32 {
+            if depth[first as usize] != UNKNOWN {
+                continue;
+            }
+            pending.push(first);
+            is_pending[first as usize] = true;
+            'next: while let Some(&i) = pending.last() {
+                let i = i as usize;
+                if depth[i] != UNKNOWN {
+                    pending.pop();
+                    is_pending[i] = false;
+                    continue;
+                }
+                match b.flow[i] {
+                    Flow::Label { .. } | Flow::Loop { .. } => {
+                        let all = edges(i);
+                        let forward = match b.flow[i] {
+                            Flow::Loop { .. } => &all[..all.len().min(1)],
+                            _ => all,
+                        };
+                        for &edge in forward {
+                            if depth[edge.idx()] == UNKNOWN {
+                                // A label that leads to itself other than as a loop is not made. Should it be, nothing is skipped.
+                                if is_pending[edge.idx()] {
+                                    depth[i] = 0;
+                                    about[i] = ALL;
+                                    continue 'next;
+                                }
+                                pending.push(edge.0);
+                                is_pending[edge.idx()] = true;
+                                continue 'next;
+                            }
+                        }
+                        let mut common = forward.first().copied().unwrap_or(FlowId::NONE);
+                        for &edge in forward.iter().skip(1) {
+                            let mut other = edge;
+                            while common != other && common.is_some() && other.is_some() {
+                                if depth[common.idx()] >= depth[other.idx()] {
+                                    common = dominator[common.idx()];
+                                } else {
+                                    other = dominator[other.idx()];
+                                }
+                            }
+                            if other.is_none() {
+                                common = FlowId::NONE;
+                            }
+                        }
+                        dominator[i] = common;
+                        depth[i] = if common.is_some() {
+                            depth[common.idx()] + 1
+                        } else {
+                            0
+                        };
+                    }
+                    _ => {
+                        let before = dominator[i];
+                        if before.is_none() {
+                            depth[i] = 0;
+                        } else if depth[before.idx()] == UNKNOWN {
+                            if is_pending[before.idx()] {
+                                depth[i] = 0;
+                                about[i] = ALL;
+                            } else {
+                                pending.push(before.0);
+                                is_pending[before.idx()] = true;
+                                continue 'next;
+                            }
+                        } else {
+                            depth[i] = depth[before.idx()] + 1;
+                        }
+                    }
+                }
+                pending.pop();
+                is_pending[i] = false;
+            }
+        }
+
+        // What there is between where paths meet and their dominator. Inner ones first: they are deeper, or as deep.
+        let mut meets: Vec<u32> = (0..n as u32)
+            .filter(|&i| matches!(b.flow[i as usize], Flow::Label { .. } | Flow::Loop { .. }))
+            .collect();
+        meets.sort_unstable_by_key(|&i| std::cmp::Reverse(depth[i as usize]));
+        let mut is_done = vec![false; n];
+        loop {
+            let mut left = Vec::new();
+            'meets: for &i in &meets {
+                let i = i as usize;
+                if about[i] == ALL {
+                    is_done[i] = true;
+                    continue;
+                }
+                let is_loop = matches!(b.flow[i], Flow::Loop { .. });
+                let mut all = 0u64;
+                for (k, &edge) in edges(i).iter().enumerate() {
+                    // What comes round in a loop has come from the loop.
+                    let stop = if is_loop && k > 0 {
+                        FlowId(i as u32)
+                    } else {
+                        dominator[i]
+                    };
+                    let mut at = edge;
+                    while at != stop {
+                        if at.is_none() {
+                            all = ALL;
+                            break;
+                        }
+                        if matches!(b.flow[at.idx()], Flow::Label { .. } | Flow::Loop { .. })
+                            && !is_done[at.idx()]
+                        {
+                            left.push(i as u32);
+                            continue 'meets;
+                        }
+                        all |= about[at.idx()];
+                        at = dominator[at.idx()];
+                    }
+                }
+                about[i] = all;
+                is_done[i] = true;
+            }
+            if left.is_empty() {
+                break;
+            }
+            if left.len() == meets.len() {
+                for &i in &left {
+                    about[i as usize] = ALL;
+                }
+                break;
+            }
+            meets = left;
+        }
+        self.b.flow_about = about;
+        self.b.flow_dominator = dominator;
+        self.b.symbol_flow_bit = bit;
     }
 
     /// Whether `e` is `ancestor` or part of it, functions written in it aside.

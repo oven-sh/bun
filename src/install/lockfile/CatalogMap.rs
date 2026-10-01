@@ -148,6 +148,55 @@ impl CatalogMap {
         .cloned()
     }
 
+    /// `bun update --latest`: until package.json is parsed again, the registry entry under `dep_name` selects the dist-tag `latest`, behind the same `npm:<name>@` when it has one. The map is cloned by re-parsing each literal, so the entry gets a real one.
+    pub(crate) fn steer_to_latest(
+        &mut self,
+        string_buf: &mut StringBuf,
+        catalog_name: &[u8],
+        dep_name: &[u8],
+    ) -> Result<(), AllocError> {
+        let Some((group, i)) = self.locate(string_buf.bytes.as_slice(), catalog_name, dep_name)
+        else {
+            return Ok(());
+        };
+        let map = match group {
+            Some(g) => &mut self.groups.values_mut()[g],
+            None => &mut self.default,
+        };
+        let entry = &mut map.values_mut()[i];
+        if !matches!(
+            entry.version.tag,
+            DependencyVersionTag::Npm | DependencyVersionTag::DistTag
+        ) {
+            return Ok(());
+        }
+        let declared = bun_core::strings::trim(
+            entry.version.literal.slice(string_buf.bytes.as_slice()),
+            &bun_core::strings::WHITESPACE_CHARS,
+        );
+        let mut latest: Vec<u8> = Vec::new();
+        if let Some(target) = declared.strip_prefix(b"npm:") {
+            let (name, _) = Dependency::split_name_and_maybe_version(target);
+            latest.extend_from_slice(b"npm:");
+            latest.extend_from_slice(name);
+            latest.push(b'@');
+        }
+        latest.extend_from_slice(b"latest");
+        let literal = string_buf.append(&latest)?;
+        let sliced = literal.sliced(string_buf.bytes.as_slice());
+        if let Some(version) = Dependency::parse(
+            entry.name,
+            entry.name_hash,
+            sliced.slice,
+            &sliced,
+            None,
+            None,
+        ) {
+            entry.version = version;
+        }
+        Ok(())
+    }
+
     // Falls back to the unresolved `catalog:` version when the entry is missing.
     pub(crate) fn resolve_range<'a>(
         &'a self,

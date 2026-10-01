@@ -4,8 +4,11 @@ use std::io::Write as _;
 use bun_ast as js_ast;
 use bun_ast::{E, Expr, G};
 use bun_core::{Global, Output, strings};
+use bun_paths::path_buffer_pool;
+use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_semver as semver;
 
+use crate::bun_fs::FileSystem;
 use bun_install::dependency::{self, DependencyExt as _, TagExt as _};
 use bun_install::lockfile::CatalogMap;
 use bun_install::lockfile::package::PackageColumns as _;
@@ -13,6 +16,9 @@ use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
 use bun_install_types::{DependencyGroup, PackageNameHash};
 
 use super::package_manager_options::Do;
+use super::workspace_package_json_cache::{
+    GetJSONOptions, GetResult, WorkspacePackageJSONCache,
+};
 use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;
@@ -459,14 +465,14 @@ fn edit_update_entries(
         if let Some(mut root) = current_package_json.as_property(group_str) {
             if matches!(root.expr.data, bun_ast::ExprData::EObject(_)) {
                 if options.before_install {
-                    // set each npm dependency to latest
+                    // Record each npm dependency's declared literal; --latest steers the row at resolve time (`version_pick`).
                     for dep in root
                         .expr
                         .data
-                        .e_object_mut()
+                        .e_object()
                         .expect("infallible: variant checked")
                         .properties
-                        .slice_mut()
+                        .slice()
                     {
                         let Some(key) = &dep.key else { continue };
                         if !matches!(key.data, bun_ast::ExprData::EString(_)) {
@@ -511,19 +517,6 @@ fn edit_update_entries(
                             original_version_string_buf: Box::default(),
                             original_version: None,
                         };
-
-                        if update_to_latest {
-                            let temp_version = with_alias_of(arena, version_literal, b"latest");
-                            if temp_version == version_literal {
-                                continue;
-                            }
-                            changed = true;
-                            dep.value = Some(Expr::allocate(
-                                arena,
-                                E::EString::init(temp_version),
-                                bun_ast::Loc::EMPTY,
-                            ));
-                        }
                     }
                 } else {
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -678,12 +671,11 @@ pub(crate) fn for_each_catalog_object(
     Ok(())
 }
 
-/// Records the original version of every catalog entry and, with `--latest`,
-/// rewrites each to `latest` in memory so the resolver fetches it.
-pub(crate) fn edit_catalogs_before_update(
+/// Records the declared version of every catalog entry a bare `bun update` may rewrite.
+pub(crate) fn record_catalog_entries(
     manager: &mut PackageManager,
     root_package_json: &Expr,
-) -> Result<bool, bun_alloc::AllocError> {
+) -> Result<(), bun_alloc::AllocError> {
     // see note in `edit_update_no_args` — always avoid the store
     let _guard = ExprDisabler::scope();
 
@@ -691,19 +683,18 @@ pub(crate) fn edit_catalogs_before_update(
 
     let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
 
-    let arena = &manager.ast_arena;
     let updating_catalogs = &mut manager.updating_catalogs;
 
-    for_each_catalog_object(root_package_json, |catalog_name, mut catalog_expr| {
+    for_each_catalog_object(root_package_json, |catalog_name, catalog_expr| {
         if !matches!(catalog_expr.data, bun_ast::ExprData::EObject(_)) {
             return Ok(());
         }
         for dep in catalog_expr
             .data
-            .e_object_mut()
+            .e_object()
             .expect("infallible: variant checked")
             .properties
-            .slice_mut()
+            .slice()
         {
             let Some(key) = &dep.key else { continue };
             if !matches!(key.data, bun_ast::ExprData::EString(_)) {
@@ -735,23 +726,79 @@ pub(crate) fn edit_catalogs_before_update(
                 original_version_literal: Box::from(version_literal),
                 new_version_literal: None,
             });
-
-            if update_to_latest {
-                let temp_version = with_alias_of(arena, version_literal, b"latest");
-                dep.value = Some(Expr::allocate(
-                    arena,
-                    E::EString::init(temp_version),
-                    bun_ast::Loc::EMPTY,
-                ));
-            }
         }
         Ok(())
-    })?;
-
-    Ok(!manager.updating_catalogs.is_empty())
+    })
 }
 
-/// Writes each recorded catalog entry's resolved literal (unresolved ones are restored) into the root AST; returns `changed`.
+/// A bare `bun update --latest` that targets the root: `steer_used_catalogs_to_latest` runs on the catalogs each root parse produces, and `package_json_write_back` derives them from package.json again before bun.lock is saved.
+#[inline]
+pub(crate) fn steers_catalogs_to_latest(manager: &PackageManager) -> bool {
+    !manager.updating_catalogs.is_empty() && manager.options.do_.contains(Do::UPDATE_TO_LATEST)
+}
+
+/// `bun update --latest`: in the catalogs `lockfile` has just parsed from the root package.json, each entry that a `catalog:` dependency of the root or of a member names selects the dist-tag `latest` for this resolve, and `edit_catalogs_after_update` writes what those rows resolve back into it. An entry that only an override reaches keeps its range: no row would carry a new version back to it.
+#[cold]
+#[inline(never)]
+pub(crate) fn steer_used_catalogs_to_latest(
+    package_json_cache: &mut WorkspacePackageJSONCache,
+    log: &mut bun_ast::Log,
+    lockfile: &mut Lockfile,
+) -> Result<(), bun_alloc::AllocError> {
+    // see note in `edit_update_no_args` — always avoid the store
+    let _guard = ExprDisabler::scope();
+
+    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let mut path_buf = path_buffer_pool::get();
+    // The root's package.json, then each member's.
+    for workspace in 0..=lockfile.workspace_paths.count() {
+        let workspace_path: &[u8] = match workspace.checked_sub(1) {
+            Some(member) => lockfile.workspace_paths.values()[member]
+                .slice(lockfile.buffers.string_bytes.as_slice()),
+            None => b"",
+        };
+        let package_json_path = join_abs_string_buf::<platform::Auto>(
+            top_level,
+            &mut path_buf.0,
+            &[workspace_path, b"package.json"],
+        );
+        let options = GetJSONOptions {
+            init_reset_store: false,
+            ..Default::default()
+        };
+        let GetResult::Entry(entry) =
+            package_json_cache.get_with_path(log, package_json_path, options)
+        else {
+            continue;
+        };
+        let package_json = entry.root;
+        let mut string_buf = semver::semver_string::Buf {
+            bytes: &mut lockfile.buffers.string_bytes,
+            pool: &mut lockfile.string_pool,
+        };
+        for group in DependencyGroup::FOUR {
+            let Some(dependencies) = package_json.get(group.prop) else {
+                continue;
+            };
+            dependencies.try_for_each_property(|name, _, value| {
+                let Some(catalog_name) = value
+                    .as_utf8_string_literal()
+                    .and_then(|literal| literal.strip_prefix(b"catalog:"))
+                else {
+                    return Ok(());
+                };
+                lockfile.catalogs.steer_to_latest(
+                    &mut string_buf,
+                    strings::trim(catalog_name, &strings::WHITESPACE_CHARS),
+                    name,
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Writes the literal each recorded catalog entry resolved to into the root AST; returns `changed`.
 pub(crate) fn edit_catalogs_after_update(
     manager: &mut PackageManager,
     root_package_json: &Expr,
@@ -793,26 +840,23 @@ pub(crate) fn edit_catalogs_after_update(
                 .as_utf8_string_literal()
                 .unwrap_or_else(|| bun_core::out_of_memory());
 
-            let Some(info) = index
+            let Some(new_literal) = index
                 .candidates(key_str)
                 .and_then(|candidates| CatalogInfoIndex::pick(candidates, &infos, catalog_name))
-                .map(|i| &infos[i])
+                .and_then(|i| {
+                    let info = &infos[i];
+                    info.new_version_literal.as_deref().filter(|new_literal| {
+                        !strings::eql_long(new_literal, &info.original_version_literal, true)
+                    })
+                })
             else {
                 continue;
             };
 
-            let new_literal: &[u8] = arena_str(
-                arena,
-                info.new_version_literal
-                    .as_deref()
-                    .unwrap_or(&info.original_version_literal),
-            );
-
-            changed |= !strings::eql_long(new_literal, &info.original_version_literal, true);
-
+            changed = true;
             dep.value = Some(Expr::allocate(
                 arena,
-                E::EString::init(new_literal),
+                E::EString::init(arena_str(arena, new_literal)),
                 bun_ast::Loc::EMPTY,
             ));
         }
@@ -1371,6 +1415,10 @@ pub(crate) fn edit(
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {
+                // --latest steers the row at resolve time (`version_pick`); the entry keeps its declared literal until a resolved version replaces it.
+                if update_to_latest {
+                    continue;
+                }
                 // The entry `bun update` is updating keeps its alias target whatever gets resolved.
                 let existing: Option<&[u8]> = (manager.subcommand == Subcommand::Update
                     && options.before_install
@@ -1393,9 +1441,6 @@ pub(crate) fn edit(
                 };
                 if let Some(existing) = existing {
                     version_literal = with_alias_of(arena, existing, version_literal);
-                }
-                if update_to_latest {
-                    version_literal = with_alias_of(arena, version_literal, b"latest");
                 }
                 if e_string.data.slice() != version_literal {
                     changed = true;

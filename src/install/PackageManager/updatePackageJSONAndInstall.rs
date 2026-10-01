@@ -621,19 +621,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             && root_is_targeted
         {
             let root_package_json_root: bun_ast::Expr = root_package_json.root;
-            if PackageJSONEditor::edit_catalogs_before_update(manager, &root_package_json_root)?
-                && manager.options.do_.contains(Do::UPDATE_TO_LATEST)
-            {
-                // entries now hold a temporary `latest`; refresh the cache so install resolves those.
-                print_package_json_into_cache_entry(root_package_json, root_package_json_root);
-                if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
-                    bun_core::pretty_errorln!(
-                        "package.json failed to parse due to error {}",
-                        err.name(),
-                    );
-                    Global::crash();
-                }
-            }
+            PackageJSONEditor::record_catalog_entries(manager, &root_package_json_root)?;
         }
 
         if manager.options.add_catalog.is_some() && manager.workspace_name_hash.is_some() {

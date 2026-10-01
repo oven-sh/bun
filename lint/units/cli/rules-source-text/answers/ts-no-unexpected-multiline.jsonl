@@ -56,3 +56,21 @@
 {"code":"@a.b\n(c) class A {}","type":"ts","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
 {"code":"enum E { A = a\n(b) }","type":"ts","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
 {"code":"namespace N { a\n(b) }","type":"ts","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"f(<T>(x))","type":"ts","reports":[]}
+{"code":"f\n(<T>(x))","type":"ts","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"f(<T>\n(x))","type":"ts","reports":[]}
+{"code":"f(\n<T>(x))","type":"ts","reports":[]}
+{"code":"a[<T>(x)]","type":"ts","reports":[]}
+{"code":"a\n[<T>(x)]","type":"ts","reports":["2:1-2:2 Unexpected newline between object and [ of property access."]}
+{"code":"a[<T>\n(x)]","type":"ts","reports":[]}
+{"code":"f<T>(<U>(x))","type":"ts","reports":[]}
+{"code":"f<T>\n(<U>(x))","type":"ts","reports":[]}
+{"code":"f\n<T>(<U>(x))","type":"ts","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"f(<T>((x)))","type":"ts","reports":[]}
+{"code":"f((<T>(x)))","type":"ts","reports":[]}
+{"code":"f\n((<T>(x)))","type":"ts","reports":["2:1-2:2 Unexpected newline between function and ( of function call."]}
+{"code":"g<T>(x)","type":"ts","reports":[]}
+{"code":"g<T>((x))","type":"ts","reports":[]}
+{"code":"g<T>(\n(x))","type":"ts","reports":[]}
+{"code":"a > (f)(x)","type":"ts","reports":[]}
+{"code":"a\n/ <T>(b) /g","type":"ts","reports":["2:1-2:2 Unexpected newline between numerator and division operator."]}

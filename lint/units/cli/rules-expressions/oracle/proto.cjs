@@ -609,6 +609,11 @@ function lint(sourceCode, report) {
 					depth--;
 				} else if (!bounded && depth === 0 && (t.value === "||" || t.value === "&&")) break;
 			}
+			// A template substitution is one level, as `(`: its head opens it and its tail closes it.
+			if (t.type === "Template") {
+				if (t.value.endsWith("${") && t.value.startsWith("`")) depth++;
+				else if (t.value.startsWith("}") && t.value.endsWith("`")) depth--;
+			}
 			out.push(t.type + "\u0001" + t.value);
 		}
 		const text = out.join("\u0000");

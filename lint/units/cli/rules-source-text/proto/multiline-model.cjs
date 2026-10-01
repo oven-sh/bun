@@ -48,8 +48,8 @@ function openerBack(text, to, open) {
 	}
 	if (open !== "(" || leftmost < 0 || at === 0) return -1;
 	const stop = text[at - 1];
-	// A comment may stand before the run: the run may go on behind it.
-	if ((stop === "/" && text[at - 2] === "*") || stop.charCodeAt(0) >= 0x80) return -1;
+	// A comment may stand before the run, and so may the `<T>` of a type assertion, which is no node: the run may go on behind it.
+	if ((stop === "/" && text[at - 2] === "*") || stop === ">" || stop.charCodeAt(0) >= 0x80) return -1;
 	return leftmost;
 }
 
@@ -150,13 +150,13 @@ const model = {
 					else { if (ch === "/" && text[at - 2] !== "*") found = at - 1; break; }
 				}
 				if (found < 0) {
-					// The exact way: the last token before the right operand that is no `(`.
+					// The exact way: the last `/` before the right operand. After the operator only `(` and a type assertion stand.
 					let last = null;
 					for (const t of tokensFrom(from)) {
 						if (t.range[0] >= own(inner.right)) break;
-						if (t.value !== "(") last = t;
+						if (t.type === "Punctuator" && t.value === "/") last = t;
 					}
-					if (!last || last.value !== "/") return;
+					if (!last) return;
 					found = last.range[0];
 					paths.exactOpen++;
 				} else paths.fastOpen++;

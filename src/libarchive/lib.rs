@@ -332,7 +332,7 @@ pub mod lib {
         /// Appends the data of the current entry to `out`, at most `size`
         /// bytes. Reads in steps so untrusted entry sizes don't drive
         /// allocation. `Ok(false)` means libarchive reported a read error.
-        pub fn read_data_to_vec(
+        pub(crate) fn read_data_to_vec(
             &self,
             size: usize,
             out: &mut Vec<u8>,

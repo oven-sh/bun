@@ -1245,7 +1245,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Err(crate::Error::SyntaxError);
             }
             // `parseParenthesizedExpression`: the ")" is expected at the ":".
-            p.lexer.ts_error(type_colon_range, 1005);
+            p.lexer.ts_expected(type_colon_range, ")");
         }
 
         // Are these arguments for a call to a function named "async"?

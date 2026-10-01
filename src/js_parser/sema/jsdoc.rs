@@ -184,6 +184,8 @@ pub(crate) struct JsDoc {
     pub(crate) errors: Vec<(u32, u32)>,
     /// What the checker objects to in its syntax, which it only sees once that is reparsed.
     pub(crate) checker_errors: Vec<(u32, u32)>,
+    /// `hir::File::error_arguments`
+    pub(crate) error_arguments: Vec<(u32, Box<str>)>,
 }
 
 /// The JSDoc comments of a file that can have tags, in source order.
@@ -477,22 +479,28 @@ impl<'p, 'a> Reader<'p, 'a> {
             is_in_lexer: false,
         };
         let tags = reader.comment(start);
-        let (errors, checker_errors) = reader.take_errors(logged);
+        let (errors, checker_errors, error_arguments) = reader.take_errors(logged);
         JsDoc {
             start: start as u32,
             end: end as u32,
             tags,
             errors,
             checker_errors,
+            error_arguments,
         }
     }
 
     /// What was logged since the log had `before` messages, errors and warnings, by the codes TypeScript has for it: the errors of
     /// its parser, and those of its checker.
-    fn take_errors(&mut self, before: (usize, u32, u32)) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
+    #[allow(clippy::type_complexity)]
+    fn take_errors(
+        &mut self,
+        before: (usize, u32, u32),
+    ) -> (Vec<(u32, u32)>, Vec<(u32, u32)>, Vec<(u32, Box<str>)>) {
         let source = self.p.source.contents();
         let log = self.p.log();
         let (mut errors, mut checker_errors) = (Vec::new(), Vec::new());
+        let mut error_arguments = Vec::new();
         for msg in log.msgs.drain(before.0..) {
             if msg.kind != bun_ast::Kind::Err {
                 continue;
@@ -513,12 +521,16 @@ impl<'p, 'a> Reader<'p, 'a> {
                     } else {
                         &mut errors
                     };
-                    list.push(((offset as i64 + i64::from(delta)).max(0) as u32, code));
+                    let start = (offset as i64 + i64::from(delta)).max(0) as u32;
+                    list.push((start, code));
+                    if let Some(token) = super::error_argument(&msg.data.text) {
+                        error_arguments.push((start, token));
+                    }
                 }
             }
         }
         (log.errors, log.warnings) = (before.1, before.2);
-        (errors, checker_errors)
+        (errors, checker_errors, error_arguments)
     }
 
     /// `parseErrorAt`
@@ -533,6 +545,15 @@ impl<'p, 'a> Reader<'p, 'a> {
     /// `parseErrorAtCurrentToken`
     fn error_at_token(&mut self, code: u32) {
         self.error(self.start, self.end - self.start, code);
+    }
+
+    /// `parseErrorAtCurrentToken`, of `'{0}' expected.`
+    fn expected_at_token(&mut self, token: &str) {
+        let range = Range {
+            loc: bun_ast::usize2loc(self.start),
+            len: (self.end - self.start) as i32,
+        };
+        self.p.lexer.ts_expected(range, token);
     }
 
     /// `nodePos`
@@ -768,7 +789,21 @@ impl<'p, 'a> Reader<'p, 'a> {
         if self.eat(token) {
             return true;
         }
-        self.error_at_token(1005);
+        self.expected_at_token(match token {
+            Token::At => "@",
+            Token::Asterisk => "*",
+            Token::OpenBrace => "{",
+            Token::CloseBrace => "}",
+            Token::OpenBracket => "[",
+            Token::CloseBracket => "]",
+            Token::LessThan => "<",
+            Token::Equals => "=",
+            Token::Comma => ",",
+            Token::Dot => ".",
+            Token::DotDotDot => "...",
+            Token::Backtick => "`",
+            _ => "",
+        });
         false
     }
 
@@ -1350,7 +1385,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         let ty = self.jsdoc_type();
         // `parseExpectedJSDoc`
         if has_brace && !self.eat_jsdoc(Token::CloseBrace) {
-            self.error_at_token(1005);
+            self.expected_at_token("}");
         }
         ty
     }

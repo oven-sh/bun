@@ -754,8 +754,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `parseBlock`: the body is a missing block. Nothing is consumed.
         let before = p.lexer.prev_error_loc;
         let range = p.lexer.range();
-        p.lexer
-            .ts_error(range, if opts.brace_or_semicolon { 1144 } else { 1005 });
+        if opts.brace_or_semicolon {
+            p.lexer.ts_error(range, 1144);
+        } else {
+            p.lexer.ts_expected(range, "{");
+        }
         p.lexer.put_up_with(before)?;
         p.mark_type_syntax(func.open_parens_loc, Mark::MissingBody, range.loc);
         // Tells a missing block from no body, whose `loc` stays empty.

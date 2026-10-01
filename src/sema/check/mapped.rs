@@ -2085,7 +2085,7 @@ impl<'p> Checker<'p> {
         );
         let is_cacheable = self.leave();
         if self.left_a_circle {
-            self.circular_mapped_property();
+            self.circular_mapped_property(of, prop.name);
             let kept = self
                 .p
                 .mapped_prop_types

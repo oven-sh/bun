@@ -1258,6 +1258,9 @@ pub struct File {
     pub legacy_decorators: bool,
     /// What the parser objected to and went on from, the tree being whole: where, and the code it goes by.
     pub early_errors: Vec<(u32, u32)>,
+    /// What an error of the parser names (`{0}`) that cannot be told from where it is: the token in `'{0}' expected.`, say. By where the
+    /// error is.
+    pub error_arguments: Few<(u32, Box<str>)>,
     /// `hasParseDiagnostics`: the parser or the scanner reported an error. `grammarErrorOnNode` and the binder's checks of
     /// reserved names then report nothing.
     pub has_parse_diagnostics: bool,

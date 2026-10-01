@@ -233,6 +233,9 @@ impl<'p, 'a> Lower<'p, 'a> {
             file.jsdoc_comments.push((doc.start, doc.end));
             if is_attached {
                 file.jsdoc_errors.extend_from_slice(&doc.errors);
+                if !doc.error_arguments.is_empty() {
+                    file.error_arguments.extend_from_slice(&doc.error_arguments);
+                }
             }
         }
         file.jsdoc_types.sort_unstable_by_key(|t| t.0);

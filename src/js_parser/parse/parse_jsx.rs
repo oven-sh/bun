@@ -565,7 +565,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && !p.lexer.is_log_disabled
                     {
                         let at = p.lexer.loc();
-                        p.lexer.ts_error(bun_ast::Range { loc: at, len: 0 }, 1005);
+                        p.lexer
+                            .ts_expected(bun_ast::Range { loc: at, len: 0 }, "</");
                         p.lexer.list_contexts = saved_contexts;
                         return Ok(p.new_expr(
                             E::JSXElement {
@@ -646,7 +647,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .ts_error(bun_ast::Range { loc: start, len: 0 }, 17014);
         }
         let end_of_file = p.lexer.range();
-        p.lexer.ts_error(end_of_file, 1005);
+        p.lexer.ts_expected(end_of_file, "</");
     }
 
     /// `parseJsxElementOrSelfClosingElementOrFragment`: the closing tag `end_tag`, just parsed, does not name the element `tag`.
@@ -681,12 +682,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(true);
         }
         let len = (end_tag.range.end().start - after_slash.start).max(0);
-        p.lexer.ts_error(
+        let opening = p.source.contents();
+        let opening = opening
+            .get(tag.range.loc.to_usize()..tag.range.end().to_usize())
+            .unwrap_or_default();
+        p.lexer.ts_error_about(
             bun_ast::Range {
                 loc: after_slash,
                 len,
             },
             17002,
+            opening,
         );
         Ok(false)
     }

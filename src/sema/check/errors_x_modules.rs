@@ -643,8 +643,14 @@ impl Checker<'_> {
                 // With `allowJs` the JavaScript is a file of the program like any other.
                 if !self.p.files.options.allow_js {
                     report(2665, false);
-                    // The file it resolves to is not kept.
-                    self.note(start, 0, 2665, vec![self.atom_text(name)]);
+                    let at = from.untyped_imports.iter().position(|u| u.0 == name);
+                    let path = from.untyped_import_files[at.unwrap()].0;
+                    self.note(
+                        start,
+                        0,
+                        2665,
+                        vec![self.atom_text(name), self.atom_text(path)],
+                    );
                 }
             } else if validates {
                 let code = if !self.p.files.options.resolve_json_module && text.ends_with(b".json")

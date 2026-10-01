@@ -147,14 +147,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !opts.is_class && func.body.loc.is_empty() {
                 // `checkGrammarMethod`, `checkGrammarAccessor`: '{' expected, at the last character of the member.
                 let end = p.lexer.full_start();
-                p.lexer.ts_grammar_error(
+                p.lexer.ts_grammar_expected(
                     bun_ast::Range {
                         loc: bun_ast::Loc {
                             start: end.start - 1,
                         },
                         len: 1,
                     },
-                    1005,
+                    "{",
                 );
             }
         }

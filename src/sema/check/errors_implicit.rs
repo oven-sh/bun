@@ -749,10 +749,11 @@ impl Checker<'_> {
         }
         let mut context_is_known = None;
         // A leading `this` parameter is not among `params`. The type of a `@this` tag is not its own: the tag is dropped if `this`
-        // is written.
+        // is written. In a function type that is itself written in a comment, what follows `this:` is.
         if !matches!(decl.kind, FnKind::Getter | FnKind::Setter)
             && let Some(start) = super::errors_x_signatures::this_parameter(hir, func)
-            && (decl.this_ty.is_none() || hir.is_in_jsdoc(hir[decl.this_ty].pos))
+            && (decl.this_ty.is_none()
+                || hir.is_in_jsdoc(hir[decl.this_ty].pos) && !hir.is_in_jsdoc(start))
         {
             // `getContextualThisParameterType`
             let is_told = match bound.fns[func.idx()].owner {

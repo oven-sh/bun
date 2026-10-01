@@ -245,7 +245,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // chain hangs from what it makes. Only `new` asks for this level.
         if level.eql(Level::Member) && p.lexer.tolerant {
             let range = p.lexer.range();
-            p.lexer.ts_error(range, 1209);
+            let made = p.source.contents();
+            let made = made
+                .get(left.loc.to_usize()..p.lexer.full_start().to_usize())
+                .unwrap_or_default();
+            p.lexer.ts_error_about(range, 1209, made);
             return Ok(Continuation::Done);
         }
         let after_dot = bun_ast::usize2loc(p.lexer.end);

@@ -184,7 +184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 start: name.loc.start + name.len,
             };
             p.lexer
-                .ts_grammar_error(bun_ast::Range { loc: end, len: 0 }, 1005);
+                .ts_grammar_expected(bun_ast::Range { loc: end, len: 0 }, "(");
         } else {
             p.lexer
                 .ts_grammar_error(name, if is_callee { 18061 } else { 17012 });

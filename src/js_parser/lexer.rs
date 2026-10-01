@@ -1100,6 +1100,36 @@ impl<'a> Lexer<'a> {
         let _ = self.add_range_error(r, format_args!("TS{code}"));
     }
 
+    /// `ts_error`, of an error that names `what` (`{0}`).
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn ts_error_about(&mut self, r: Range, code: u32, what: &[u8]) {
+        debug_assert!(self.tolerant);
+        if self.is_log_disabled {
+            self.swallowed += 1;
+            return;
+        }
+        let _ = self.add_range_error(r, format_args!("TS{code} {}", bstr::BStr::new(what)));
+    }
+
+    /// `'{0}' expected.`, of `token`.
+    pub(crate) fn ts_expected(&mut self, r: Range, token: &str) {
+        self.ts_error_about(r, 1005, token.as_bytes());
+    }
+
+    /// The same, where TypeScript's checker says it (`ts_grammar_error`).
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn ts_grammar_expected(&mut self, r: Range, token: &str) {
+        debug_assert!(self.tolerant);
+        if self.is_log_disabled {
+            self.swallowed += 1;
+            return;
+        }
+        self.log()
+            .add_range_error_fmt(Some(self.source), r, format_args!("TG1005 {token}"));
+    }
+
     /// Logs an error that TypeScript's checker reports through `grammarErrorOnNode`, not its parser. It is only reported if
     /// the file has no syntax errors, and the rule of one error per position (`parseErrorAtRange`) does not apply to it.
     #[cold]
@@ -1677,7 +1707,7 @@ impl<'a> Lexer<'a> {
                 // `parseExpected`
                 let before = self.prev_error_loc;
                 let r = self.range();
-                self.ts_error(r, 1005);
+                self.ts_expected(r, std::str::from_utf8(keyword).unwrap_or_default());
                 return self.put_up_with(before);
             }
             if cfg!(debug_assertions) {

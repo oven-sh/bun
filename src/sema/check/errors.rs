@@ -58,7 +58,7 @@ impl Checker<'_> {
             .map(|&(start, code)| Diagnostic { start, code })
             .partition(|d| is_syntactic_early_error(hir, d.start, d.code));
         if self.explains {
-            for &(start, code) in &hir.early_errors {
+            for &(start, code) in hir.early_errors.iter().chain(hir.jsdoc_errors.iter()) {
                 explain_early_error(self, file, start, code);
             }
         }
@@ -1095,7 +1095,12 @@ impl Checker<'_> {
             // `GetResolutionDiagnostic`: a `.jsx` file needs `jsx` before anything else.
             if !is_jsx_set && module.jsx_imports.contains(&(spec, mode)) {
                 out.push(Diagnostic { start, code: 6142 });
-                self.explain(start, 6142, |c| vec![c.atom_text(spec)]);
+                let at = module
+                    .untyped_imports
+                    .iter()
+                    .position(|&u| u == (spec, mode));
+                let path = module.untyped_import_files[at.unwrap()].0;
+                self.explain(start, 6142, |c| vec![c.atom_text(spec), c.atom_text(path)]);
             // `errorOnImplicitAnyModule`
             } else if options.no_implicit_any && !is_side_effect {
                 out.push(Diagnostic { start, code: 7016 });
@@ -3971,6 +3976,12 @@ fn explain_early_error(c: &Checker<'_>, file: FileId, start: u32, code: u32) {
     let hir = c.hir(file);
     let (text, at) = (&hir.text[..], start as usize);
     match code {
+        // `parseExpected`, `parseJsxElementOrSelfClosingElementOrFragment`, `parseNewExpressionOrNewDotTarget`
+        1005 | 1209 | 17002 => {
+            if let Some((_, named)) = hir.error_arguments.iter().find(|e| e.0 == start) {
+                c.note(start, 0, code, vec![named.to_string()]);
+            }
+        }
         1029 | 1040 | 1243 => {
             let (word, before) = (word_at(c, file, start), modifiers_before(text, at));
             if let Some(arguments) = modifiers_in_message(code, &word, &before) {

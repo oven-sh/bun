@@ -795,8 +795,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn abort_list_or_skip(&mut self, kind: ListKind) -> Result<bool, Error> {
         let before = self.lexer.prev_error_loc;
         let range = self.lexer.range();
-        let code = self.parsing_context_error(kind);
-        self.lexer.ts_error(range, code);
+        match self.parsing_context_error(kind) {
+            1005 if kind == ListKind::SourceElements => self.lexer.ts_expected(range, "export"),
+            1005 => self.lexer.ts_expected(range, "}"),
+            code => self.lexer.ts_error(range, code),
+        }
         if self.is_in_some_parsing_context() {
             self.lexer.put_up_with(before)?;
             return Ok(true);

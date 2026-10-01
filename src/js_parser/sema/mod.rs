@@ -163,6 +163,28 @@ pub(crate) fn early_error(text: &[u8], at: &[u8]) -> Option<(u32, i32)> {
     early_error_in_place(text).map(|code| (code, 0))
 }
 
+/// `hir::File::error_arguments`, of an error the parser logged as `text`.
+pub(crate) fn error_argument(text: &[u8]) -> Option<Box<str>> {
+    // `Lexer::ts_error_about`
+    let said = (text.starts_with(b"TS") || text.starts_with(b"TG"))
+        .then(|| text.iter().position(|&b| b == b' '))
+        .flatten();
+    let token = match said {
+        Some(space) => &text[space + 1..],
+        // `Lexer::expected_string`: `Expected ";" but found "x"`
+        None => {
+            let rest = text.strip_prefix(b"Expected ")?;
+            let end = rest.windows(11).position(|w| w == b" but found ")?;
+            let token = &rest[..end];
+            token
+                .strip_prefix(b"\"")
+                .and_then(|token| token.strip_suffix(b"\""))
+                .unwrap_or(token)
+        }
+    };
+    Some(String::from_utf8_lossy(token).into())
+}
+
 fn early_error_in_place(text: &[u8]) -> Option<u32> {
     // `Lexer::ts_error` (TS), `ts_grammar_error` (TG), `ts_checker_error` (TC): said in TypeScript's own terms to begin with.
     if let Some(code) = text
@@ -170,7 +192,9 @@ fn early_error_in_place(text: &[u8]) -> Option<u32> {
         .or_else(|| text.strip_prefix(b"TG"))
         .or_else(|| text.strip_prefix(b"TC"))
     {
-        return std::str::from_utf8(code).ok()?.parse().ok();
+        // `Lexer::ts_error_about` goes on to say what.
+        let digits = code.iter().take_while(|b| b.is_ascii_digit()).count();
+        return std::str::from_utf8(&code[..digits]).ok()?.parse().ok();
     }
     let (starts, ends) = (|s: &[u8]| text.starts_with(s), |s: &[u8]| text.ends_with(s));
     let refused_name = text

@@ -75,6 +75,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         decorators,
         legacy_decorators,
         early_errors,
+        error_arguments: _,
         syntax_errors,
         error_pos: _,
         source_len,

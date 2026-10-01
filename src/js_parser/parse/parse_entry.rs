@@ -545,6 +545,7 @@ impl<'a> Parser<'a> {
             }
             let syntax = *p.type_syntax.take().unwrap();
             let logged = Self::logged_syntax_errors(p.log(), self.source.contents());
+            let error_arguments = Self::error_arguments(p.log());
             let mut file = crate::sema::lower::Lower::run_declaration_file(
                 p,
                 syntax,
@@ -557,6 +558,7 @@ impl<'a> Parser<'a> {
             {
                 file.early_errors.extend(syntactic);
                 file.checker_errors.extend(checker);
+                file.error_arguments.extend(error_arguments);
             }
             return (file, false);
         }
@@ -566,6 +568,7 @@ impl<'a> Parser<'a> {
         // What is objected to without the tree suffering is for the checker to say, in its own words.
         // Sorted by which part of TypeScript reports it.
         let (mut syntactic, mut grammar, mut checker) = (Vec::new(), Vec::new(), Vec::new());
+        let error_arguments = Self::error_arguments(p.log());
         let mut has_errors = false;
         for msg in p.log().msgs.iter().filter(|m| m.kind == bun_ast::Kind::Err) {
             let offset = msg.data.location.as_ref().map(|l| l.offset);
@@ -597,6 +600,9 @@ impl<'a> Parser<'a> {
             scratch_lexer(&self),
         );
         file.has_errors = has_errors;
+        if !error_arguments.is_empty() {
+            file.error_arguments.extend(error_arguments);
+        }
         // `hasParseDiagnostics`. The lowering does not say who reports what it pushed, so `check_file` sorts that by code.
         file.has_parse_diagnostics = has_errors
             || !syntactic.is_empty()
@@ -614,6 +620,18 @@ impl<'a> Parser<'a> {
             file.checker_errors.extend(checker);
         }
         (file, awaited)
+    }
+
+    /// `hir::File::error_arguments`, of what is in `log`.
+    fn error_arguments(log: &bun_ast::Log) -> Vec<(u32, Box<str>)> {
+        log.msgs
+            .iter()
+            .filter(|msg| msg.kind == bun_ast::Kind::Err)
+            .filter_map(|msg| {
+                let offset = msg.data.location.as_ref()?.offset;
+                Some((offset as u32, crate::sema::error_argument(&msg.data.text)?))
+            })
+            .collect()
     }
 
     /// The syntax errors in `log`, and the errors TypeScript's checker reports with a plain `c.error`: start and code.

@@ -519,9 +519,19 @@ impl Checker<'_> {
                     start: node.pos,
                     code: 2615,
                 });
-                // Which property of which mapped type is not kept.
                 let end = self.end_of_type_node(file, TypeNodeId(n as u32));
-                self.note(node.pos, end, 2615, Vec::new());
+                let names = &self.p.circular_mapped_prop_names;
+                let named = names.get(&(file, TypeNodeId(n as u32)));
+                self.explain_to(node.pos, end, 2615, |c| match named {
+                    Some((mapped, name)) => vec![
+                        match c.prop_of(mapped, name) {
+                            Some((prop, _)) => c.prop_to_string(&prop),
+                            None => c.atom_text(name),
+                        },
+                        c.type_to_string(mapped),
+                    ],
+                    None => Vec::new(),
+                });
             }
         }
     }

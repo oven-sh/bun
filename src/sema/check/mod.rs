@@ -157,6 +157,8 @@ pub struct Program {
     /// Type nodes at which 2615 is reported: the type of a property of a mapped type depends on itself. See
     /// `first_checked_type_node`.
     circular_mapped_props: NodeSet<(FileId, TypeNodeId)>,
+    /// Which property of which mapped type it is, for the message.
+    circular_mapped_prop_names: ByNodeKept<(FileId, TypeNodeId), (TypeId, Atom)>,
     /// Type nodes whose resolution produced a tuple of 10,000 or more elements (2799). `TupleNormalizer.normalize`
     too_large_tuples: NodeSet<(FileId, TypeNodeId)>,
     /// The variables in a circle that goes through a call: whoever asks first is told what the initializer comes to.
@@ -382,6 +384,7 @@ impl Program {
             circular_aliases: NodeSet::new(&symbols),
             circular_mapped_keys: NodeSet::new(&type_nodes),
             circular_mapped_props: NodeSet::new(&type_nodes),
+            circular_mapped_prop_names: ByNodeKept::new(&type_nodes),
             too_large_tuples: NodeSet::new(&type_nodes),
             circular_through_call: NodeSet::new(&pats),
             initializer_is_undefined: ByNode::new(&params),
@@ -1277,7 +1280,7 @@ impl<'p> Checker<'p> {
     }
 
     /// `getTypeOfMappedSymbol`: reports 2615 for the `Query::MappedProp` that was just left in a cycle.
-    pub(super) fn circular_mapped_property(&mut self) {
+    pub(super) fn circular_mapped_property(&mut self, mapped: TypeId, name: Atom) {
         let frame = self.stack.len();
         if let Some(i) = self
             .pending_circular_mapped_props
@@ -1286,6 +1289,9 @@ impl<'p> Checker<'p> {
         {
             let (_, node) = self.pending_circular_mapped_props.swap_remove(i);
             self.p.circular_mapped_props.insert(node, ());
+            self.p
+                .circular_mapped_prop_names
+                .insert(node, (mapped, name));
         }
     }
 

@@ -1006,7 +1006,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             // 'with' expected.
             let (range, before) = (self.lexer.range(), self.lexer.prev_error_loc);
-            self.lexer.ts_error(range, 1005);
+            self.lexer.ts_expected(range, "with");
             self.lexer.put_up_with(before)?;
         }
         self.lexer.expect(T::TColon)?;
@@ -1737,7 +1737,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let operand_opts = self.type_operand_opts(opts);
                                 self.skip_nested_type::<KEEP>(Level::Prefix, operand_opts)?;
                                 // `checkGrammarTypeOperatorNode`: 'symbol' expected.
-                                self.lexer.ts_grammar_error(operand, 1005);
+                                self.lexer.ts_grammar_expected(operand, "symbol");
                                 if KEEP {
                                     let ty = self.last_type();
                                     self.emit_type_if_complete(

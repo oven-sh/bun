@@ -2891,7 +2891,19 @@ fn get_or_put_resolved_package(
         dependency::version::Tag::Folder => {
             let folder = *version.folder();
             let res: FolderResolutionValue = 'res: {
-                if this.lockfile.is_workspace_dependency(dependency_id) {
+                let declared_by_workspace = this.lockfile.is_workspace_dependency(dependency_id);
+
+                if !declared_by_workspace
+                    && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
+                    && !this.lockfile.is_trusted_folder_dependency(dependency_id)
+                {
+                    break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
+                }
+
+                // The path is relative to the top-level dir when the root or a workspace
+                // declares the dependency, or when a root `overrides`/`resolutions` rule
+                // supplies it. Either way the folder is on disk now, so read it.
+                if declared_by_workspace || this.lockfile.is_overridden_dependency(dependency_id) {
                     // relative to cwd
                     // reshaped for borrowck — `folder_path` borrows
                     // `string_bytes`; detach the slice lifetime so the
@@ -2925,13 +2937,9 @@ fn get_or_put_resolved_package(
                     );
                 }
 
-                // transitive folder dependencies do not have their dependencies resolved
-                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
-                    && !this.lockfile.is_trusted_folder_dependency(dependency_id)
-                {
-                    break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
-                }
-
+                // A remote package declared the path relative to itself and is not on disk
+                // yet, so its dependencies are not resolved. The installer links the folder
+                // relative to the declaring package.
                 let mut package = Package::default();
 
                 {

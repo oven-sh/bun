@@ -26,6 +26,7 @@ use bun_sha_hmac as Crypto;
 use bun_sys::{self as sys, Fd, File};
 
 use crate::config_version::ConfigVersion;
+use crate::dependency::DependencyExt as _;
 use crate::migration;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
@@ -877,16 +878,34 @@ impl Lockfile {
         false
     }
 
+    /// Does a root `overrides`/`resolutions` rule select package `id` for some edge?
+    pub(crate) fn is_override_selected_package(&self, id: PackageID) -> bool {
+        if self.overrides.is_empty() {
+            return false;
+        }
+        self.buffers
+            .resolutions
+            .iter()
+            .enumerate()
+            .any(|(dep_id, &pkg_id)| {
+                pkg_id == id && self.is_overridden_dependency(dep_id as DependencyID)
+            })
+    }
+
     /// Is dependency `id` declared by the root, a workspace, or a `file:` package
-    /// one of them depends on directly? Checked, not assumed: a migrated lockfile
-    /// can carry dependencies for a folder that a registry package shipped.
+    /// one of them depends on directly or selects through a root rule? Checked,
+    /// not assumed: a migrated lockfile can carry dependencies for a folder that
+    /// a registry package shipped.
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
         let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
             return false;
         };
         match self.packages.items_resolution()[parent_id as usize].tag {
             ResolutionTag::Root | ResolutionTag::Workspace => true,
-            ResolutionTag::Folder => self.is_workspace_declared_package(parent_id),
+            ResolutionTag::Folder => {
+                self.is_workspace_declared_package(parent_id)
+                    || self.is_override_selected_package(parent_id)
+            }
             _ => false,
         }
     }
@@ -926,6 +945,31 @@ impl Lockfile {
         package_id != invalid_package_id
             && self.packages.slice().items_resolution()[package_id as usize].tag
                 == ResolutionTag::Folder
+    }
+
+    /// Did the resolver apply a root `overrides`/`resolutions` rule (plain or scoped) to this
+    /// dependency? Same lookup as `enqueue_dependency_with_main`: by the real package name of an
+    /// alias, and never for a `workspace:` edge or an `npm:` alias. Rules are written in the
+    /// root package.json, so a `file:` path applied through one is relative to the top-level
+    /// dir whichever package declares the dependency.
+    pub(crate) fn is_overridden_dependency(&self, id: DependencyID) -> bool {
+        let dependency = &self.buffers.dependencies[id as usize];
+        if dependency.behavior.is_workspace() {
+            return false;
+        }
+        let name_hash = match dependency.version.tag {
+            dependency::version::Tag::Npm if dependency.version.npm().is_alias => return false,
+            dependency::version::Tag::DistTag
+            | dependency::version::Tag::Git
+            | dependency::version::Tag::Github
+            | dependency::version::Tag::Npm
+            | dependency::version::Tag::Tarball
+            | dependency::version::Tag::Workspace => {
+                Semver::string::Builder::string_hash(self.str(&dependency.realname()))
+            }
+            _ => dependency.name_hash,
+        };
+        self.overrides.get(self, id, name_hash).is_some()
     }
 
     /// Returns the package id of the workspace the install is taking place in.

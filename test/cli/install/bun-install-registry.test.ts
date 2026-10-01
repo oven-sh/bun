@@ -5955,6 +5955,146 @@ describe("transitive file dependencies", () => {
       version: "1.1.1",
     });
   });
+
+  // `file-dep@1.0.0` declares `"files": "file:./the-files"` and ships `the-files/`
+  // (index.js + package.json) in its tarball.
+  test("a root override redirects a registry package's own file: dependency to a folder in the project", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: { "file-dep": "1.0.0" },
+          overrides: { files: "file:./vendor/files" },
+        }),
+      ),
+      write(join(packageDir, "vendor", "files", "package.json"), JSON.stringify({ name: "files", version: "9.9.9" })),
+      write(join(packageDir, "vendor", "files", "vendored.js"), ""),
+    ]);
+
+    for (const frozenLockfile of [false, true]) {
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+      const { out } = await runBunInstall(env, packageDir, { frozenLockfile });
+
+      expect(out).toContain("2 packages installed");
+      expect(await readdirSorted(join(packageDir, "node_modules", "file-dep", "node_modules", "files"))).toEqual([
+        "package.json",
+        "vendored.js",
+      ]);
+    }
+  });
+
+  test("a scoped override for another dependent leaves a registry package's own file: dependency alone", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "file-dep": "1.0.0" },
+        // Names `files`, but only as a dependency of `other`, which file-dep is not.
+        overrides: { other: { files: "file:./vendor/files" } },
+      }),
+    );
+
+    const { out } = await runBunInstall(env, packageDir);
+
+    expect(out).toContain("2 packages installed");
+    expect(await readdirSorted(join(packageDir, "node_modules", "file-dep", "node_modules", "files"))).toEqual([
+      "index.js",
+      "package.json",
+    ]);
+  });
+
+  // A `file:` override is written in the root package.json, so the folder is
+  // read like a root `file:` dependency: its dependencies are resolved and
+  // installed, even when the overridden dependency is transitive.
+  for (const [declarer, dependencies, overridden] of [
+    ["a file: package", { "outer": "file:./outer" }, "inner"],
+    ["a registry package", { "one-dep": "1.0.0" }, "no-deps"],
+  ] as const) {
+    test(`a file: override of a dependency of ${declarer} is installed with its dependencies`, async () => {
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies,
+            overrides: { [overridden]: "file:./vendor" },
+          }),
+        ),
+        write(
+          join(packageDir, "outer", "package.json"),
+          JSON.stringify({ name: "outer", version: "1.0.0", dependencies: { inner: "^1.0.0" } }),
+        ),
+        write(
+          join(packageDir, "vendor", "package.json"),
+          JSON.stringify({ name: overridden, version: "9.9.9", dependencies: { "a-dep": "1.0.1" } }),
+        ),
+      ]);
+
+      for (const args of [["--save-text-lockfile"], ["--frozen-lockfile"]]) {
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install", ...args],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+
+        const lockfile = await file(join(packageDir, "bun.lock")).text();
+        expect(lockfile).toContain(`"${overridden}@file:vendor", { "dependencies": { "a-dep": "1.0.1" } }`);
+        expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+          name: "a-dep",
+          version: "1.0.1",
+        });
+      }
+    });
+  }
+
+  // The override target is outside the project and declares its own `file:`
+  // dependency. That path is trusted like one a root `file:` package declares.
+  test("a file: override outside the project is installed with its own file: dependency", async () => {
+    using dir = tempDir("override-outside-project", {
+      "vendor/package.json": JSON.stringify({ name: "no-deps", version: "9.9.9", dependencies: { sub: "file:./sub" } }),
+      "vendor/index.js": "module.exports = require('sub');",
+      "vendor/sub/package.json": JSON.stringify({ name: "sub", version: "1.0.0" }),
+      "vendor/sub/index.js": "module.exports = 'sub';",
+    });
+    const vendor = join(String(dir), "vendor").replaceAll("\\", "/");
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "one-dep": "1.0.0" },
+        overrides: { "no-deps": `file:${vendor}` },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("3 packages installed");
+    expect(exitCode).toBe(0);
+
+    const lockfile = (await file(join(packageDir, "bun.lock")).text()).replaceAll("\\\\", "/");
+    expect(lockfile).toContain(`"one-dep/no-deps": ["no-deps@file:`);
+    expect(lockfile).toContain(`{ "dependencies": { "sub": "file:./sub" } }`);
+    expect(lockfile).toContain(`"one-dep/no-deps/sub": ["sub@file:`);
+    expect(
+      await readdirSorted(
+        join(packageDir, "node_modules", "one-dep", "node_modules", "no-deps", "node_modules", "sub"),
+      ),
+    ).toEqual(["index.js", "package.json"]);
+  });
 });
 
 test("name from manifest is scoped and url encoded", async () => {

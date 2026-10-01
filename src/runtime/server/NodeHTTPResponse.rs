@@ -1277,12 +1277,14 @@ impl NodeHTTPResponse {
         handle_ended_if_necessary(state, global_object)?;
 
         raw_response.write_continue();
+        // Node writes a 1xx to the socket inside the call. The request dispatch holds the cork, and a close drops what it holds.
+        raw_response.send_corked();
         Ok(JSValue::UNDEFINED)
     }
 
-    // Writes a caller-built 1xx informational response block to the same
-    // AsyncSocket buffer writeStatus/end use, so a pipelined replay stays
-    // ordered ahead of the final response bytes (node:http _writeRaw).
+    // Writes a caller-built 1xx informational response block through the
+    // AsyncSocket buffer writeStatus/end use, so it stays ordered with the
+    // final response bytes, and sends it before it returns (node:http _writeRaw).
     pub(crate) fn write_informational(
         &self,
         global_object: &JSGlobalObject,
@@ -1324,6 +1326,7 @@ impl NodeHTTPResponse {
         };
         handle_ended_if_necessary(raw_response.state(), global_object)?;
         raw_response.write_informational(string_or_buffer.slice());
+        raw_response.send_corked();
         Ok(JSValue::UNDEFINED)
     }
 }

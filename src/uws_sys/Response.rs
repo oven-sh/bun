@@ -826,6 +826,15 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.uncork())
     }
 
+    /// See `Response::send_corked`. H2 and H3 have no cork buffer.
+    pub fn send_corked(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).send_corked(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).send_corked(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
+    }
+
     pub fn get_buffered_amount(self) -> u64 {
         any_dispatch!(self, |r| r.get_buffered_amount())
     }

@@ -53,6 +53,41 @@ if (!isDockerEnabled()) {
         }
       });
 
+      test("a BunFile tls option is the CA that the server certificate is verified against", async () => {
+        await container.ready;
+        const url = `postgres://postgres@${container.host}:${container.port}/bun_sql_test`;
+
+        // The server certificate does not chain to this unrelated CA, so the
+        // connection must be refused instead of proceeding over unverified TLS.
+        {
+          await using sql = new SQL({
+            url,
+            adapter: "postgres",
+            max: 1,
+            tls: Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem")),
+          });
+          const error = await sql`SELECT 1 as x`.then(
+            () => null,
+            e => e,
+          );
+          expect(error).not.toBeNull();
+          expect(error.code || error).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+        }
+
+        // The issuing CA verifies. `?sslmode=verify-ca` skips only the hostname
+        // check: the URL carries container.host and the certificate names `localhost`.
+        {
+          await using sql = new SQL({
+            url: `${url}?sslmode=verify-ca`,
+            adapter: "postgres",
+            max: 1,
+            tls: Bun.file(path.join(import.meta.dir, "docker-tls", "server.crt")),
+          });
+          const [{ x }] = await sql`SELECT 1 as x`;
+          expect(x).toBe(1);
+        }
+      });
+
       // Test with prepared statements on and off
       for (const prepare of [true, false]) {
         describe(`prepared: ${prepare}`, () => {

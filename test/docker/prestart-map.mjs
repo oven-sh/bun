@@ -3,7 +3,7 @@
 // must agree on it, which is why it lives in its own module:
 //   - test/docker/coordinator.ts starts every mapped service for the shard at
 //     launch, so containers are (ideally) healthy before the first request.
-//   - scripts/runner.node.mjs orders matching test files toward the end of the
+//   - scripts/runner.node.ts orders matching test files toward the end of the
 //     shard, so container cold-start (~10s for mysqld) overlaps with the
 //     non-docker tests that run first instead of being paid as wall time
 //     inside the first docker test's beforeAll.
@@ -22,7 +22,6 @@ export const prestartMap = {
   "js/sql/sql-onconnect-onclose-throw": ["postgres_plain", "mysql_plain"],
   "js/sql/sql-prepare-false": ["postgres_plain"],
   "js/valkey/": ["redis_unified"],
-  "js/bun/s3/": ["minio"],
   "js/web/websocket/autobahn": ["autobahn"],
   "js/web/websocket/websocket-proxy": ["squid"],
   "integration/mysql2/": ["mysql_plain", "mysql_native_password"],

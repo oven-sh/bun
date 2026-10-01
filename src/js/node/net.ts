@@ -175,6 +175,7 @@ interface TLSConnectOptions {
 interface InternalSocketHandler<Data> extends SocketHandler<Data> {
   session?(socket: Socket<Data>, session: Buffer): void;
   keylog?(socket: Socket<Data>, line: Buffer): void;
+  deferErrorUntilRead?: boolean;
 }
 
 interface InternalServerHandler<Data> extends InternalSocketHandler<Data> {
@@ -781,6 +782,7 @@ const SocketHandlers = {
     self.emit("timeout", self);
   },
   binaryType: "buffer",
+  deferErrorUntilRead: true,
 } as const satisfies InternalSocketHandler<SocketInstance>;
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
@@ -1303,6 +1305,7 @@ const ServerHandlers = {
     SocketHandlers.drain(socket);
   },
   binaryType: "buffer",
+  deferErrorUntilRead: true,
 } as const satisfies InternalServerHandler<SocketInstance>;
 
 function applyRejectUnauthorized(self, tls, rejectUnauthorized) {
@@ -1630,6 +1633,7 @@ const SocketHandlers2 = {
     }
     req.oncomplete(error.errno, self._handle, req, true, true);
   },
+  deferErrorUntilRead: true,
 } satisfies InternalSocketHandler<ConnectData>;
 
 // The same table minus the per-connection callback members: a listener whose
@@ -1964,6 +1968,7 @@ function Socket(options?): void {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
+        self.bytesRead += buffer.length;
         if (socket[kAdoptedTLSRaw]) return;
         const tail = self[kOnreadTail];
         if (tail !== undefined) {

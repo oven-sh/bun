@@ -349,6 +349,8 @@ struct us_socket_t {
   unsigned char ssl_has_pending_events : 1;
   /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
   unsigned char read_eof : 1;
+  /* us_socket_defer_error_until_read. */
+  unsigned char defer_error_until_read : 1;
   /* A hangup that leaves bytes unsent closes the socket even while it is paused (loop.c defers it otherwise).
    * For an owner whose pause can wait for those bytes to drain: node:http's pipelining. */
   unsigned char hangup_closes_unsent : 1;

@@ -3013,6 +3013,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     await once(server.listen(0, "127.0.0.1"), "listening");
 
     const peerReady = Promise.withResolvers<void>();
+    const peerClosed = Promise.withResolvers<void>();
     const peer = await Bun.connect({
       hostname: "127.0.0.1",
       port: (server.address() as AddressInfo).port,
@@ -3026,7 +3027,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
           else peerReady.reject(verifyError ?? new Error("handshake failed"));
         },
         data() {},
-        close() {},
+        close: () => peerClosed.resolve(),
         error(_peer, error) {
           peerReady.reject(error);
         },
@@ -3059,6 +3060,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     const t = {
       socket,
       peer,
+      peerClosed: peerClosed.promise,
       events,
       bytesRead: () => bytes,
       settled: settled.promise,
@@ -3079,15 +3081,41 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     return t;
   }
 
-  it("reports the reset that arrives while the socket is paused as ECONNRESET, not 'end'", async () => {
+  // A net.Socket that does not read leaves the reset in the kernel, like node: see the next test.
+  const resetWaitsForRead = transport === "net" && !isWindows;
+
+  it.skipIf(resetWaitsForRead)(
+    "reports the reset that arrives while the socket is paused as ECONNRESET, not 'end'",
+    async () => {
+      using t = await acceptPausedSocketAndFill();
+      t.peer.terminate();
+      await t.settled;
+      expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
+      // The data queued ahead of the reset was read off the socket before it closed
+      // (kept in the paused stream's buffer), not discarded with the fd. Windows
+      // discards the receive queue on a reset.
+      if (!isWindows) expect(t.socket.bytesRead).toBe(64 * 1024);
+    },
+  );
+
+  it.skipIf(!resetWaitsForRead)("meets the reset when it resumes, behind every byte the peer sent", async () => {
     using t = await acceptPausedSocketAndFill();
+    const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+    // The chunk reaches the highWaterMark, so the socket stops its reads. The tail and the
+    // reset then stay in the kernel.
+    while (t.socket.readableLength < t.socket.readableHighWaterMark) await tick();
+    const tail = Buffer.alloc(1024, "t");
+    expect(t.peer.write(tail)).toBe(tail.length);
     t.peer.terminate();
+    await t.peerClosed;
+    // Two turns of the loop: a build that reports the reset to a stopped socket has done so.
+    await tick();
+    await tick();
+    expect(t.events).toEqual([]);
+    t.socket.resume();
     await t.settled;
     expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
-    // The data queued ahead of the reset was read off the socket before it closed
-    // (kept in the paused stream's buffer), not discarded with the fd. Windows
-    // discards the receive queue on a reset.
-    if (!isWindows) expect(t.socket.bytesRead).toBe(64 * 1024);
+    expect(t.bytesRead()).toBe(64 * 1024 + tail.length);
   });
 
   it("delivers the data queued ahead of the reset and then reports ECONNRESET, not 'end'", async () => {

@@ -4677,8 +4677,9 @@ it("a paused socket does not wake the event loop for every segment its peer send
 // epoll_kqueue.c). The reset is the end of the connection, so the pause no longer protects
 // anything: the data queued ahead of the reset is delivered, then the socket closes with read
 // ECONNRESET. Closing without reading discarded that data (a streamed body cut short although
-// every byte arrived, #39846). Windows discards the receive queue on a reset itself. The
-// node:net and node:tls shapes are in test/js/node/tls/node-tls-server.test.ts.
+// every byte arrived, #39846). Windows discards the receive queue on a reset itself. A net.Socket
+// opts out and meets the reset when it resumes, like node. The node:net and node:tls shapes are in
+// test/js/node/tls/node-tls-server.test.ts.
 describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its peer resets the connection", transport => {
   it("delivers the data queued ahead of the reset, then closes with read ECONNRESET, while still paused", async () => {
     const closedWith = Promise.withResolvers<Error | undefined>();

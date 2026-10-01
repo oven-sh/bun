@@ -1,0 +1,773 @@
+{
+	"base": {
+		"ecmaVersion": 2021,
+		"sourceType": "module"
+	},
+	"valid": [
+		{
+			"code": "var foo;"
+		},
+		{
+			"code": "class Foo {}"
+		},
+		{
+			"code": "!!obj?.foo"
+		},
+		{
+			"code": "obj?.foo();"
+		},
+		{
+			"code": "obj?.foo?.();"
+		},
+		{
+			"code": "(obj?.foo ?? bar)();"
+		},
+		{
+			"code": "(obj?.foo)?.()"
+		},
+		{
+			"code": "(obj?.foo ?? bar?.baz)?.()"
+		},
+		{
+			"code": "(obj.foo)?.();"
+		},
+		{
+			"code": "obj?.foo.bar;"
+		},
+		{
+			"code": "obj?.foo?.bar;"
+		},
+		{
+			"code": "(obj?.foo)?.bar;"
+		},
+		{
+			"code": "(obj?.foo)?.bar.baz;"
+		},
+		{
+			"code": "(obj?.foo)?.().bar"
+		},
+		{
+			"code": "(obj?.foo ?? bar).baz;"
+		},
+		{
+			"code": "(obj?.foo ?? val)`template`"
+		},
+		{
+			"code": "new (obj?.foo ?? val)()"
+		},
+		{
+			"code": "new bar();"
+		},
+		{
+			"code": "obj?.foo?.()();"
+		},
+		{
+			"code": "const {foo} = obj?.baz || {};"
+		},
+		{
+			"code": "const foo = obj?.bar"
+		},
+		{
+			"code": "foo = obj?.bar"
+		},
+		{
+			"code": "foo.bar = obj?.bar"
+		},
+		{
+			"code": "bar(...obj?.foo ?? []);"
+		},
+		{
+			"code": "var bar = {...foo?.bar};"
+		},
+		{
+			"code": "foo?.bar in {};"
+		},
+		{
+			"code": "foo?.bar < foo?.baz;"
+		},
+		{
+			"code": "foo?.bar <= foo?.baz;"
+		},
+		{
+			"code": "foo?.bar > foo?.baz;"
+		},
+		{
+			"code": "foo?.bar >= foo?.baz;"
+		},
+		{
+			"code": "[foo = obj?.bar] = [];"
+		},
+		{
+			"code": "[foo.bar = obj?.bar] = [];"
+		},
+		{
+			"code": "({foo = obj?.bar} = obj);"
+		},
+		{
+			"code": "({foo: obj.bar = obj?.baz} = obj);"
+		},
+		{
+			"code": "(foo?.bar, bar)();"
+		},
+		{
+			"code": "(foo?.bar ? baz : qux)();"
+		},
+		{
+			"code": "\n        async function func() {\n          await obj?.foo();\n          await obj?.foo?.();\n          (await obj?.foo)?.();\n          (await obj?.foo)?.bar;\n          await bar?.baz;\n          await (foo ?? obj?.foo.baz);\n          (await bar?.baz ?? bar).baz;\n          (await bar?.baz ?? await bar).baz;\n          await (foo?.bar ? baz : qux);\n        }\n        "
+		},
+		{
+			"code": "(obj?.foo ?? bar?.baz ?? qux)();"
+		},
+		{
+			"code": "((obj?.foo ?? bar?.baz) || qux)();"
+		},
+		{
+			"code": "((obj?.foo || bar?.baz) || qux)();"
+		},
+		{
+			"code": "((obj?.foo && bar?.baz) || qux)();"
+		},
+		{
+			"code": "obj?.foo - bar;"
+		},
+		{
+			"code": "obj?.foo + bar;"
+		},
+		{
+			"code": "obj?.foo * bar;"
+		},
+		{
+			"code": "obj?.foo / bar;"
+		},
+		{
+			"code": "obj?.foo % bar;"
+		},
+		{
+			"code": "obj?.foo ** bar;"
+		},
+		{
+			"code": "+obj?.foo;"
+		},
+		{
+			"code": "-obj?.foo;"
+		},
+		{
+			"code": "bar += obj?.foo;"
+		},
+		{
+			"code": "bar -= obj?.foo;"
+		},
+		{
+			"code": "bar %= obj?.foo;"
+		},
+		{
+			"code": "bar **= obj?.foo;"
+		},
+		{
+			"code": "bar *= obj?.boo"
+		},
+		{
+			"code": "bar /= obj?.boo"
+		},
+		{
+			"code": "async function func() {\n            await obj?.foo + await obj?.bar;\n            await obj?.foo - await obj?.bar;\n            await obj?.foo * await obj?.bar;\n            +await obj?.foo;\n            -await obj?.foo;\n            bar += await obj?.foo;\n            bar -= await obj?.foo;\n            bar %= await obj?.foo;\n            bar **= await obj?.foo;\n            bar *= await obj?.boo;\n            bar /= await obj?.boo;\n        }\n        "
+		},
+		{
+			"code": "obj?.foo - bar;"
+		},
+		{
+			"code": "obj?.foo - bar;"
+		}
+	],
+	"invalid": [
+		{
+			"code": "(obj?.foo)();",
+			"errors": 1
+		},
+		{
+			"code": "(obj.foo ?? bar?.baz)();",
+			"errors": 1
+		},
+		{
+			"code": "(obj.foo || bar?.baz)();",
+			"errors": 1
+		},
+		{
+			"code": "(obj?.foo && bar)();",
+			"errors": 1
+		},
+		{
+			"code": "(bar && obj?.foo)();",
+			"errors": 1
+		},
+		{
+			"code": "(obj?.foo?.())();",
+			"errors": 1
+		},
+		{
+			"code": "(obj?.foo).bar",
+			"errors": 1
+		},
+		{
+			"code": "(obj?.foo)[1];",
+			"errors": 1
+		},
+		{
+			"code": "(obj?.foo)`template`",
+			"errors": 1
+		},
+		{
+			"code": "new (obj?.foo)();",
+			"errors": 1
+		},
+		{
+			"code": "new (obj?.foo?.())()",
+			"errors": 1
+		},
+		{
+			"code": "new (obj?.foo?.() || obj?.bar)()",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() {\n              (await obj?.foo)();\n            }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() {\n              (await obj?.foo).bar;\n            }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() {\n              (bar?.baz ?? await obj?.foo)();\n            }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() {\n              (bar && await obj?.foo)();\n            }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() {\n              (await (bar && obj?.foo))();\n            }",
+			"errors": 1
+		},
+		{
+			"code": "[...obj?.foo];",
+			"errors": 1
+		},
+		{
+			"code": "bar(...obj?.foo);",
+			"errors": 1
+		},
+		{
+			"code": "new Bar(...obj?.foo);",
+			"errors": 1
+		},
+		{
+			"code": "const {foo} = obj?.bar;",
+			"errors": 1
+		},
+		{
+			"code": "const {foo} = obj?.bar();",
+			"errors": 1
+		},
+		{
+			"code": "const {foo: bar} = obj?.bar();",
+			"errors": 1
+		},
+		{
+			"code": "const [foo] = obj?.bar;",
+			"errors": 1
+		},
+		{
+			"code": "const [foo] = obj?.bar || obj?.foo;",
+			"errors": 1
+		},
+		{
+			"code": "([foo] = obj?.bar);",
+			"errors": 1
+		},
+		{
+			"code": "const [foo] = obj?.bar?.();",
+			"errors": 1
+		},
+		{
+			"code": "[{ foo } = obj?.bar] = [];",
+			"errors": 1
+		},
+		{
+			"code": "({bar: [ foo ] = obj?.prop} = {});",
+			"errors": 1
+		},
+		{
+			"code": "[[ foo ] = obj?.bar] = [];",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { const {foo} = await obj?.bar; }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { const {foo} = await obj?.bar(); }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { const [foo] = await obj?.bar || await obj?.foo; }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { ([foo] = await obj?.bar); }",
+			"errors": 1
+		},
+		{
+			"code": "class A extends obj?.foo {}",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { class A extends (await obj?.foo) {}}",
+			"errors": 1
+		},
+		{
+			"code": "var a = class A extends obj?.foo {}",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { var a = class A extends (await obj?.foo) {}}",
+			"errors": 1
+		},
+		{
+			"code": "foo instanceof obj?.prop",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { foo instanceof await obj?.prop }",
+			"errors": 1
+		},
+		{
+			"code": "1 in foo?.bar;",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { 1 in await foo?.bar; }",
+			"errors": 1
+		},
+		{
+			"code": "for (foo of obj?.bar);",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { for (foo of await obj?.bar);}",
+			"errors": 1
+		},
+		{
+			"code": "(foo, obj?.foo)();",
+			"errors": 1
+		},
+		{
+			"code": "(foo, obj?.foo)[1];",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { (await (foo, obj?.foo))(); }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { ((foo, await obj?.foo))(); }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { (foo, await obj?.foo)[1]; }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { (await (foo, obj?.foo)) [1]; }",
+			"errors": 1
+		},
+		{
+			"code": "(a ? obj?.foo : b)();",
+			"errors": 1
+		},
+		{
+			"code": "(a ? b : obj?.foo)();",
+			"errors": 1
+		},
+		{
+			"code": "(a ? obj?.foo : b)[1];",
+			"errors": 1
+		},
+		{
+			"code": "(a ? b : obj?.foo).bar;",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { (await (a ? obj?.foo : b))(); }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { (a ? await obj?.foo : b)(); }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { (await (a ? b : obj?.foo))(); }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { (await (a ? obj?.foo : b))[1]; }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { (await (a ? b : obj?.foo)).bar; }",
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { (a ? b : await obj?.foo).bar; }",
+			"errors": 1
+		},
+		{
+			"code": "(obj?.foo && obj?.baz).bar",
+			"errors": 2
+		},
+		{
+			"code": "with (obj?.foo) {};",
+			"languageOptions": {
+				"sourceType": "script"
+			},
+			"errors": 1
+		},
+		{
+			"code": "async function foo() { with ( await obj?.foo) {}; }",
+			"languageOptions": {
+				"sourceType": "script"
+			},
+			"errors": 1
+		},
+		{
+			"code": "(foo ? obj?.foo : obj?.bar).bar",
+			"errors": 2
+		}
+	],
+	"skipped": [
+		{
+			"kind": "valid",
+			"code": "obj?.foo | bar",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "obj?.foo & bar",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "obj?.foo >> obj?.bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "obj?.foo << obj?.bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "obj?.foo >>> obj?.bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "(obj?.foo || baz) + bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "(obj?.foo ?? baz) + bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "(obj?.foo ?? baz) - bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "(obj?.foo ?? baz) * bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "(obj?.foo ?? baz) / bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "(obj?.foo ?? baz) % bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "(obj?.foo ?? baz) ** bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "void obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "typeof obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "!obj?.foo",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "~obj?.foo",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "+(obj?.foo ?? bar)",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "-(obj?.foo ?? bar)",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar |= obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar &= obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar ^= obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar <<= obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar >>= obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar >>>= obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar ||= obj?.foo",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar &&= obj?.foo",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar += (obj?.foo ?? baz);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar -= (obj?.foo ?? baz)",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar *= (obj?.foo ?? baz)",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar /= (obj?.foo ?? baz)",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar %= (obj?.foo ?? baz);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "bar **= (obj?.foo ?? baz)",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "async function foo() {\n              (await obj?.foo || baz) + bar;\n              (await obj?.foo ?? baz) + bar;\n              (await obj?.foo ?? baz) - bar;\n              (await obj?.foo ?? baz) * bar;\n              (await obj?.foo ?? baz) / bar;\n              (await obj?.foo ?? baz) % bar;\n              \"(await obj?.foo ?? baz) ** bar;\",\n              \"void await obj?.foo;\",\n              \"typeof await obj?.foo;\",\n              \"!await obj?.foo\",\n              \"~await obj?.foo\",\n              \"+(await obj?.foo ?? bar)\",\n              \"-(await obj?.foo ?? bar)\",\n              bar |= await obj?.foo;\n              bar &= await obj?.foo;\n              bar ^= await obj?.foo;\n              bar <<= await obj?.foo;\n              bar >>= await obj?.foo;\n              bar >>>= await obj?.foo\n              bar += ((await obj?.foo) ?? baz);\n              bar -= ((await obj?.foo) ?? baz);\n              bar /= ((await obj?.foo) ?? baz);\n              bar %= ((await obj?.foo) ?? baz);\n              bar **= ((await obj?.foo) ?? baz);\n            }",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "obj?.foo + bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(foo || obj?.foo) + bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar + (foo || obj?.foo);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(a ? obj?.foo : b) + bar",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(a ? b : obj?.foo) + bar",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(foo, bar, baz?.qux) + bar",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "obj?.foo - bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "obj?.foo * bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "obj?.foo / bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "obj?.foo % bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "obj?.foo ** bar;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "+obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "-obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "+(foo ?? obj?.foo);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "+(foo || obj?.bar);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "+(obj?.bar && foo);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "+(foo ? obj?.foo : bar);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "+(foo ? bar : obj?.foo);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar += obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar -= obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar %= obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar **= obj?.foo;",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar *= obj?.boo",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar /= obj?.boo",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar += (foo ?? obj?.foo);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar += (foo || obj?.foo);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar += (foo && obj?.foo);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar += (foo ? obj?.foo : bar);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "bar += (foo ? bar : obj?.foo);",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "async function foo() { await obj?.foo + bar; }",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "async function foo() { (foo || await obj?.foo) + bar;}",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "async function foo() { bar + (foo || await obj?.foo); }",
+			"why": "options [{\"disallowArithmeticOperators\":true}]"
+		}
+	]
+}

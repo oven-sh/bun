@@ -1,0 +1,2314 @@
+{
+	"base": null,
+	"valid": [
+		{
+			"code": "Boolean(bar, !!baz);"
+		},
+		{
+			"code": "var foo = !!bar;"
+		},
+		{
+			"code": "function foo() { return !!bar; }"
+		},
+		{
+			"code": "var foo = bar() ? !!baz : !!bat"
+		},
+		{
+			"code": "for(!!foo;;) {}"
+		},
+		{
+			"code": "for(;; !!foo) {}"
+		},
+		{
+			"code": "var foo = Boolean(bar);"
+		},
+		{
+			"code": "function foo() { return Boolean(bar); }"
+		},
+		{
+			"code": "var foo = bar() ? Boolean(baz) : Boolean(bat)"
+		},
+		{
+			"code": "for(Boolean(foo);;) {}"
+		},
+		{
+			"code": "for(;; Boolean(foo)) {}"
+		},
+		{
+			"code": "if (new Boolean(foo)) {}"
+		},
+		{
+			"code": "if ((Boolean(1), 2)) {}"
+		},
+		{
+			"code": "function foo(Boolean) { if (Boolean(bar)) {} }"
+		},
+		{
+			"code": "let Boolean = x => x; if (Boolean(bar)) {}"
+		},
+		{
+			"code": "function foo(Boolean) { return !!Boolean(bar); }"
+		},
+		{
+			"code": "function foo(Boolean) { if (Boolean(!!bar)) {} }"
+		},
+		{
+			"code": "function foo(Boolean) { if (new Boolean(!!bar)) {} }"
+		},
+		{
+			"code": "if (Boolean(bar)) {}",
+			"languageOptions": {
+				"globals": {
+					"Boolean": "off"
+				}
+			}
+		},
+		{
+			"code": "if (!!foo || bar) {}"
+		},
+		{
+			"code": "if (!!foo || bar) {}"
+		},
+		{
+			"code": "if (!!foo || bar) {}"
+		},
+		{
+			"code": "if (!!foo || bar) {}"
+		},
+		{
+			"code": "Boolean((1, 2, Boolean(3)))"
+		},
+		{
+			"code": "Boolean((1, 2, Boolean(3)))"
+		},
+		{
+			"code": "Boolean(foo ? Boolean(bar) : Boolean(baz))"
+		},
+		{
+			"code": "Boolean(foo ? Boolean(bar) : Boolean(baz))"
+		},
+		{
+			"code": "Boolean(foo ?? Boolean(bar))"
+		},
+		{
+			"code": "Boolean(foo ?? Boolean(bar))"
+		}
+	],
+	"invalid": [
+		{
+			"code": "if (!!foo) {}",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (!!foo)",
+			"errors": 1
+		},
+		{
+			"code": "while (!!foo) {}",
+			"errors": 1
+		},
+		{
+			"code": "!!foo ? bar : baz",
+			"errors": 1
+		},
+		{
+			"code": "for (; !!foo;) {}",
+			"errors": 1
+		},
+		{
+			"code": "!!!foo",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(!!foo)",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(!!foo)",
+			"errors": 1
+		},
+		{
+			"code": "if (Boolean(foo)) {}",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (Boolean(foo))",
+			"errors": 1
+		},
+		{
+			"code": "while (Boolean(foo)) {}",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(foo) ? bar : baz",
+			"errors": 1
+		},
+		{
+			"code": "for (; Boolean(foo);) {}",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(foo)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(foo && bar)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(foo + bar)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(+foo)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(foo())",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(foo = bar)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(...foo);",
+			"languageOptions": {
+				"ecmaVersion": 2015
+			},
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(foo, bar());",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean((foo, bar()));",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean();",
+			"errors": 1
+		},
+		{
+			"code": "!(Boolean());",
+			"errors": 1
+		},
+		{
+			"code": "if (!Boolean()) { foo() }",
+			"errors": 1
+		},
+		{
+			"code": "while (!Boolean()) { foo() }",
+			"errors": 1
+		},
+		{
+			"code": "var foo = Boolean() ? bar() : baz()",
+			"errors": 1
+		},
+		{
+			"code": "if (Boolean()) { foo() }",
+			"errors": 1
+		},
+		{
+			"code": "while (Boolean()) { foo() }",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(Boolean(foo))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(!!foo, bar)",
+			"errors": 1
+		},
+		{
+			"code": "function *foo() { yield!!a ? b : c }",
+			"languageOptions": {
+				"ecmaVersion": 2015
+			},
+			"errors": 1
+		},
+		{
+			"code": "function *foo() { yield!! a ? b : c }",
+			"languageOptions": {
+				"ecmaVersion": 2015
+			},
+			"errors": 1
+		},
+		{
+			"code": "function *foo() { yield! !a ? b : c }",
+			"languageOptions": {
+				"ecmaVersion": 2015
+			},
+			"errors": 1
+		},
+		{
+			"code": "function *foo() { yield !!a ? b : c }",
+			"languageOptions": {
+				"ecmaVersion": 2015
+			},
+			"errors": 1
+		},
+		{
+			"code": "function *foo() { yield(!!a) ? b : c }",
+			"languageOptions": {
+				"ecmaVersion": 2015
+			},
+			"errors": 1
+		},
+		{
+			"code": "function *foo() { yield/**/!!a ? b : c }",
+			"languageOptions": {
+				"ecmaVersion": 2015
+			},
+			"errors": 1
+		},
+		{
+			"code": "x=!!a ? b : c ",
+			"errors": 1
+		},
+		{
+			"code": "void!Boolean()",
+			"errors": 1
+		},
+		{
+			"code": "void! Boolean()",
+			"errors": 1
+		},
+		{
+			"code": "typeof!Boolean()",
+			"errors": 1
+		},
+		{
+			"code": "(!Boolean())",
+			"errors": 1
+		},
+		{
+			"code": "+!Boolean()",
+			"errors": 1
+		},
+		{
+			"code": "void !Boolean()",
+			"errors": 1
+		},
+		{
+			"code": "void(!Boolean())",
+			"errors": 1
+		},
+		{
+			"code": "void/**/!Boolean()",
+			"errors": 1
+		},
+		{
+			"code": "!/**/!!foo",
+			"errors": 1
+		},
+		{
+			"code": "!!/**/!foo",
+			"errors": 1
+		},
+		{
+			"code": "!!!/**/foo",
+			"errors": 1
+		},
+		{
+			"code": "!!!foo/**/",
+			"errors": 1
+		},
+		{
+			"code": "if(!/**/!foo);",
+			"errors": 1
+		},
+		{
+			"code": "(!!/**/foo ? 1 : 2)",
+			"errors": 1
+		},
+		{
+			"code": "!/**/Boolean(foo)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean/**/(foo)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(/**/foo)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(foo/**/)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(foo)/**/",
+			"errors": 1
+		},
+		{
+			"code": "if(Boolean/**/(foo));",
+			"errors": 1
+		},
+		{
+			"code": "(Boolean(foo/**/) ? 1 : 2)",
+			"errors": 1
+		},
+		{
+			"code": "/**/!Boolean()",
+			"errors": 1
+		},
+		{
+			"code": "!/**/Boolean()",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean/**/()",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(/**/)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean()/**/",
+			"errors": 1
+		},
+		{
+			"code": "if(!/**/Boolean());",
+			"errors": 1
+		},
+		{
+			"code": "(!Boolean(/**/) ? 1 : 2)",
+			"errors": 1
+		},
+		{
+			"code": "if(/**/Boolean());",
+			"errors": 1
+		},
+		{
+			"code": "if(Boolean/**/());",
+			"errors": 1
+		},
+		{
+			"code": "if(Boolean(/**/));",
+			"errors": 1
+		},
+		{
+			"code": "if(Boolean()/**/);",
+			"errors": 1
+		},
+		{
+			"code": "(Boolean/**/() ? 1 : 2)",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(!!(a, b))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(Boolean((a, b)))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean((!!(a, b)))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean((Boolean((a, b))))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(!(!(a, b)))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean((!(!(a, b))))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(!!(a = b))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean((!!(a = b)))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(Boolean(a = b))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(Boolean((a += b)))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(!!(a === b))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(!!((a !== b)))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(!!a.b)",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(Boolean((a)))",
+			"errors": 1
+		},
+		{
+			"code": "Boolean((!!(a)))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(!!(a, b))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(Boolean((a, b)))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean((!!(a, b)))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean((Boolean((a, b))))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(!(!(a, b)))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean((!(!(a, b))))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(!!(a = b))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean((!!(a = b)))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(Boolean(a = b))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(Boolean((a += b)))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(!!(a === b))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(!!((a !== b)))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(!!a.b)",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean(Boolean((a)))",
+			"errors": 1
+		},
+		{
+			"code": "new Boolean((!!(a)))",
+			"errors": 1
+		},
+		{
+			"code": "if (!!(a, b));",
+			"errors": 1
+		},
+		{
+			"code": "if (Boolean((a, b)));",
+			"errors": 1
+		},
+		{
+			"code": "if (!(!(a, b)));",
+			"errors": 1
+		},
+		{
+			"code": "if (!!(a = b));",
+			"errors": 1
+		},
+		{
+			"code": "if (Boolean(a = b));",
+			"errors": 1
+		},
+		{
+			"code": "if (!!(a > b));",
+			"errors": 1
+		},
+		{
+			"code": "if (Boolean(a === b));",
+			"errors": 1
+		},
+		{
+			"code": "if (!!f(a));",
+			"errors": 1
+		},
+		{
+			"code": "if (Boolean(f(a)));",
+			"errors": 1
+		},
+		{
+			"code": "if (!!(f(a)));",
+			"errors": 1
+		},
+		{
+			"code": "if ((!!f(a)));",
+			"errors": 1
+		},
+		{
+			"code": "if ((Boolean(f(a))));",
+			"errors": 1
+		},
+		{
+			"code": "if (!!a);",
+			"errors": 1
+		},
+		{
+			"code": "if (Boolean(a));",
+			"errors": 1
+		},
+		{
+			"code": "while (!!(a, b));",
+			"errors": 1
+		},
+		{
+			"code": "while (Boolean((a, b)));",
+			"errors": 1
+		},
+		{
+			"code": "while (!(!(a, b)));",
+			"errors": 1
+		},
+		{
+			"code": "while (!!(a = b));",
+			"errors": 1
+		},
+		{
+			"code": "while (Boolean(a = b));",
+			"errors": 1
+		},
+		{
+			"code": "while (!!(a > b));",
+			"errors": 1
+		},
+		{
+			"code": "while (Boolean(a === b));",
+			"errors": 1
+		},
+		{
+			"code": "while (!!f(a));",
+			"errors": 1
+		},
+		{
+			"code": "while (Boolean(f(a)));",
+			"errors": 1
+		},
+		{
+			"code": "while (!!(f(a)));",
+			"errors": 1
+		},
+		{
+			"code": "while ((!!f(a)));",
+			"errors": 1
+		},
+		{
+			"code": "while ((Boolean(f(a))));",
+			"errors": 1
+		},
+		{
+			"code": "while (!!a);",
+			"errors": 1
+		},
+		{
+			"code": "while (Boolean(a));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (!!(a, b));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (Boolean((a, b)));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (!(!(a, b)));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (!!(a = b));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (Boolean(a = b));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (!!(a > b));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (Boolean(a === b));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (!!f(a));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (Boolean(f(a)));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (!!(f(a)));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while ((!!f(a)));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while ((Boolean(f(a))));",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (!!a);",
+			"errors": 1
+		},
+		{
+			"code": "do {} while (Boolean(a));",
+			"errors": 1
+		},
+		{
+			"code": "for (; !!(a, b););",
+			"errors": 1
+		},
+		{
+			"code": "for (; Boolean((a, b)););",
+			"errors": 1
+		},
+		{
+			"code": "for (; !(!(a, b)););",
+			"errors": 1
+		},
+		{
+			"code": "for (; !!(a = b););",
+			"errors": 1
+		},
+		{
+			"code": "for (; Boolean(a = b););",
+			"errors": 1
+		},
+		{
+			"code": "for (; !!(a > b););",
+			"errors": 1
+		},
+		{
+			"code": "for (; Boolean(a === b););",
+			"errors": 1
+		},
+		{
+			"code": "for (; !!f(a););",
+			"errors": 1
+		},
+		{
+			"code": "for (; Boolean(f(a)););",
+			"errors": 1
+		},
+		{
+			"code": "for (; !!(f(a)););",
+			"errors": 1
+		},
+		{
+			"code": "for (; (!!f(a)););",
+			"errors": 1
+		},
+		{
+			"code": "for (; (Boolean(f(a))););",
+			"errors": 1
+		},
+		{
+			"code": "for (; !!a;);",
+			"errors": 1
+		},
+		{
+			"code": "for (; Boolean(a););",
+			"errors": 1
+		},
+		{
+			"code": "!!(a, b) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "(!!(a, b)) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "Boolean((a, b)) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "!!(a = b) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(a -= b) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "(Boolean((a *= b))) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "!!(a ? b : c) ? d : e",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(a ? b : c) ? d : e",
+			"errors": 1
+		},
+		{
+			"code": "!!(a || b) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(a && b) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "!!(a === b) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(a < b) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "!!((a !== b)) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "Boolean((a >= b)) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "!!+a ? b : c",
+			"errors": 1
+		},
+		{
+			"code": "!!+(a) ? b : c",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(!a) ? b : c",
+			"errors": 1
+		},
+		{
+			"code": "!!f(a) ? b : c",
+			"errors": 1
+		},
+		{
+			"code": "(!!f(a)) ? b : c",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(a.b) ? c : d",
+			"errors": 1
+		},
+		{
+			"code": "!!a ? b : c",
+			"errors": 1
+		},
+		{
+			"code": "Boolean(a) ? b : c",
+			"errors": 1
+		},
+		{
+			"code": "!!!(a, b)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean((a, b))",
+			"errors": 1
+		},
+		{
+			"code": "!!!(a = b)",
+			"errors": 1
+		},
+		{
+			"code": "!!(!(a += b))",
+			"errors": 1
+		},
+		{
+			"code": "!(!!(a += b))",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(a -= b)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean((a -= b))",
+			"errors": 1
+		},
+		{
+			"code": "!(Boolean(a -= b))",
+			"errors": 1
+		},
+		{
+			"code": "!!!(a || b)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(a || b)",
+			"errors": 1
+		},
+		{
+			"code": "!!!(a && b)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(a && b)",
+			"errors": 1
+		},
+		{
+			"code": "!!!(a != b)",
+			"errors": 1
+		},
+		{
+			"code": "!!!(a === b)",
+			"errors": 1
+		},
+		{
+			"code": "var x = !Boolean(a > b)",
+			"errors": 1
+		},
+		{
+			"code": "!!!(a - b)",
+			"errors": 1
+		},
+		{
+			"code": "!!!(a ** b)",
+			"languageOptions": {
+				"ecmaVersion": 2016
+			},
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(a ** b)",
+			"languageOptions": {
+				"ecmaVersion": 2016
+			},
+			"errors": 1
+		},
+		{
+			"code": "async function f() { !!!(await a) }",
+			"languageOptions": {
+				"ecmaVersion": 2017
+			},
+			"errors": 1
+		},
+		{
+			"code": "async function f() { !Boolean(await a) }",
+			"languageOptions": {
+				"ecmaVersion": 2017
+			},
+			"errors": 1
+		},
+		{
+			"code": "!!!!a",
+			"errors": 2
+		},
+		{
+			"code": "!!(!(!a))",
+			"errors": 2
+		},
+		{
+			"code": "!Boolean(!a)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean((!a))",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(!(a))",
+			"errors": 1
+		},
+		{
+			"code": "!(Boolean(!a))",
+			"errors": 1
+		},
+		{
+			"code": "!!!+a",
+			"errors": 1
+		},
+		{
+			"code": "!!!(+a)",
+			"errors": 1
+		},
+		{
+			"code": "!!(!+a)",
+			"errors": 1
+		},
+		{
+			"code": "!(!!+a)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean((-a))",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(-(a))",
+			"errors": 1
+		},
+		{
+			"code": "!!!(--a)",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(a++)",
+			"errors": 1
+		},
+		{
+			"code": "!!!f(a)",
+			"errors": 1
+		},
+		{
+			"code": "!!!(f(a))",
+			"errors": 1
+		},
+		{
+			"code": "!!!a",
+			"errors": 1
+		},
+		{
+			"code": "!Boolean(a)",
+			"errors": 1
+		},
+		{
+			"code": "if (Boolean?.(foo)) {};",
+			"languageOptions": {
+				"ecmaVersion": 2020
+			},
+			"errors": 1
+		}
+	],
+	"skipped": [
+		{
+			"kind": "valid",
+			"code": "function foo(Boolean) { if (bar && Boolean(baz)) {} }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar || !!baz",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar && !!baz",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar || (baz && !!bat)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "function foo() { return (!!bar || baz); }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar() ? (!!baz && bat) : (!!bat && qux)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "for(!!(foo && bar);;) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "for(;; !!(foo || bar)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = Boolean(bar) || baz;",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar || Boolean(baz);",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = Boolean(bar) || Boolean(baz);",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "function foo() { return (Boolean(bar) || baz); }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar() ? Boolean(baz) || bat : Boolean(bat)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "for(Boolean(foo) || bar;;) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "for(;; Boolean(foo) || bar) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "if (new Boolean(foo) || bar) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "if ((!!foo || bar) === baz) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "if (!!foo ?? bar) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar || !!baz",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar && !!baz",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar || (baz && !!bat)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "function foo() { return (!!bar || baz); }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar() ? (!!baz && bat) : (!!bat && qux)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "for(!!(foo && bar);;) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "for(;; !!(foo || bar)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = Boolean(bar) || baz;",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar || Boolean(baz);",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = Boolean(bar) || Boolean(baz);",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "function foo() { return (Boolean(bar) || baz); }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "var foo = bar() ? Boolean(baz) || bat : Boolean(bat)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "for(Boolean(foo) || bar;;) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "for(;; Boolean(foo) || bar) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "if (new Boolean(foo) || bar) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "if ((!!foo || bar) === baz) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "if (!!foo ?? bar) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "if ((1, Boolean(2), 3)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "Boolean((1, 2, Boolean(3)))",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "Boolean(foo ? Boolean(bar) : Boolean(baz))",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "valid",
+			"code": "Boolean(foo ?? Boolean(bar))",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!foo || bar) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!foo && bar) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if ((!!foo || bar) && bat) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (foo && !!bar) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "do {} while (!!foo || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "while (!!foo || bar) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!!foo && bat ? bar : baz",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "for (; !!foo || bar;) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!!!foo || bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "Boolean(!!foo || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "new Boolean(!!foo || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(foo) || bar) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "do {} while (Boolean(foo) || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "while (Boolean(foo) || bar) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "Boolean(foo) || bat ? bar : baz",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "for (; Boolean(foo) || bar;) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo) || bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo && bar) || bat",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo + bar) || bat",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(+foo)  || bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo()) || bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo() || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo = bar) || bat",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(...foo) || bar;",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo, bar()) || bar;",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean((foo, bar()) || bat);",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean() || bar;",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!(Boolean()) || bar;",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!Boolean() || bar) { foo() }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "while (!Boolean() || bar) { foo() }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "var foo = Boolean() || bar ? bar() : baz()",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean() || bar) { foo() }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "while (Boolean() || bar) { foo() }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield(!!a || d) ? b : c }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield(!! a || d) ? b : c }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield(! !a || d) ? b : c }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield (!!a || d) ? b : c }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield/**/(!!a || d) ? b : c }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "x=!!a || d ? b : c ",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "void(!Boolean() || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "void(! Boolean() || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "typeof(!Boolean() || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(!Boolean() || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "void/**/(!Boolean() || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!/**/(!!foo || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!!/**/!foo || bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!!!/**/foo || bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!(!!foo || bar)/**/",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(!/**/!foo || bar);",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(!!/**/foo || bar ? 1 : 2)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!/**/(Boolean(foo) || bar)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean/**/(foo) || bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(/**/foo) || bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo/**/) || bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!(Boolean(foo)|| bar)/**/",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(Boolean/**/(foo) || bar);",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(Boolean(foo/**/)|| bar ? 1 : 2)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "/**/!Boolean()|| bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!/**/Boolean()|| bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean/**/()|| bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(/**/)|| bar",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(!Boolean()|| bar)/**/",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(!/**/Boolean()|| bar);",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(!Boolean(/**/) || bar ? 1 : 2)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(/**/Boolean()|| bar);",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(Boolean/**/()|| bar);",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(Boolean(/**/)|| bar);",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(Boolean()|| bar/**/);",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(Boolean/**/()|| bar ? 1 : 2)",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (a && !!(b ? c : d)){}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield!!a || d ? b : c }",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!foo || bar) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!foo && bar) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if ((!!foo || bar) && bat) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (foo && !!bar) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "do {} while (!!foo || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "while (!!foo || bar) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!!foo && bat ? bar : baz",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "for (; !!foo || bar;) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!!!foo || bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "Boolean(!!foo || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "new Boolean(!!foo || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(foo) || bar) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "do {} while (Boolean(foo) || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "while (Boolean(foo) || bar) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "Boolean(foo) || bat ? bar : baz",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "for (; Boolean(foo) || bar;) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo) || bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo && bar) || bat",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo + bar) || bat",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(+foo)  || bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo()) || bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo() || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo = bar) || bat",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(...foo) || bar;",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo, bar()) || bar;",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean((foo, bar()) || bat);",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean() || bar;",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!(Boolean()) || bar;",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!Boolean() || bar) { foo() }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "while (!Boolean() || bar) { foo() }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "var foo = Boolean() || bar ? bar() : baz()",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean() || bar) { foo() }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "while (Boolean() || bar) { foo() }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield(!!a || d) ? b : c }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield(!! a || d) ? b : c }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield(! !a || d) ? b : c }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield (!!a || d) ? b : c }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield/**/(!!a || d) ? b : c }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "x=!!a || d ? b : c ",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "void(!Boolean() || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "void(! Boolean() || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "typeof(!Boolean() || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(!Boolean() || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "void/**/(!Boolean() || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!/**/(!!foo || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!!/**/!foo || bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!!!/**/foo || bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!(!!foo || bar)/**/",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(!/**/!foo || bar);",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(!!/**/foo || bar ? 1 : 2)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!/**/(Boolean(foo) || bar)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean/**/(foo) || bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(/**/foo) || bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(foo/**/) || bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!(Boolean(foo)|| bar)/**/",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(Boolean/**/(foo) || bar);",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(Boolean(foo/**/)|| bar ? 1 : 2)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "/**/!Boolean()|| bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!/**/Boolean()|| bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean/**/()|| bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "!Boolean(/**/)|| bar",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(!Boolean()|| bar)/**/",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(!/**/Boolean()|| bar);",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(!Boolean(/**/) || bar ? 1 : 2)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(/**/Boolean()|| bar);",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(Boolean/**/()|| bar);",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(Boolean(/**/)|| bar);",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if(Boolean()|| bar/**/);",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "(Boolean/**/()|| bar ? 1 : 2)",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (a && !!(b ? c : d)){}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "function *foo() { yield!!a || d ? b : c }",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a, b) || !!(c, d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean((a, b)) || Boolean((c, d))) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if ((!!((a, b))) || (!!((c, d)))) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a, b) && !!(c, d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean((a, b)) && Boolean((c, d))) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if ((!!((a, b))) && (!!((c, d)))) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a = b) || !!(c = d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a /= b) || Boolean(c /= d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a >>= b) && !!(c >>= d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a **= b) && Boolean(c **= d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a ? b : c) || !!(d ? e : f)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a ? b : c) || Boolean(d ? e : f)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a ? b : c) && !!(d ? e : f)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a ? b : c) && Boolean(d ? e : f)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a || b) || !!(c || d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a || b) || Boolean(c || d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a || b) && !!(c || d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a || b) && Boolean(c || d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a && b) || !!(c && d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a && b) || Boolean(c && d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a && b) && !!(c && d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a && b) && Boolean(c && d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a !== b) || !!(c !== d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a != b) || Boolean(c != d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a === b) && !!(c === d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a > b) || !!(c < d)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(!a) || Boolean(+b)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!f(a) && !!b.c) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a) || !!b) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!a && Boolean(b)) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if ((!!a) || (Boolean(b))) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a ?? b) || c) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean?.(a ?? b) || c) {}",
+			"why": "options [{\"enforceForLogicalOperands\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!Boolean(a as any)) { }",
+			"why": "parser"
+		},
+		{
+			"kind": "invalid",
+			"code": "if ((1, 2, Boolean(3))) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (a ?? Boolean(b)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if ((a, b, c ?? (d, e, f ?? Boolean(g)))) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a, b) || !!(c, d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean((a, b)) || Boolean((c, d))) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if ((!!((a, b))) || (!!((c, d)))) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a, b) && !!(c, d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean((a, b)) && Boolean((c, d))) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if ((!!((a, b))) && (!!((c, d)))) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a = b) || !!(c = d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a /= b) || Boolean(c /= d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a >>= b) && !!(c >>= d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a **= b) && Boolean(c **= d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a ? b : c) || !!(d ? e : f)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a ? b : c) || Boolean(d ? e : f)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a ? b : c) && !!(d ? e : f)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a ? b : c) && Boolean(d ? e : f)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a || b) || !!(c || d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a || b) || Boolean(c || d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a || b) && !!(c || d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a || b) && Boolean(c || d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a && b) || !!(c && d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a && b) || Boolean(c && d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a && b) && !!(c && d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a && b) && Boolean(c && d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a !== b) || !!(c !== d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a != b) || Boolean(c != d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a === b) && !!(c === d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!(a > b) || !!(c < d)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(!a) || Boolean(+b)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!f(a) && !!b.c) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a) || !!b) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (!!a && Boolean(b)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if ((!!a) || (Boolean(b))) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean(a ?? b) || c) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (Boolean?.(a ?? b) || c) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (a ? Boolean(b) : c) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (a ? b : Boolean(c)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (a ? b : Boolean(c ? d : e)) {}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "const ternary = Boolean(bar ? !!baz : bat);",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "const commaOperator = Boolean((bar, baz, !!bat));",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "\nfor (let i = 0; (console.log(i), Boolean(i < 10)); i++) {\n    // ...\n}",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "const nullishCoalescingOperator = Boolean(bar ?? Boolean(baz));",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (a ? Boolean(b = c) : Boolean(d = e));",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (a ? Boolean((b, c)) : Boolean((d, e)));",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		},
+		{
+			"kind": "invalid",
+			"code": "\nfunction * generator() {\n    if (a ? Boolean(yield y) : x) {\n        return a;\n    };\n}\n",
+			"why": "options [{\"enforceForInnerExpressions\":true}]"
+		}
+	]
+}

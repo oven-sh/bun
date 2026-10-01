@@ -1,0 +1,204 @@
+--- fj-build-computed [ts] "type T = { [a /*1*/ + b /*2*/ ] /*3*/ : 1 };"
+ TypeAliasDeclaration pos=0 start=0 end=44
+  TypeLiteral pos=8 start=9 end=43 members[10,41)
+   PropertySignature pos=10 start=11 end=41
+    ComputedPropertyName pos=10 start=11 end=31
+     BinaryExpression pos=12 start=12 end=23
+    LiteralType pos=39 start=40 end=41
+--- fj-build-param-init [ts] "let f: (a = 1 /*1*/ , { b /*2*/ } /*3*/ : X /*4*/ ) => void;"
+ FirstStatement pos=0 start=0 end=60
+  VariableDeclarationList pos=0 start=0 end=59
+   VariableDeclaration pos=3 start=4 end=59
+    FunctionType pos=6 start=7 end=59 parameters[8,43)
+     Parameter pos=8 start=8 end=13
+     Parameter pos=21 start=22 end=43
+      ObjectBindingPattern pos=21 start=22 end=33 elements[23,25)
+       BindingElement pos=23 start=24 end=25
+      TypeReference pos=41 start=42 end=43
+--- fj-build-prop-init [ts] "type U = { a: number = 1 /*1*/ ; b /*2*/ : 2 };"
+ TypeAliasDeclaration pos=0 start=0 end=47
+  TypeLiteral pos=8 start=9 end=46 members[10,44)
+   PropertySignature pos=10 start=11 end=32
+   PropertySignature pos=32 start=33 end=44
+    LiteralType pos=42 start=43 end=44
+--- fj-build-import-attr [ts] "let t: import(\"x\", { with: { a: \"b\" /*1*/ } /*2*/ }).Y;"
+ FirstStatement pos=0 start=0 end=55
+  VariableDeclarationList pos=0 start=0 end=54
+   VariableDeclaration pos=3 start=4 end=54
+    LastTypeNode pos=6 start=7 end=54
+     LiteralType pos=14 start=14 end=17
+     AssertClause pos=26 start=27 end=43 elements[28,35)
+      AssertEntry pos=28 start=29 end=35
+--- fj-heritage-expr [ts] "class C implements A /*1*/ [0 /*2*/ ] /*3*/ {}"
+ ClassDeclaration pos=0 start=0 end=46 members[45,45)
+  HeritageClause pos=7 start=8 end=37 types[18,37)
+   ExpressionWithTypeArguments pos=18 start=19 end=37
+    ElementAccessExpression pos=18 start=19 end=37
+--- fj-heritage-expr-targs [ts] "class D implements a /*1*/ . b /*2*/ () /*3*/ < /*4*/ T> /*5*/ {}"
+ ClassDeclaration pos=0 start=0 end=65 members[64,64)
+  HeritageClause pos=7 start=8 end=56 types[18,56)
+   ExpressionWithTypeArguments pos=18 start=19 end=56 typeArguments[47,55)
+    CallExpression pos=18 start=19 end=39
+     PropertyAccessExpression pos=18 start=19 end=30
+    TypeReference pos=47 start=54 end=55
+--- fj-class-extends [ts] "class E extends f /*1*/ ( /*2*/ ) /*3*/ < /*4*/ T /*5*/ > /*6*/ {}"
+ ClassDeclaration pos=0 start=0 end=66 members[65,65)
+  HeritageClause pos=7 start=8 end=57 types[15,57)
+   ExpressionWithTypeArguments pos=15 start=16 end=57 typeArguments[41,49)
+    CallExpression pos=15 start=16 end=33
+    TypeReference pos=41 start=48 end=49
+--- fj-drop-class-index-init [ts] "class F { [k: string = \"a\" /*1*/ ] /*2*/ : number /*3*/ ; }"
+ ClassDeclaration pos=0 start=0 end=59 members[9,57)
+  IndexSignature pos=9 start=10 end=57 parameters[11,26)
+   Parameter pos=11 start=11 end=26
+--- fj-drop-class-index-type [ts] "class G { [k: string]: { [a /*1*/ + b /*2*/ ]: 1 } /*3*/ ; }"
+ ClassDeclaration pos=0 start=0 end=60 members[9,58)
+  IndexSignature pos=9 start=10 end=58 parameters[11,20)
+   Parameter pos=11 start=11 end=20
+   TypeLiteral pos=22 start=23 end=50 members[24,48)
+    PropertySignature pos=24 start=25 end=48
+     ComputedPropertyName pos=24 start=25 end=45
+      BinaryExpression pos=26 start=26 end=37
+     LiteralType pos=46 start=47 end=48
+--- fj-drop-class-index-fn-default [ts] "class H { [k: string]: (a = 1 /*1*/ ) => void /*2*/ ; }"
+ ClassDeclaration pos=0 start=0 end=55 members[9,53)
+  IndexSignature pos=9 start=10 end=53 parameters[11,20)
+   Parameter pos=11 start=11 end=20
+   FunctionType pos=22 start=23 end=45 parameters[24,29)
+    Parameter pos=24 start=24 end=29
+--- fj-drop-class-index-accessor [ts] "class I { [k: string]: { get x() /*1*/ { return 1 /*2*/ ; } /*3*/ }; }"
+ ClassDeclaration pos=0 start=0 end=70 members[9,68)
+  IndexSignature pos=9 start=10 end=68 parameters[11,20)
+   Parameter pos=11 start=11 end=20
+   TypeLiteral pos=22 start=23 end=67 members[24,59)
+    GetAccessor pos=24 start=25 end=59 parameters[31,31)
+     Block pos=32 start=39 end=59
+      ReturnStatement pos=40 start=41 end=57
+--- fj-iface-heritage-expr [ts] "interface J extends a /*1*/ . b /*2*/ () /*3*/ {}"
+ InterfaceDeclaration pos=0 start=0 end=49 members[48,48)
+  HeritageClause pos=11 start=12 end=40 types[19,40)
+   ExpressionWithTypeArguments pos=19 start=20 end=40
+    CallExpression pos=19 start=20 end=40
+     PropertyAccessExpression pos=19 start=20 end=31
+--- lead-ws-bom-free [ts] "  \t\n// a\n  /* b\n */ /** c */ let x = 1; // d"
+ FirstStatement pos=0 start=29 end=39
+  VariableDeclarationList pos=0 start=29 end=38
+   VariableDeclaration pos=32 start=33 end=38
+--- lead-jsdoc-only [ts] "/** doc */\n"
+--- lead-empty-block [ts] "/**/x"
+ ExpressionStatement pos=0 start=4 end=5
+--- lead-comment-with-arrow-text [ts] "// --> not legacy\n/* --> nor this */ x;"
+ ExpressionStatement pos=0 start=37 end=39
+--- hashbang-then-comments [ts] "#!/usr/bin/env bun\n/* a */ // b\nx;"
+ ExpressionStatement pos=0 start=32 end=34
+--- byte-before-targs [ts] "let x: A< /*1*/ >; f< /*2*/ >(); let y: B<C, /*3*/ >;"
+ FirstStatement pos=0 start=0 end=18
+  VariableDeclarationList pos=0 start=0 end=17
+   VariableDeclaration pos=3 start=4 end=17
+    TypeReference pos=6 start=7 end=17 typeArguments[9,9)
+ ExpressionStatement pos=18 start=19 end=32
+  CallExpression pos=18 start=19 end=31 typeArguments[21,21)
+ FirstStatement pos=32 start=33 end=53
+  VariableDeclarationList pos=32 start=33 end=52
+   VariableDeclaration pos=36 start=37 end=52
+    TypeReference pos=39 start=40 end=52 typeArguments[42,44)
+     TypeReference pos=42 start=42 end=43
+--- erased-beside-comments [ts] "/*1*/ export /*2*/ declare /*3*/ const /*4*/ a /*5*/ : /*6*/ number /*7*/ ; /*8*/ interface /*9*/ I /*10*/ { } /*11*/ type /*12*/ T /*13*/ = /*14*/ 1 /*15*/ ;"
+ FirstStatement pos=0 start=6 end=75 modifiers[0,26)
+  VariableDeclarationList pos=26 start=33 end=67
+   VariableDeclaration pos=38 start=45 end=67
+ InterfaceDeclaration pos=75 start=82 end=110 members[108,108)
+ TypeAliasDeclaration pos=110 start=118 end=158
+  LiteralType pos=140 start=148 end=149
+--- wrappers-beside-comments [ts] "let v = ( /*1*/ a /*2*/ ) /*3*/ as /*4*/ T /*5*/ ; let w = b /*6*/ ! /*7*/ . c; let u = < /*8*/ T /*9*/ > /*10*/ d /*11*/ ; let s = e /*12*/ satisfies /*13*/ S /*14*/ ;"
+ FirstStatement pos=0 start=0 end=50
+  VariableDeclarationList pos=0 start=0 end=42
+   VariableDeclaration pos=3 start=4 end=42
+    AsExpression pos=7 start=8 end=42
+     ParenthesizedExpression pos=7 start=8 end=25
+     TypeReference pos=34 start=41 end=42
+ FirstStatement pos=50 start=51 end=79
+  VariableDeclarationList pos=50 start=51 end=78
+   VariableDeclaration pos=54 start=55 end=78
+    PropertyAccessExpression pos=58 start=59 end=78
+     NonNullExpression pos=58 start=59 end=68
+ FirstStatement pos=79 start=80 end=123
+  VariableDeclarationList pos=79 start=80 end=114
+   VariableDeclaration pos=83 start=84 end=114
+    TypeAssertionExpression pos=87 start=88 end=114
+     TypeReference pos=89 start=96 end=97
+ FirstStatement pos=123 start=124 end=168
+  VariableDeclarationList pos=123 start=124 end=159
+   VariableDeclaration pos=127 start=128 end=159
+    SatisfiesExpression pos=131 start=132 end=159
+     TypeReference pos=150 start=158 end=159
+--- generics-beside-comments [ts] "f /*1*/ < /*2*/ T /*3*/ > /*4*/ (x); new C /*5*/ <T> /*6*/ (); g /*7*/ <T> /*8*/ `t`; interface I /*9*/ <T> /*10*/ {} type A /*11*/ <T> /*12*/ = T;"
+ ExpressionStatement pos=0 start=0 end=36
+  CallExpression pos=0 start=0 end=35 typeArguments[9,17)
+   TypeReference pos=9 start=16 end=17
+ ExpressionStatement pos=36 start=37 end=62
+  NewExpression pos=36 start=37 end=61 typeArguments[50,51)
+   TypeReference pos=50 start=50 end=51
+ ExpressionStatement pos=62 start=63 end=85
+  TaggedTemplateExpression pos=62 start=63 end=84 typeArguments[72,73)
+   TypeReference pos=72 start=72 end=73
+ InterfaceDeclaration pos=85 start=86 end=117 typeParameters[105,106) members[116,116)
+  TypeParameter pos=105 start=105 end=106
+ TypeAliasDeclaration pos=117 start=118 end=147 typeParameters[133,134)
+  TypeParameter pos=133 start=133 end=134
+  TypeReference pos=144 start=145 end=146
+--- mapped-beside-comments [ts] "type M<T> = { /*1*/ readonly /*2*/ [ /*3*/ K /*4*/ in /*5*/ keyof T /*6*/ as /*7*/ K /*8*/ ] /*9*/ -? /*10*/ : /*11*/ T[K] /*12*/ ; /*13*/ };"
+ TypeAliasDeclaration pos=0 start=0 end=141 typeParameters[7,8)
+  TypeParameter pos=7 start=7 end=8
+  MappedType pos=11 start=12 end=140 members[131,131)
+   TypeParameter pos=36 start=43 end=67
+    TypeOperator pos=53 start=60 end=67
+     TypeReference pos=65 start=66 end=67
+   TypeReference pos=76 start=83 end=84
+   IndexedAccessType pos=110 start=118 end=122
+    TypeReference pos=110 start=118 end=119
+    TypeReference pos=120 start=120 end=121
+--- jsx-directive-in-tag [tsx] "let e = <div\n  // @ts-expect-error\n  bad={1}\n  /* @ts-ignore */ worse\n/>;"
+ FirstStatement pos=0 start=0 end=73
+  VariableDeclarationList pos=0 start=0 end=72
+   VariableDeclaration pos=3 start=4 end=72
+    JsxSelfClosingElement pos=7 start=8 end=72
+     JsxAttributes pos=12 start=37 end=69
+      JsxAttribute pos=12 start=37 end=44
+       JsxExpression pos=41 start=41 end=44
+      JsxAttribute pos=44 start=64 end=69
+--- jsx-closing-tag-line [tsx] "let e = <a></a // 1\n>;"
+ FirstStatement pos=0 start=0 end=22
+  VariableDeclarationList pos=0 start=0 end=21
+   VariableDeclaration pos=3 start=4 end=21
+    JsxElement pos=7 start=8 end=21
+     JsxOpeningElement pos=7 start=8 end=11
+      JsxAttributes pos=10 start=10 end=10
+     JsxClosingElement pos=11 start=11 end=21
+--- jsx-spread-child [tsx] "let e = <a>{ /*1*/ ...b /*2*/ }</a>;"
+ FirstStatement pos=0 start=0 end=36
+  VariableDeclarationList pos=0 start=0 end=35
+   VariableDeclaration pos=3 start=4 end=35
+    JsxElement pos=7 start=8 end=35
+     JsxOpeningElement pos=7 start=8 end=11
+      JsxAttributes pos=10 start=10 end=10
+     JsxExpression pos=11 start=11 end=31
+     JsxClosingElement pos=31 start=31 end=35
+--- jsx-string-attr-gap [tsx] "let e = <a b /*1*/ = /*2*/ 'c' /*3*/ d = /*4*/ { /*5*/ 1 /*6*/ } /*7*/ />;"
+ FirstStatement pos=0 start=0 end=74
+  VariableDeclarationList pos=0 start=0 end=73
+   VariableDeclaration pos=3 start=4 end=73
+    JsxSelfClosingElement pos=7 start=8 end=73
+     JsxAttributes pos=10 start=11 end=64
+      JsxAttribute pos=10 start=11 end=30
+      JsxAttribute pos=30 start=37 end=64
+       JsxExpression pos=40 start=47 end=64
+--- jsx-lt-lt [tsx] "let e = <A /*1*/ <T> /*2*/ ></A /*3*/ >;"
+ FirstStatement pos=0 start=0 end=40
+  VariableDeclarationList pos=0 start=0 end=39
+   VariableDeclaration pos=3 start=4 end=39
+    JsxElement pos=7 start=8 end=39
+     JsxOpeningElement pos=7 start=8 end=28 typeArguments[18,19)
+      TypeReference pos=18 start=18 end=19
+      JsxAttributes pos=20 start=20 end=20
+     JsxClosingElement pos=28 start=28 end=39

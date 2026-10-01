@@ -1,0 +1,4 @@
+# dir /workspace/wt/parser HEAD be1ebe5295 dirty: []
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet "-j8" --version
+rustup spent 6s installing the pinned toolchain (nightly-2026-09-15); it was missing or incomplete on this machine
+1.4.3-debug

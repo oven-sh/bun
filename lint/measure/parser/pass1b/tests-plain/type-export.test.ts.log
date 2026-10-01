@@ -1,0 +1,161 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/js/bun/typescript/type-export.test.ts
+bun test v1.4.3 (be1ebe529)
+
+test/js/bun/typescript/type-export.test.ts:
+(skip) re-export with export from > import with require > run > works
+(pass) re-export with export from > import with require > build > works [1378.15ms]
+(fail) re-export with export from > import with require > compile > works [5003.89ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with export from > import with import star > run > works
+(pass) re-export with export from > import with import star > build > works [1928.54ms]
+(fail) re-export with export from > import with import star > compile > works [5000.30ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with export from > import with await import > run > works
+(pass) re-export with export from > import with await import > build > works [988.07ms]
+(fail) re-export with export from > import with await import > compile > works [5124.90ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with export from > import with import individual > run > works
+(pass) re-export with export from > import with import individual > build > works [1146.67ms]
+(fail) re-export with export from > import with import individual > compile > works [5980.23ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with import then export > import with require > run > works
+(pass) re-export with import then export > import with require > build > works [1760.57ms]
+(fail) re-export with import then export > import with require > compile > works [5000.22ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with import then export > import with import star > run > works
+(pass) re-export with import then export > import with import star > build > works [903.79ms]
+(fail) re-export with import then export > import with import star > compile > works [5000.21ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with import then export > import with await import > run > works
+(pass) re-export with import then export > import with await import > build > works [449.26ms]
+(pass) re-export with import then export > import with await import > compile > works [3559.09ms]
+(skip) re-export with import then export > import with import individual > run > works
+(pass) re-export with import then export > import with import individual > build > works [1253.32ms]
+(pass) re-export with import then export > import with import individual > compile > works [4955.80ms]
+(skip) re-export with export star > import with require > run > works
+(pass) re-export with export star > import with require > build > works [1119.66ms]
+(fail) re-export with export star > import with require > compile > works [5043.24ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with export star > import with import star > run > works
+(pass) re-export with export star > import with import star > build > works [651.99ms]
+(fail) re-export with export star > import with import star > compile > works [5003.63ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with export star > import with await import > run > works
+(pass) re-export with export star > import with await import > build > works [829.96ms]
+(pass) re-export with export star > import with await import > compile > works [4534.66ms]
+(skip) re-export with export star > import with import individual > run > works
+(pass) re-export with export star > import with import individual > build > works [809.38ms]
+(fail) re-export with export star > import with import individual > compile > works [5002.23ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with export merge > import with require > run > works
+(pass) re-export with export merge > import with require > build > works [617.63ms]
+(fail) re-export with export merge > import with require > compile > works [5000.30ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with export merge > import with import star > run > works
+(pass) re-export with export merge > import with import star > build > works [897.90ms]
+(fail) re-export with export merge > import with import star > compile > works [5000.77ms]
+  ^ this test timed out after 5000ms.
+(skip) re-export with export merge > import with await import > run > works
+(pass) re-export with export merge > import with await import > build > works [646.64ms]
+(pass) re-export with export merge > import with await import > compile > works [3221.90ms]
+(skip) re-export with export merge > import with import individual > run > works
+(pass) import not found > none [1007.04ms]
+(pass) re-export with export merge > import with import individual > build > works [1198.55ms]
+(pass) import not found > default with same name [1309.99ms]
+(pass) js file type export [848.09ms]
+(pass) import not found > type [1573.63ms]
+(pass) js file type import with default export [701.67ms]
+(pass) js file type import [1878.22ms]
+(pass) js file with through export [2393.52ms]
+(pass) js file with through export 2 [2612.83ms]
+(pass) through export merge > js > through > a.js [1642.25ms]
+(pass) through export merge > js > through > main.js [2455.65ms]
+(fail) re-export with export merge > import with import individual > compile > works [5014.33ms]
+  ^ this test timed out after 5000ms.
+(pass) through export merge > js > direct2 > a.js [745.20ms]
+(pass) through export merge > js > direct > main.js [1508.97ms]
+(pass) through export merge > js > direct > a.js [1198.49ms]
+(pass) through export merge > js > direct2 > main.js [1223.73ms]
+(pass) through export merge > js > ns > a.js [1193.84ms]
+(pass) through export merge > ts > through > main.ts [1096.05ms]
+(pass) through export merge > js > ns > main.js [2257.68ms]
+(pass) through export merge > ts > through > a.ts [1468.34ms]
+(pass) through export merge > ts > direct > main.ts [2312.51ms]
+(pass) through export merge > ts > direct > a.ts [1549.91ms]
+(pass) through export merge > ts > direct2 > a.ts [1027.02ms]
+(pass) through export merge > ts > direct2 > main.ts [1420.82ms]
+(pass) through export merge > ts > ns > main.ts [1559.97ms]
+(pass) through export merge > ts > ns > a.ts [690.62ms]
+(skip) check ownkeys from a star import > run > works
+(pass) check commonjs [848.98ms]
+(pass) export * from './module' > js > a.js [872.31ms]
+(pass) export * from './module' > js > main.js [1262.26ms]
+(pass) check merge [2062.97ms]
+(pass) export * from './module' > ts > main.ts [1516.64ms]
+(pass) export * as ns from './module' > js > a.js [883.81ms]
+(pass) export * as ns from './module' > ts > main.ts [915.96ms]
+(pass) export * as ns from './module' > js > main.js [2137.01ms]
+(pass) export * as ns from './module' > ts > a.ts [767.04ms]
+(pass) export * from './module' > ts > a.ts [2585.63ms]
+(pass) export type {Type} from './module' > ts > main.ts [616.08ms]
+(pass) export type {Type} from './module' > ts > a.ts [726.11ms]
+(fail) check ownkeys from a star import > compile > works [5001.85ms]
+  ^ this test timed out after 5000ms.
+(skip) import only used in decorator (#8439) > run > works
+(pass) import only used in decorator (#8439) > compile > works [3797.34ms]
+
+18 tests skipped:
+(skip) re-export with export from > import with require > run > works
+(skip) re-export with export from > import with import star > run > works
+(skip) re-export with export from > import with await import > run > works
+(skip) re-export with export from > import with import individual > run > works
+(skip) re-export with import then export > import with require > run > works
+(skip) re-export with import then export > import with import star > run > works
+(skip) re-export with import then export > import with await import > run > works
+(skip) re-export with import then export > import with import individual > run > works
+(skip) re-export with export star > import with require > run > works
+(skip) re-export with export star > import with import star > run > works
+(skip) re-export with export star > import with await import > run > works
+(skip) re-export with export star > import with import individual > run > works
+(skip) re-export with export merge > import with require > run > works
+(skip) re-export with export merge > import with import star > run > works
+(skip) re-export with export merge > import with await import > run > works
+(skip) re-export with export merge > import with import individual > run > works
+(skip) check ownkeys from a star import > run > works
+(skip) import only used in decorator (#8439) > run > works
+
+
+13 tests failed:
+(fail) re-export with export from > import with require > compile > works [5003.89ms]
+  ^ this test timed out after 5000ms.
+(fail) re-export with export from > import with import star > compile > works [5000.30ms]
+  ^ this test timed out after 5000ms.
+(fail) re-export with export from > import with await import > compile > works [5124.90ms]
+  ^ this test timed out after 5000ms.
+(fail) re-export with export from > import with import individual > compile > works [5980.23ms]
+  ^ this test timed out after 5000ms.
+(fail) re-export with import then export > import with require > compile > works [5000.22ms]
+  ^ this test timed out after 5000ms.
+(fail) re-export with import then export > import with import star > compile > works [5000.21ms]
+  ^ this test timed out after 5000ms.
+(fail) re-export with export star > import with require > compile > works [5043.24ms]
+  ^ this test timed out after 5000ms.
+(fail) re-export with export star > import with import star > compile > works [5003.63ms]
+  ^ this test timed out after 5000ms.
+(fail) re-export with export star > import with import individual > compile > works [5002.23ms]
+  ^ this test timed out after 5000ms.
+(fail) re-export with export merge > import with require > compile > works [5000.30ms]
+  ^ this test timed out after 5000ms.
+(fail) re-export with export merge > import with import star > compile > works [5000.77ms]
+  ^ this test timed out after 5000ms.
+(fail) re-export with export merge > import with import individual > compile > works [5014.33ms]
+  ^ this test timed out after 5000ms.
+(fail) check ownkeys from a star import > compile > works [5001.85ms]
+  ^ this test timed out after 5000ms.
+
+ 57 pass
+ 18 skip
+ 13 fail
+ 196 expect() calls
+Ran 88 tests across 1 file. [93.66s]
+error: script "bd" exited with code 1

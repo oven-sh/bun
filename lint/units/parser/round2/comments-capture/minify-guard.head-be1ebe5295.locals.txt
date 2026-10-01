@@ -1,0 +1,10 @@
+in_tag_block       local = z |
+in_tag_line        local = z |
+outside_block      local = e |
+outside_line       local = e |
+in_braces          local = e |
+in_attr_braces     local = e |
+in_close_tag       local = z |
+in_self_close      local = z |
+after_tag_name     local = z |
+before_tag_name    local = z |

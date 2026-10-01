@@ -1,0 +1,23 @@
+[
+ ["lead-directives", "ts", "// @ts-nocheck\n/// <reference path=\"a.d.ts\" />\n/* c */\nimport x from \"y\";"],
+ ["hashbang-comment-eof", "ts", "#!/x\n// a"],
+ ["implements-types", "ts", "class K implements A /*1*/ . B /*2*/ <C /*3*/ > /*4*/ , D /*5*/ {}"],
+ ["decorator-call", "ts", "/*0*/ @ /*1*/ dec /*2*/ ( /*3*/ ) /*4*/ class C {}"],
+ ["decorator-paren-export", "ts", "export /*1*/ @ /*2*/ ( /*3*/ dec /*4*/ ) /*5*/ class C {}"],
+ ["export-default-interface", "ts", "export /*1*/ default /*2*/ interface /*3*/ I /*4*/ { } /*5*/ let a;"],
+ ["abstract-members", "ts", "abstract class C { /*1*/ abstract /*2*/ m /*3*/ ( ) /*4*/ : void /*5*/ ; /*6*/ x /*7*/ ! /*8*/ : number /*9*/ ; /*10*/ }"],
+ ["overloads", "ts", "function f /*1*/ ( ) /*2*/ : void /*3*/ ; /*4*/ function f() {} class D { m /*5*/ ( ) /*6*/ : void /*7*/ ; m() {} }"],
+ ["parameter-properties", "ts", "class P { constructor( /*1*/ public /*2*/ readonly /*3*/ a /*4*/ ? /*5*/ : number /*6*/ ) {} }"],
+ ["import-type-specifiers", "ts", "import { /*1*/ type /*2*/ A /*3*/ as /*4*/ B /*5*/ } from \"x\"; import /*6*/ type /*7*/ { C } /*8*/ from /*9*/ \"y\" /*10*/ ;"],
+ ["catch-binding", "ts", "try {} catch ( /*1*/ e /*2*/ : /*3*/ unknown /*4*/ ) {}"],
+ ["declare-module-global", "ts", "declare /*1*/ module /*2*/ \"m\" /*3*/ { } /*4*/ declare /*5*/ global /*6*/ { } /*7*/ export {};"],
+ ["namespace-dotted", "ts", "declare namespace A /*1*/ . /*2*/ B /*3*/ . /*4*/ C /*5*/ { } module /*6*/ M /*7*/ . /*8*/ N { }"],
+ ["export-as-namespace", "ts", "export /*1*/ as /*2*/ namespace /*3*/ Foo /*4*/ ; export {};"],
+ ["enum-const", "ts", "/*1*/ const /*2*/ enum /*3*/ E /*4*/ { A /*5*/ = /*6*/ 1 /*7*/ , } declare /*8*/ enum F {}"],
+ ["index-signature-class", "ts", "class X { /*1*/ static /*2*/ readonly /*3*/ [ /*4*/ k /*5*/ : /*6*/ string /*7*/ ] /*8*/ : /*9*/ number /*10*/ ; }"],
+ ["this-param-return-pred", "ts", "function f( /*1*/ this /*2*/ : /*3*/ Window /*4*/ , x: any) /*5*/ : /*6*/ x /*7*/ is /*8*/ string /*9*/ { return true; }"],
+ ["optional-definite", "ts", "class O { a /*1*/ ? /*2*/ : number; b /*3*/ ! /*4*/ : number; m /*5*/ ? /*6*/ (): void; } let d /*7*/ ! /*8*/ : number;"],
+ ["accessor-override", "ts", "class V extends W { /*1*/ override /*2*/ accessor /*3*/ x /*4*/ = 1; /*5*/ declare /*6*/ y /*7*/ : number; }"],
+ ["type-only-export", "ts", "export /*1*/ type /*2*/ { A /*3*/ } /*4*/ from /*5*/ \"./a\" /*6*/ ; export /*7*/ type /*8*/ * /*9*/ as /*10*/ ns /*11*/ from \"./b\";"],
+ ["import-equals", "ts", "import /*1*/ ie /*2*/ = /*3*/ N /*4*/ . /*5*/ A /*6*/ ; import /*7*/ type /*8*/ te = require( /*9*/ \"m\" /*10*/ ) /*11*/ ;"]
+]

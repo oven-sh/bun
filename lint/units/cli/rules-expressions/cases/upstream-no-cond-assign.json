@@ -1,0 +1,194 @@
+{
+	"base": null,
+	"valid": [
+		{
+			"code": "var x = 0; if (x == 0) { var b = 1; }"
+		},
+		{
+			"code": "var x = 5; while (x < 5) { x = x + 1; }"
+		},
+		{
+			"code": "if ((someNode = someNode.parentNode) !== null) { }"
+		},
+		{
+			"code": "if ((someNode = someNode.parentNode) !== null) { }"
+		},
+		{
+			"code": "if ((a = b));"
+		},
+		{
+			"code": "while ((a = b));"
+		},
+		{
+			"code": "do {} while ((a = b));"
+		},
+		{
+			"code": "for (;(a = b););"
+		},
+		{
+			"code": "for (;;) {}"
+		},
+		{
+			"code": "if (someNode || (someNode = parentNode)) { }"
+		},
+		{
+			"code": "while (someNode || (someNode = parentNode)) { }"
+		},
+		{
+			"code": "do { } while (someNode || (someNode = parentNode));"
+		},
+		{
+			"code": "for (;someNode || (someNode = parentNode););"
+		},
+		{
+			"code": "if ((function(node) { return node = parentNode; })(someNode)) { }"
+		},
+		{
+			"code": "if ((node => node = parentNode)(someNode)) { }",
+			"languageOptions": {
+				"ecmaVersion": 6
+			}
+		},
+		{
+			"code": "if (function(node) { return node = parentNode; }) { }"
+		},
+		{
+			"code": "var x; var b = (x === 0) ? 1 : 0;"
+		},
+		{
+			"code": "switch (foo) { case a = b: bar(); }"
+		}
+	],
+	"invalid": [
+		{
+			"code": "var x; if (x = 0) { var b = 1; }",
+			"errors": 1
+		},
+		{
+			"code": "var x; while (x = 0) { var b = 1; }",
+			"errors": 1
+		},
+		{
+			"code": "var x = 0, y; do { y = x; } while (x = x + 1);",
+			"errors": 1
+		},
+		{
+			"code": "var x; for(; x+=1 ;){};",
+			"errors": 1
+		},
+		{
+			"code": "var x; if ((x) = (0));",
+			"errors": 1
+		},
+		{
+			"code": "var x; var b = (x = 0) ? 1 : 0;",
+			"errors": 1
+		},
+		{
+			"code": "(((3496.29)).bkufyydt = 2e308) ? foo : bar;",
+			"errors": 1
+		}
+	],
+	"skipped": [
+		{
+			"kind": "valid",
+			"code": "var x = 0; if (x == 0) { var b = 1; }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "valid",
+			"code": "if ((function(node) { return node = parentNode; })(someNode)) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "valid",
+			"code": "if ((node => node = parentNode)(someNode)) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "valid",
+			"code": "if (function(node) { return node = parentNode; }) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "valid",
+			"code": "x = 0;",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "valid",
+			"code": "switch (foo) { case a = b: bar(); }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "valid",
+			"code": "switch (foo) { case baz + (a = b): bar(); }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (someNode || (someNode = parentNode)) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "while (someNode || (someNode = parentNode)) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "do { } while (someNode || (someNode = parentNode));",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "for (; (typeof l === 'undefined' ? (l = 0) : l); i++) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if (x = 0) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "while (x = 0) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "do { } while (x = x + 1);",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "for(; x = y; ) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "if ((x = 0)) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "while ((x = 0)) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "do { } while ((x = x + 1));",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "for(; (x = y); ) { }",
+			"why": "options [\"always\"]"
+		},
+		{
+			"kind": "invalid",
+			"code": "var x; var b = x && (y = 0) ? 1 : 0;",
+			"why": "options [\"always\"]"
+		}
+	]
+}

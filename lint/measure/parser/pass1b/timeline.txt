@@ -1,0 +1,12 @@
+START 01-bd-version 2026-10-01T06:27:05Z load=558.89 571.29 520.29 dir=/workspace/wt/parser cmd: bun bd -j8 --version
+END   01-bd-version rc=0 wall=1697s lockwait=389s run=1308s 2026-10-01T06:55:22Z load=430.64 458.75 495.93
+START 03-base-build-release 2026-10-01T07:02:09Z load=432.37 465.64 487.79 dir=/workspace/wt/parser-base cmd: bun run build:release
+START 05a-07a-head-sizes-cargo-test 2026-10-01T07:03:40Z load=425.70 456.96 482.81 dir=/workspace/wt/parser cmd: /tmp/pbb1b/s5a7a.sh
+NOTE 03-base-build-release cancelled while waiting for the lock (requeued with -j8)
+START 03b-base-build-release-j8 2026-10-01T07:23:03Z load=680.63 563.80 503.62 dir=/workspace/wt/parser-base cmd: bun run build:release -j8
+END   05a-07a-head-sizes-cargo-test rc=0 wall=1712s lockwait=1455s run=257s 2026-10-01T07:32:13Z load=724.48 648.21 564.84
+START 07b-tests-plain 2026-10-01T07:49:04Z load=726.72 749.64 685.80 dir=/workspace/wt/parser cmd: /tmp/pbb1b/tests.sh plain
+START 05b-base-sizes 2026-10-01T07:55:09Z load=825.46 774.34 713.92 dir=/tmp/pbb1b/base-tree cmd: /tmp/pbb1b/s5b.sh
+END   03b-base-build-release-j8 rc=0 wall=2071s lockwait=2063s run=8s 2026-10-01T07:57:34Z load=708.81 744.90 711.64
+START 07c-tests-leak 2026-10-01T08:16:45Z load=689.16 704.62 716.64 dir=/workspace/wt/parser cmd: /tmp/pbb1b/tests.sh leak
+END   07b-tests-plain rc=0 wall=2129s lockwait=1526s run=603s 2026-10-01T08:24:34Z load=741.04 798.87 766.54

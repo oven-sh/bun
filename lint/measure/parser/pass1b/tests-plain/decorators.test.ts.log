@@ -1,0 +1,33 @@
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet test test/bundler/transpiler/decorators.test.ts
+bun test v1.4.3 (be1ebe529)
+
+test/bundler/transpiler/decorators.test.ts:
+(pass) decorator order of evaluation [92.36ms]
+(pass) decorator factories order of evaluation [99.11ms]
+(pass) parameter decorators [58.08ms]
+(pass) decorators random [46.27ms]
+(pass) class field order [7.01ms]
+(pass) changing static method [8.47ms]
+(pass) class extending from another class [13.98ms]
+(pass) decorated fields moving to constructor [8.02ms]
+(pass) only class decorator [5.15ms]
+(pass) decorators with different property key types [13.12ms]
+(pass) only property decorators [8.94ms]
+(pass) only argument decorators [4.27ms]
+(pass) no decorators [3.72ms]
+(pass) constructor statements > with parameter properties [10.97ms]
+(pass) constructor statements > class expressions (no decorators) [10.56ms]
+(pass) constructor statements > with parameter properties and statements [6.29ms]
+(pass) constructor statements > with parameter properties, statements, and decorators [7.94ms]
+(pass) constructor statements > with more parameter properties, statements, and decorators [12.75ms]
+(pass) constructor statements > expression with parameter properties and statements [6.31ms]
+(pass) export default class Named works [1.93ms]
+(pass) export default class works (anonymous name) [1.90ms]
+(pass) field with supra-BMP string-literal key and initializer is assigned under the correct key [7.49ms]
+(pass) decorator and declare [4.18ms]
+(pass) lowering many decorated instance fields into a large constructor body stays linear [24043.06ms]
+
+ 24 pass
+ 0 fail
+ 273 expect() calls
+Ran 24 tests across 1 file. [29.88s]

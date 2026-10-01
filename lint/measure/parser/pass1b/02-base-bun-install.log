@@ -1,0 +1,21 @@
+bun install v1.4.3-canary.1 (367d939d9)
+
++ @lezer/common@1.5.2
++ @lezer/cpp@1.1.6
++ @types/react@18.3.31
++ @types/react-dom@18.3.7
++ esbuild@0.21.5
++ oxlint@1.70.0
++ prettier@3.6.2
++ prettier-plugin-organize-imports@4.3.0
++ react@18.3.1
++ react-dom@18.3.1
++ source-map-js@1.2.1
++ typescript@6.0.2
++ undici-types@8.3.0
+
+24 packages installed [2.00s]
+
+real	0m2.015s
+user	0m0.006s
+sys	0m0.033s

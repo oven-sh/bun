@@ -1,0 +1,116 @@
+--- lead-directives [ts] "// @ts-nocheck\n/// <reference path=\"a.d.ts\" />\n/* c */\nimport x from \"y\";"
+ ImportDeclaration pos=0 start=55 end=73
+  ImportClause pos=61 start=62 end=63
+--- hashbang-comment-eof [ts] "#!/x\n// a"
+--- implements-types [ts] "class K implements A /*1*/ . B /*2*/ <C /*3*/ > /*4*/ , D /*5*/ {}"
+ ClassDeclaration pos=0 start=0 end=66 members[65,65)
+  HeritageClause pos=7 start=8 end=57 types[18,57)
+   ExpressionWithTypeArguments pos=18 start=19 end=47 typeArguments[38,39)
+    PropertyAccessExpression pos=18 start=19 end=30
+    TypeReference pos=38 start=38 end=39
+   ExpressionWithTypeArguments pos=55 start=56 end=57
+--- decorator-call [ts] "/*0*/ @ /*1*/ dec /*2*/ ( /*3*/ ) /*4*/ class C {}"
+ ClassDeclaration pos=0 start=6 end=50 modifiers[0,33) members[49,49)
+  Decorator pos=0 start=6 end=33
+   CallExpression pos=7 start=14 end=33
+--- decorator-paren-export [ts] "export /*1*/ @ /*2*/ ( /*3*/ dec /*4*/ ) /*5*/ class C {}"
+ ClassDeclaration pos=0 start=0 end=57 modifiers[0,40) members[56,56)
+  Decorator pos=6 start=13 end=40
+   ParenthesizedExpression pos=14 start=21 end=40
+--- export-default-interface [ts] "export /*1*/ default /*2*/ interface /*3*/ I /*4*/ { } /*5*/ let a;"
+ InterfaceDeclaration pos=0 start=0 end=54 modifiers[0,20) members[52,52)
+ FirstStatement pos=54 start=61 end=67
+  VariableDeclarationList pos=54 start=61 end=66
+   VariableDeclaration pos=64 start=65 end=66
+--- abstract-members [ts] "abstract class C { /*1*/ abstract /*2*/ m /*3*/ ( ) /*4*/ : void /*5*/ ; /*6*/ x /*7*/ ! /*8*/ : number /*9*/ ; /*10*/ }"
+ ClassDeclaration pos=0 start=0 end=120 modifiers[0,8) members[18,111)
+  MethodDeclaration pos=18 start=25 end=72 modifiers[18,33) parameters[49,49)
+  PropertyDeclaration pos=72 start=79 end=111
+--- overloads [ts] "function f /*1*/ ( ) /*2*/ : void /*3*/ ; /*4*/ function f() {} class D { m /*5*/ ( ) /*6*/ : void /*7*/ ; m() {} }"
+ FunctionDeclaration pos=0 start=0 end=41 parameters[18,18)
+ FunctionDeclaration pos=41 start=48 end=63 parameters[59,59)
+  Block pos=60 start=61 end=63
+ ClassDeclaration pos=63 start=64 end=115 members[73,113)
+  MethodDeclaration pos=73 start=74 end=106 parameters[83,83)
+  MethodDeclaration pos=106 start=107 end=113 parameters[109,109)
+   Block pos=110 start=111 end=113
+--- parameter-properties [ts] "class P { constructor( /*1*/ public /*2*/ readonly /*3*/ a /*4*/ ? /*5*/ : number /*6*/ ) {} }"
+ ClassDeclaration pos=0 start=0 end=94 members[9,92)
+  Constructor pos=9 start=10 end=92 parameters[22,81)
+   Parameter pos=22 start=29 end=81 modifiers[22,50)
+   Block pos=89 start=90 end=92
+--- import-type-specifiers [ts] "import { /*1*/ type /*2*/ A /*3*/ as /*4*/ B /*5*/ } from \"x\"; import /*6*/ type /*7*/ { C } /*8*/ from /*9*/ \"y\" /*10*/ ;"
+ ImportDeclaration pos=0 start=0 end=62
+  ImportClause pos=6 start=7 end=52
+   NamedImports pos=6 start=7 end=52 elements[8,44)
+    ImportSpecifier pos=8 start=15 end=44
+ ImportDeclaration pos=62 start=63 end=122
+  ImportClause pos=69 start=76 end=92
+   NamedImports pos=80 start=87 end=92 elements[88,90)
+    ImportSpecifier pos=88 start=89 end=90
+--- catch-binding [ts] "try {} catch ( /*1*/ e /*2*/ : /*3*/ unknown /*4*/ ) {}"
+ TryStatement pos=0 start=0 end=55
+  Block pos=3 start=4 end=6
+  CatchClause pos=6 start=7 end=55
+   VariableDeclaration pos=14 start=21 end=44
+   Block pos=52 start=53 end=55
+--- declare-module-global [ts] "declare /*1*/ module /*2*/ \"m\" /*3*/ { } /*4*/ declare /*5*/ global /*6*/ { } /*7*/ export {};"
+ ModuleDeclaration pos=0 start=0 end=40 modifiers[0,7)
+  ModuleBlock pos=30 start=37 end=40
+ ModuleDeclaration pos=40 start=47 end=77 modifiers[40,54)
+  ModuleBlock pos=67 start=74 end=77
+ ExportDeclaration pos=77 start=84 end=94
+  NamedExports pos=90 start=91 end=93 elements[92,92)
+--- namespace-dotted [ts] "declare namespace A /*1*/ . /*2*/ B /*3*/ . /*4*/ C /*5*/ { } module /*6*/ M /*7*/ . /*8*/ N { }"
+ ModuleDeclaration pos=0 start=0 end=61 modifiers[0,7)
+  ModuleDeclaration pos=27 start=34 end=61
+   ModuleDeclaration pos=43 start=50 end=61
+    ModuleBlock pos=51 start=58 end=61
+ ModuleDeclaration pos=61 start=62 end=96
+  ModuleDeclaration pos=84 start=91 end=96
+   ModuleBlock pos=92 start=93 end=96
+--- export-as-namespace [ts] "export /*1*/ as /*2*/ namespace /*3*/ Foo /*4*/ ; export {};"
+ NamespaceExportDeclaration pos=0 start=0 end=49
+ ExportDeclaration pos=49 start=50 end=60
+  NamedExports pos=56 start=57 end=59 elements[58,58)
+--- enum-const [ts] "/*1*/ const /*2*/ enum /*3*/ E /*4*/ { A /*5*/ = /*6*/ 1 /*7*/ , } declare /*8*/ enum F {}"
+ EnumDeclaration pos=0 start=6 end=66 modifiers[0,11) members[38,64)
+  EnumMember pos=38 start=39 end=56
+ EnumDeclaration pos=66 start=67 end=90 modifiers[66,74) members[89,89)
+--- index-signature-class [ts] "class X { /*1*/ static /*2*/ readonly /*3*/ [ /*4*/ k /*5*/ : /*6*/ string /*7*/ ] /*8*/ : /*9*/ number /*10*/ ; }"
+ ClassDeclaration pos=0 start=0 end=114 members[9,112)
+  IndexSignature pos=9 start=16 end=112 modifiers[9,37) parameters[45,74)
+   Parameter pos=45 start=52 end=74
+--- this-param-return-pred [ts] "function f( /*1*/ this /*2*/ : /*3*/ Window /*4*/ , x: any) /*5*/ : /*6*/ x /*7*/ is /*8*/ string /*9*/ { return true; }"
+ FunctionDeclaration pos=0 start=0 end=120 parameters[11,58)
+  Parameter pos=11 start=18 end=43
+   TypeReference pos=30 start=37 end=43
+  Parameter pos=51 start=52 end=58
+  FirstTypeNode pos=67 start=74 end=97
+  Block pos=97 start=104 end=120
+   ReturnStatement pos=105 start=106 end=118
+--- optional-definite [ts] "class O { a /*1*/ ? /*2*/ : number; b /*3*/ ! /*4*/ : number; m /*5*/ ? /*6*/ (): void; } let d /*7*/ ! /*8*/ : number;"
+ ClassDeclaration pos=0 start=0 end=89 members[9,87)
+  PropertyDeclaration pos=9 start=10 end=35
+  PropertyDeclaration pos=35 start=36 end=61
+  MethodDeclaration pos=61 start=62 end=87 parameters[79,79)
+ FirstStatement pos=89 start=90 end=119
+  VariableDeclarationList pos=89 start=90 end=118
+   VariableDeclaration pos=93 start=94 end=118
+--- accessor-override [ts] "class V extends W { /*1*/ override /*2*/ accessor /*3*/ x /*4*/ = 1; /*5*/ declare /*6*/ y /*7*/ : number; }"
+ ClassDeclaration pos=0 start=0 end=108 members[19,106)
+  HeritageClause pos=7 start=8 end=17 types[15,17)
+   ExpressionWithTypeArguments pos=15 start=16 end=17
+  PropertyDeclaration pos=19 start=26 end=68 modifiers[19,49)
+  PropertyDeclaration pos=68 start=75 end=106 modifiers[68,82)
+--- type-only-export [ts] "export /*1*/ type /*2*/ { A /*3*/ } /*4*/ from /*5*/ \"./a\" /*6*/ ; export /*7*/ type /*8*/ * /*9*/ as /*10*/ ns /*11*/ from \"./b\";"
+ ExportDeclaration pos=0 start=0 end=66
+  NamedExports pos=17 start=24 end=35 elements[25,27)
+   ExportSpecifier pos=25 start=26 end=27
+ ExportDeclaration pos=66 start=67 end=130
+  NamespaceExport pos=84 start=91 end=111
+--- import-equals [ts] "import /*1*/ ie /*2*/ = /*3*/ N /*4*/ . /*5*/ A /*6*/ ; import /*7*/ type /*8*/ te = require( /*9*/ \"m\" /*10*/ ) /*11*/ ;"
+ ImportEqualsDeclaration pos=0 start=0 end=55
+  FirstNode pos=23 start=30 end=47
+ ImportEqualsDeclaration pos=55 start=56 end=121
+  ExternalModuleReference pos=84 start=85 end=112

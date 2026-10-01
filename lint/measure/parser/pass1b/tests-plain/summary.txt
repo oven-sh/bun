@@ -1,0 +1,14 @@
+plain typescript-grammar.test.ts rc=0 14s |  180 pass; 0 fail;Ran 180 tests across 1 file. [4.19s];
+plain typescript-grammar-expressions.test.ts rc=0 9s |  63 pass; 0 fail;Ran 63 tests across 1 file. [3.94s];
+plain typescript-grammar-statements.test.ts rc=0 14s |  66 pass; 0 fail;Ran 66 tests across 1 file. [5.24s];
+plain typescript-grammar-decorator-metadata.test.ts rc=0 11s |  57 pass; 0 fail;Ran 57 tests across 1 file. [5.19s];
+plain decorator-metadata.test.ts rc=0 11s |  5 pass; 0 fail;Ran 5 tests across 1 file. [3.79s];
+plain bundler_decorator_metadata.test.ts rc=0 16s |  2 pass; 0 fail;Ran 2 tests across 1 file. [9.39s];
+plain decorators.test.ts rc=0 37s |  24 pass; 0 fail;Ran 24 tests across 1 file. [29.88s];
+plain transpiler-stack-overflow.test.ts rc=0 38s |  1 pass; 0 fail;Ran 1 test across 1 file. [30.77s];
+plain ts.test.ts rc=0 69s |  59 pass; 16 todo; 0 fail;Ran 75 tests across 1 file. [59.15s];
+plain transpiler-cache.test.ts rc=1 61s |  19 pass; 1 fail;Ran 20 tests across 1 file. [48.25s];
+plain transpiler-cache.test.ts --timeout 180000 rc=0 59s |  20 pass; 0 fail;Ran 20 tests across 1 file. [53.72s];
+plain type-export.test.ts rc=1 100s |  57 pass; 18 skip; 13 fail;Ran 88 tests across 1 file. [93.66s];
+plain type-export.test.ts --timeout 180000 rc=0 102s |  70 pass; 18 skip; 0 fail;Ran 88 tests across 1 file. [87.88s];
+plain transpiler.test.js rc=0 50s |  237 pass; 1 skip; 21 todo; 0 fail;Ran 259 tests across 1 file. [43.94s];

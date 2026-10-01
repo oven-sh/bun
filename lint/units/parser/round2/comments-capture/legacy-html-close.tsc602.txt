@@ -1,0 +1,8 @@
+"x\n--> legacy\n// after\n" => TS1109@4+1 Expression expected.
+"--> first line\nx;\n" => TS1109@2+1 Expression expected. | TS1005@10+4 ';' expected.
+"/* a\n*/ --> after block with newline\nx;\n" => TS1109@10+1 Expression expected. | TS1005@18+5 ';' expected. | TS1005@29+7 '(' expected. | TS1005@37+1 ')' expected.
+"x;\n  --> indented\ny;\n" => TS1109@7+1 Expression expected.
+"let a = 1\n--> c\n;" => TS1109@12+1 Expression expected.
+"x --> y;" => no diagnostics
+"<!-- open\nx;" => TS1109@0+1 Expression expected.
+6.0.2

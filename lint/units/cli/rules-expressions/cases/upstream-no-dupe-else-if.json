@@ -1,0 +1,330 @@
+{
+	"base": null,
+	"valid": [
+		{
+			"code": "if (a) {} else if (b) {}"
+		},
+		{
+			"code": "if (a); else if (b); else if (c);"
+		},
+		{
+			"code": "if (true) {} else if (false) {} else {}"
+		},
+		{
+			"code": "if (1) {} else if (2) {}"
+		},
+		{
+			"code": "if (f) {} else if (f()) {}"
+		},
+		{
+			"code": "if (f(a)) {} else if (g(a)) {}"
+		},
+		{
+			"code": "if (f(a)) {} else if (f(b)) {}"
+		},
+		{
+			"code": "if (a === 1) {} else if (a === 2) {}"
+		},
+		{
+			"code": "if (a === 1) {} else if (b === 1) {}"
+		},
+		{
+			"code": "if (a) {}"
+		},
+		{
+			"code": "if (a);"
+		},
+		{
+			"code": "if (a) {} else {}"
+		},
+		{
+			"code": "if (a) if (a) {}"
+		},
+		{
+			"code": "if (a) if (a);"
+		},
+		{
+			"code": "if (a) { if (a) {} }"
+		},
+		{
+			"code": "if (a) {} else { if (a) {} }"
+		},
+		{
+			"code": "if (a) {} if (a) {}"
+		},
+		{
+			"code": "if (a); if (a);"
+		},
+		{
+			"code": "while (a) if (a);"
+		},
+		{
+			"code": "if (a); else a ? a : a;"
+		},
+		{
+			"code": "if (a) { if (b) {} } else if (b) {}"
+		},
+		{
+			"code": "if (a) if (b); else if (a);"
+		},
+		{
+			"code": "if (a) {} else if (!!a) {}"
+		},
+		{
+			"code": "if (a === 1) {} else if (a === (1)) {}"
+		},
+		{
+			"code": "if (a || b) {} else if (c || d) {}"
+		},
+		{
+			"code": "if (a || b) {} else if (a || c) {}"
+		},
+		{
+			"code": "if (a) {} else if (a || b) {}"
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (a || b || c) {}"
+		},
+		{
+			"code": "if (a && b) {} else if (a) {} else if (b) {}"
+		},
+		{
+			"code": "if (a && b) {} else if (b && c) {} else if (a && c) {}"
+		},
+		{
+			"code": "if (a && b) {} else if (b || c) {}"
+		},
+		{
+			"code": "if (a) {} else if (b && (a || c)) {}"
+		},
+		{
+			"code": "if (a) {} else if (b && (c || d && a)) {}"
+		},
+		{
+			"code": "if (a && b && c) {} else if (a && b && (c || d)) {}"
+		}
+	],
+	"invalid": [
+		{
+			"code": "if (a) {} else if (a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a); else if (a);",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (a) {} else {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (a) {} else if (c) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (c) {} else if (a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (b) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (b) {} else {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (c) {} else if (b) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a); else if (b); else if (c); else if (b); else if (d); else;",
+			"errors": 1
+		},
+		{
+			"code": "if (a); else if (b); else if (c); else if (d); else if (b); else if (e);",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (a) {} else if (a) {}",
+			"errors": 2
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (a) {} else if (b) {} else if (a) {}",
+			"errors": 3
+		},
+		{
+			"code": "if (a) { if (b) {} } else if (a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a === 1) {} else if (a === 1) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (1 < a) {} else if (1 < a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (true) {} else if (true) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a && b) {} else if (a && b) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a && b || c)  {} else if (a && b || c) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (f(a)) {} else if (f(a)) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a === 1) {} else if (a===1) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a === 1) {} else if (a === /* comment */ 1) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a === 1) {} else if ((a === 1)) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || b) {} else if (a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || b) {} else if (a) {} else if (b) {}",
+			"errors": 2
+		},
+		{
+			"code": "if (a || b) {} else if (b || a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (a || b) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || b) {} else if (c || d) {} else if (a || d) {}",
+			"errors": 1
+		},
+		{
+			"code": "if ((a === b && fn(c)) || d) {} else if (fn(c) && a === b) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (a && b) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a && b) {} else if (b && a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a && b) {} else if (a && b && c) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || c) {} else if (a && b || c) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (c && a || b) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (c && (a || b)) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b && c) {} else if (d && (a || e && c && b)) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || b && c) {} else if (b && c && d) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || b) {} else if (b && c) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if ((a || b) && c) {}",
+			"errors": 1
+		},
+		{
+			"code": "if ((a && (b || c)) || d) {} else if ((c || b) && e && a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a && b || b && c) {} else if (a && b && c) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b && c) {} else if (d && (c && e && b || a)) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || (b && (c || d))) {} else if ((d || c) && b) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || b) {} else if ((b || a) && c) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || b) {} else if (c) {} else if (d) {} else if (b && (a || c)) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || b || c) {} else if (a || (b && d) || (c && e)) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || (b || c)) {} else if (a || (b && c)) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || b) {} else if (c) {} else if (d) {} else if ((a || c) && (b || d)) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (b) {} else if (c && (a || d && b)) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (a || a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || a) {} else if (a || a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a || a) {} else if (a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a) {} else if (a && a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a && a) {} else if (a && a) {}",
+			"errors": 1
+		},
+		{
+			"code": "if (a && a) {} else if (a) {}",
+			"errors": 1
+		}
+	],
+	"skipped": []
+}

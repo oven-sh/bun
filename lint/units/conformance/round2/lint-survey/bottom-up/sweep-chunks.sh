@@ -50,6 +50,7 @@ echo "### sweep finished $(date -u +%FT%TZ)"
 if [ -f "$here/raw.ts" ] && [ ! -s "$work/raw.jsonl" ]; then
   start=$(date +%s)
   bun "$here/raw.ts" --scratch "$scratch" --bin "$bin" --from "$here/observed/instances.tsv" --out "$work/raw.jsonl.tmp" --jobs 4 \
+    --keep "$work/kept" \
     > "$work/raw.log" 2>&1
   rc=$?
   if [ $rc -eq 0 ]; then mv "$work/raw.jsonl.tmp" "$work/raw.jsonl"; fi

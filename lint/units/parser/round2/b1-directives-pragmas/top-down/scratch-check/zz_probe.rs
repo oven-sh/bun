@@ -15,8 +15,10 @@ fn run(mode: &str, name: &str, text: &'static [u8], out: &mut String) {
     let arena = Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
-    let source = Source::init_path_string(&b"/a.ts"[..], text);
-    let mut options = Options::init(Default::default(), Loader::Ts);
+    let tsx = name.ends_with(".tsx");
+    let path: &'static [u8] = if tsx { b"/a.tsx" } else { b"/a.ts" };
+    let source = Source::init_path_string(path, text);
+    let mut options = Options::init(Default::default(), if tsx { Loader::Tsx } else { Loader::Ts });
     options.features.no_macros = true;
     options.features.dont_bundle_twice = true;
     options.features.minify_identifiers = true;
@@ -69,14 +71,19 @@ fn run(mode: &str, name: &str, text: &'static [u8], out: &mut String) {
 
 #[test]
 fn zz_probe_rows() {
-    for mode in ["d", "p"] {
-        let data = std::fs::read_to_string(format!("/tmp/b1dp/rows-{mode}.hex")).unwrap();
+    for mode in ["d", "p", "x"] {
+        let file = if mode == "x" { "/tmp/b1dp/parse-d.hex".to_string() } else { format!("/tmp/b1dp/rows-{mode}.hex") };
+        let data = std::fs::read_to_string(file).unwrap();
+        let mode = if mode == "x" { "d" } else { mode };
         let mut out = String::new();
         for line in data.lines() {
             let (name, hex) = line.split_once('\t').unwrap();
             let text: &'static [u8] = Box::leak(unhex(hex).into_boxed_slice());
             run(mode, name, text, &mut out);
         }
-        std::fs::write(format!("/tmp/b1check/rows-{mode}.lint.txt"), out).unwrap();
+        let name = if data.starts_with("upstream") { "parse-d".to_string() } else { format!("rows-{mode}") };
+        std::fs::write(format!("/tmp/b1check/{name}.lint.txt"), out).unwrap();
     }
 }
+// The list of comments itself was printed by one more line in the scratch copy of parse_entry.rs, before get_comment_directives:
+//   eprintln!("COMMENTS {} {:?}", bstr::BStr::new(p.source.path.text), p.lexer.all_comments.iter().map(|c| (c.loc.start, c.loc.start + c.len)).collect::<Vec<_>>());

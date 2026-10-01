@@ -1,0 +1,57 @@
+--- upstream-multiline-a.ts
+directive Ignore 40..54
+directive ExpectError 77..97
+directive ExpectError 120..140
+--- upstream-multiline-b.tsx
+directive Ignore 176..192
+directive Ignore 230..244
+directive ExpectError 285..307
+directive ExpectError 348..373
+directive ExpectError 414..438
+directive ExpectError 476..496
+directive ExpectError 537..559
+--- jsx-tag-comments.tsx
+--- jsx-attr-value-comment.tsx
+directive ExpectError 39..58
+--- jsx-closing-tag-comment.tsx
+--- jsx-text-is-no-comment.tsx
+--- jsx-expression-comments.tsx
+directive Ignore 12..28
+directive ExpectError 30..49
+--- jsx-fragment-text.tsx
+directive ExpectError 31..50
+--- jsx-after-child-element.tsx
+--- jsx-self-closing-then-comment.tsx
+directive Ignore 13..26
+--- tsx-generic-arrow-lookahead.tsx
+directive Ignore 21..37
+directive ExpectError 44..63
+--- template-and-regex.ts
+directive ExpectError 26..48
+--- string.ts
+--- arrow-return-type-attempt.ts
+directive Ignore 16..32
+directive ExpectError 42..64
+--- type-arguments-attempt.ts
+directive Ignore 12..28
+directive ExpectError 33..55
+--- leading-and-last.ts
+directive Ignore 0..13
+directive ExpectError 35..57
+--- after-hashbang.ts
+directive ExpectError 19..38
+--- expression-in-type-computed.ts
+--- expression-in-type-parameter-initializer.ts
+directive Ignore 14..30
+--- expression-in-type-property-initializer.ts
+--- expression-in-type-accessor-body.ts
+--- expression-in-type-import-attributes.ts
+directive Ignore 36..52
+--- heritage-expression.ts
+directive Ignore 21..37
+directive ExpectError 64..86
+--- class-index-signature-initializer.ts
+--- erased-statements.ts
+directive Ignore 14..27
+directive ExpectError 61..83
+directive Ignore 96..110

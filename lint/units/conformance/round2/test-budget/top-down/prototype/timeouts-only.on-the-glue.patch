@@ -1,0 +1,531 @@
+--- a/test/cli/lint/conformance.test.ts
++++ b/test/cli/lint/conformance.test.ts
+@@ -48,8 +48,10 @@
+ 
+ // A debug or sanitizer build runs this file's JavaScript about a hundred times slower: it takes the samples and leaves the whole corpus to release builds.
+ const small = isDebug || isASAN;
+-// A debug build needs more than the default time of a test for the processes that a test starts.
+-const spawnTimeout = small ? 60_000 : undefined;
++// The processes that a test starts: a debug build needs seconds for each, and a release build on a machine under load needs more than the default time of a test.
++const spawnTimeout = small ? 60_000 : 20_000;
++// The passes over the list, the baselines and the cases of a sample: milliseconds in a release build, seconds in a debug build, which gets the time here that the default does not give it.
++const readTimeout = small ? 60_000 : undefined;
+ 
+ // One of every n names, the same on every platform and without an order of the directory entries.
+ const sampled = (name: string, n: number) => Bun.hash.crc32(name) % n === 0;
+@@ -208,159 +210,175 @@
+     }
+   });
+ 
+-  test("the corpus holds the cases, the baselines and the lists of the pinned commits", () => {
+-    const names = (directory: string) => readdirSync(directory).filter(name => name.endsWith(".errors.txt")).length;
+-    // A list names a file once however often the line is there; "#" starts a comment.
+-    const lines = (file: string) => {
+-      const all = readFileSync(file, "utf8")
+-        .split("\n")
+-        .map(line => line.trim());
+-      return new Set(all.filter(line => line !== "" && !line.startsWith("#"))).size;
+-    };
+-    expect({
+-      files: cases().size,
+-      typescriptBaselines: names(`${corpusRoot}/baselines/typescript`),
+-      typescriptGoBaselines: {
+-        compiler: names(`${corpusRoot}/baselines/typescript-go/compiler`),
+-        conformance: names(`${corpusRoot}/baselines/typescript-go/conformance`),
+-      },
+-      expectsNoErrors: lines(`${corpusRoot}/baselines/typescript-go/NO_ERRORS.txt`),
+-      accepted: lines(`${corpusRoot}/submoduleAccepted.txt`),
+-      triaged: lines(`${corpusRoot}/submoduleTriaged.txt`),
+-    }).toEqual({
+-      files: reference().cases.files,
+-      typescriptBaselines: reference().corpus.typescriptBaselines,
+-      typescriptGoBaselines: reference().corpus.typescriptGoBaselines,
+-      expectsNoErrors: reference().corpus.expectsNoErrors,
+-      accepted: reference().corpus.accepted,
+-      triaged: reference().corpus.triaged,
+-    });
+-  });
++  test(
++    "the corpus holds the cases, the baselines and the lists of the pinned commits",
++    () => {
++      const names = (directory: string) => readdirSync(directory).filter(name => name.endsWith(".errors.txt")).length;
++      // A list names a file once however often the line is there; "#" starts a comment.
++      const lines = (file: string) => {
++        const all = readFileSync(file, "utf8")
++          .split("\n")
++          .map(line => line.trim());
++        return new Set(all.filter(line => line !== "" && !line.startsWith("#"))).size;
++      };
++      expect({
++        files: cases().size,
++        typescriptBaselines: names(`${corpusRoot}/baselines/typescript`),
++        typescriptGoBaselines: {
++          compiler: names(`${corpusRoot}/baselines/typescript-go/compiler`),
++          conformance: names(`${corpusRoot}/baselines/typescript-go/conformance`),
++        },
++        expectsNoErrors: lines(`${corpusRoot}/baselines/typescript-go/NO_ERRORS.txt`),
++        accepted: lines(`${corpusRoot}/submoduleAccepted.txt`),
++        triaged: lines(`${corpusRoot}/submoduleTriaged.txt`),
++      }).toEqual({
++        files: reference().cases.files,
++        typescriptBaselines: reference().corpus.typescriptBaselines,
++        typescriptGoBaselines: reference().corpus.typescriptGoBaselines,
++        expectsNoErrors: reference().corpus.expectsNoErrors,
++        accepted: reference().corpus.accepted,
++        triaged: reference().corpus.triaged,
++      });
++    },
++    readTimeout,
++  );
+ 
+-  test("the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped", () => {
+-    expect(sha256(listText())).toBe(reference().instances.sha256);
+-    expect(new Set(listLines().map(nameOfLine)).size).toBe(listLines().length);
+-    expect(linesOfCase().get("") ?? []).toEqual([]);
+-    const kinds = { compiler: { E: 0, C: 0, skipped: 0 }, conformance: { E: 0, C: 0, skipped: 0 } };
+-    const reasons: Record<string, number> = {};
+-    for (const [path, lines] of linesOfCase()) {
+-      const suite = path.startsWith("compiler/") ? "compiler" : "conformance";
+-      for (const line of lines) {
+-        const [, kind, reason] = line.split("\t");
+-        kinds[suite][kind as "E" | "C" | "skipped"]++;
+-        if (kind !== "skipped") continue;
+-        const key = reason.replace(/^(unsupported (?:baseUrl|outFile)) .*/, "$1");
+-        reasons[key] = (reasons[key] ?? 0) + 1;
++  test(
++    "the list has the instances of the reference's run: 14,915, of which 12,797 run and 2,118 are skipped",
++    () => {
++      expect(sha256(listText())).toBe(reference().instances.sha256);
++      expect(new Set(listLines().map(nameOfLine)).size).toBe(listLines().length);
++      expect(linesOfCase().get("") ?? []).toEqual([]);
++      const kinds = { compiler: { E: 0, C: 0, skipped: 0 }, conformance: { E: 0, C: 0, skipped: 0 } };
++      const reasons: Record<string, number> = {};
++      for (const [path, lines] of linesOfCase()) {
++        const suite = path.startsWith("compiler/") ? "compiler" : "conformance";
++        for (const line of lines) {
++          const [, kind, reason] = line.split("\t");
++          kinds[suite][kind as "E" | "C" | "skipped"]++;
++          if (kind !== "skipped") continue;
++          const key = reason.replace(/^(unsupported (?:baseUrl|outFile)) .*/, "$1");
++          reasons[key] = (reasons[key] ?? 0) + 1;
++        }
+       }
+-    }
+-    const E = kinds.compiler.E + kinds.conformance.E;
+-    const C = kinds.compiler.C + kinds.conformance.C;
+-    expect({
+-      instances: listLines().length,
+-      run: E + C,
+-      skipped: kinds.compiler.skipped + kinds.conformance.skipped,
+-      E,
+-      compilerE: kinds.compiler.E,
+-      conformanceE: kinds.conformance.E,
+-      C,
+-    }).toEqual({
+-      instances: 14915,
+-      run: 12797,
+-      skipped: 2118,
+-      E: 7027,
+-      compilerE: 3187,
+-      conformanceE: 3840,
+-      C: 5770,
+-    });
+-    expect(reasons).toEqual(reference().instances.skippedBecause);
+-  });
++      const E = kinds.compiler.E + kinds.conformance.E;
++      const C = kinds.compiler.C + kinds.conformance.C;
++      expect({
++        instances: listLines().length,
++        run: E + C,
++        skipped: kinds.compiler.skipped + kinds.conformance.skipped,
++        E,
++        compilerE: kinds.compiler.E,
++        conformanceE: kinds.conformance.E,
++        C,
++      }).toEqual({
++        instances: 14915,
++        run: 12797,
++        skipped: 2118,
++        E: 7027,
++        compilerE: 3187,
++        conformanceE: 3840,
++        C: 5770,
++      });
++      expect(reasons).toEqual(reference().instances.skippedBecause);
++    },
++    readTimeout,
++  );
+ 
+-  test("the case and space tables are those of Go", () => {
+-    const parts: Record<string, string[]> = { lower: [], foldKey: [], space: [], white: [] };
+-    for (let r = 0; r <= 0x10ffff; r++) {
+-      const l = unicodeToLower(r);
+-      if (l !== r) parts.lower.push(`${r.toString(16)} ${l.toString(16)}\n`);
+-      const k = foldKey(r);
+-      if (k !== r) parts.foldKey.push(`${r.toString(16)} ${k.toString(16)}\n`);
+-      if (isSpace(r)) parts.space.push(`${r.toString(16)}\n`);
+-      if (isWhiteSpaceLike(r)) {
+-        parts.white.push(`${r.toString(16)} ${isWhiteSpaceSingleLine(r)} ${isLineBreak(r)}\n`);
++  test(
++    "the case and space tables are those of Go",
++    () => {
++      const parts: Record<string, string[]> = { lower: [], foldKey: [], space: [], white: [] };
++      for (let r = 0; r <= 0x10ffff; r++) {
++        const l = unicodeToLower(r);
++        if (l !== r) parts.lower.push(`${r.toString(16)} ${l.toString(16)}\n`);
++        const k = foldKey(r);
++        if (k !== r) parts.foldKey.push(`${r.toString(16)} ${k.toString(16)}\n`);
++        if (isSpace(r)) parts.space.push(`${r.toString(16)}\n`);
++        if (isWhiteSpaceLike(r)) {
++          parts.white.push(`${r.toString(16)} ${isWhiteSpaceSingleLine(r)} ${isLineBreak(r)}\n`);
++        }
+       }
+-    }
+-    expect(Object.fromEntries(Object.entries(parts).map(([k, v]) => [k, sha256(v.join(""))]))).toEqual(
+-      reference().go.tables,
+-    );
+-  });
++      expect(Object.fromEntries(Object.entries(parts).map(([k, v]) => [k, sha256(v.join(""))]))).toEqual(
++        reference().go.tables,
++      );
++    },
++    readTimeout,
++  );
+ });
+ 
+ describe("directives", () => {
+   const obj = (m: Map<string, string>) => Object.fromEntries([...m.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)));
+ 
+-  test("the vectors of the reference parser", () => {
+-    const inputs: any[] = JSON.parse(readFileSync(join(fixtures, "directives-inputs.json"), "utf8"));
+-    const expected: any[] = JSON.parse(readFileSync(join(fixtures, "directives-expected.json"), "utf8"));
+-    const got = inputs.map(i => {
+-      const raw = Buffer.from(i.bytes, "base64");
+-      let content: string;
+-      try {
+-        content = raw.length === 0 ? "" : utf8String(decodeBytes(raw));
+-      } catch (e) {
+-        if (!(e instanceof InvalidUtf8Error)) throw e;
+-        return { name: i.name, refused: "not valid UTF-8" };
+-      }
+-      const bytes = utf8ToByteString(content);
+-      const o: any = {
+-        name: i.name,
+-        decoded: content,
+-        lines: content.split(/\r?\n/),
+-        settings: obj(extractCompilerSettings(content)),
+-        panic: "",
+-        units: [],
+-        configUnit: null,
+-        symlinks: {},
+-        currentDirectory: "",
+-        globalOptions: {},
+-        skipTrivia: skipTrivia(bytes, 0),
+-        error: "",
+-        decodedByteLen: bytes.length,
+-      };
+-      const failOn = i.failOn ?? "";
+-      const r = parseTestFilesAndSymlinksWithOptions(
+-        content,
+-        i.fileName,
+-        (name, content, fileOptions) =>
+-          failOn !== "" && name === failOn
+-            ? {
+-                value: { name: "FAILED:" + name, content, fileOptions: obj(fileOptions) },
+-                error: "cannot parse " + name,
+-              }
+-            : { value: { name, content, fileOptions: obj(fileOptions) }, error: undefined },
+-        { allowImplicitFirstFile: !!i.allowImplicitFirstFile },
+-      );
+-      if (!r.ok) o.panic = r.reason;
+-      else {
+-        let units: any[] = r.units;
+-        o.error = r.error ?? "";
+-        o.symlinks = obj(r.symlinks);
+-        o.currentDirectory = r.currentDirectory;
+-        o.globalOptions = obj(r.globalOptions);
+-        if (!i.allowImplicitFirstFile) {
+-          const k = units.findIndex((u: any) => getConfigNameFromFileName(u.name) !== "");
+-          if (k >= 0) {
+-            o.configUnit = units[k];
+-            units = units.filter((_: unknown, x: number) => x !== k);
++  test(
++    "the vectors of the reference parser",
++    () => {
++      const inputs: any[] = JSON.parse(readFileSync(join(fixtures, "directives-inputs.json"), "utf8"));
++      const expected: any[] = JSON.parse(readFileSync(join(fixtures, "directives-expected.json"), "utf8"));
++      const got = inputs.map(i => {
++        const raw = Buffer.from(i.bytes, "base64");
++        let content: string;
++        try {
++          content = raw.length === 0 ? "" : utf8String(decodeBytes(raw));
++        } catch (e) {
++          if (!(e instanceof InvalidUtf8Error)) throw e;
++          return { name: i.name, refused: "not valid UTF-8" };
++        }
++        const bytes = utf8ToByteString(content);
++        const o: any = {
++          name: i.name,
++          decoded: content,
++          lines: content.split(/\r?\n/),
++          settings: obj(extractCompilerSettings(content)),
++          panic: "",
++          units: [],
++          configUnit: null,
++          symlinks: {},
++          currentDirectory: "",
++          globalOptions: {},
++          skipTrivia: skipTrivia(bytes, 0),
++          error: "",
++          decodedByteLen: bytes.length,
++        };
++        const failOn = i.failOn ?? "";
++        const r = parseTestFilesAndSymlinksWithOptions(
++          content,
++          i.fileName,
++          (name, content, fileOptions) =>
++            failOn !== "" && name === failOn
++              ? {
++                  value: { name: "FAILED:" + name, content, fileOptions: obj(fileOptions) },
++                  error: "cannot parse " + name,
++                }
++              : { value: { name, content, fileOptions: obj(fileOptions) }, error: undefined },
++          { allowImplicitFirstFile: !!i.allowImplicitFirstFile },
++        );
++        if (!r.ok) o.panic = r.reason;
++        else {
++          let units: any[] = r.units;
++          o.error = r.error ?? "";
++          o.symlinks = obj(r.symlinks);
++          o.currentDirectory = r.currentDirectory;
++          o.globalOptions = obj(r.globalOptions);
++          if (!i.allowImplicitFirstFile) {
++            const k = units.findIndex((u: any) => getConfigNameFromFileName(u.name) !== "");
++            if (k >= 0) {
++              o.configUnit = units[k];
++              units = units.filter((_: unknown, x: number) => x !== k);
++            }
+           }
++          o.units = units;
+         }
+-        o.units = units;
+-      }
+-      return o;
+-    });
+-    // The port refuses bytes that are no UTF-8; the reference reads them as they are.
+-    const refused = got.filter(o => "refused" in o).map(o => o.name);
+-    expect(refused).toEqual(["decode: one byte 0xFF", "decode: two bytes of a utf-8 BOM"]);
+-    expect(got.filter(o => !("refused" in o))).toEqual(expected.filter(o => !refused.includes(o.name)));
+-    expect(inputs.length).toBe(120);
+-  });
++        return o;
++      });
++      // The port refuses bytes that are no UTF-8; the reference reads them as they are.
++      const refused = got.filter(o => "refused" in o).map(o => o.name);
++      expect(refused).toEqual(["decode: one byte 0xFF", "decode: two bytes of a utf-8 BOM"]);
++      expect(got.filter(o => !("refused" in o))).toEqual(expected.filter(o => !refused.includes(o.name)));
++      expect(inputs.length).toBe(120);
++    },
++    readTimeout,
++  );
+ });
+ 
+ describe("variations", () => {
+@@ -437,26 +455,31 @@
+       const want = group.flatMap(path => linesOfCase().get(path) ?? []);
+       expect(got.sort()).toEqual(want.sort());
+     },
++    readTimeout,
+   );
+ 
+-  test("45 cases are left out by name and 8 are run for their diagnostics alone", () => {
+-    const emitOnly = [...skippedEmitTests.keys()];
+-    expect({ leftOut: skippedTests.length, emitOnly: emitOnly.length }).toEqual({ leftOut: 45, emitOnly: 8 });
+-    expect([...skippedTests, ...emitOnly].filter(name => !cases().has(name))).toEqual([]);
+-    // A case that is left out gives no instance, so the list has no line for it.
+-    expect(skippedTests.flatMap(name => corpus().enumerateCase(cases().get(name)!))).toEqual([]);
+-    expect(skippedTests.filter(name => linesOfCase().has(cases().get(name)!))).toEqual([]);
+-    expect(
+-      emitOnly.map(name => {
+-        const instances = corpus().enumerateCase(cases().get(name)!);
+-        return {
+-          name,
+-          run: instances.some(i => i.status === "run"),
+-          flagged: instances.every(i => i.emitOnly === true),
+-        };
+-      }),
+-    ).toEqual(emitOnly.map(name => ({ name, run: true, flagged: true })));
+-  });
++  test(
++    "45 cases are left out by name and 8 are run for their diagnostics alone",
++    () => {
++      const emitOnly = [...skippedEmitTests.keys()];
++      expect({ leftOut: skippedTests.length, emitOnly: emitOnly.length }).toEqual({ leftOut: 45, emitOnly: 8 });
++      expect([...skippedTests, ...emitOnly].filter(name => !cases().has(name))).toEqual([]);
++      // A case that is left out gives no instance, so the list has no line for it.
++      expect(skippedTests.flatMap(name => corpus().enumerateCase(cases().get(name)!))).toEqual([]);
++      expect(skippedTests.filter(name => linesOfCase().has(cases().get(name)!))).toEqual([]);
++      expect(
++        emitOnly.map(name => {
++          const instances = corpus().enumerateCase(cases().get(name)!);
++          return {
++            name,
++            run: instances.some(i => i.status === "run"),
++            flagged: instances.every(i => i.emitOnly === true),
++          };
++        }),
++      ).toEqual(emitOnly.map(name => ({ name, run: true, flagged: true })));
++    },
++    readTimeout,
++  );
+ 
+   // The whole corpus is a second of work in a release build and minutes in a debug build; the time limit is for a machine under load.
+   test.skipIf(small)(
+@@ -571,6 +594,7 @@
+         pretty: group.filter(f => pretty.includes(f.name)).length,
+       });
+     },
++    readTimeout,
+   );
+ });
+ 
+@@ -686,6 +710,7 @@
+       );
+       for (const r of laid) seen[r.instance.oracle.class]++;
+     },
++    readTimeout,
+   );
+ 
+   test("the sample had instances with errors and without", () => {
+@@ -886,32 +911,36 @@
+     expect({ ok: r.ok, at: r.ok ? undefined : r.at }).toEqual({ ok: false, at });
+   });
+ 
+-  test("the first section of the baselines of one of 250 cases is the plain format", () => {
+-    const differ: string[] = [];
+-    let read = 0;
+-    for (const path of [...cases().values()].filter(path => sampled(path, 250)).sort()) {
+-      for (const instance of corpus().enumerateCase(path)) {
+-        if (instance.status !== "run" || instance.oracle.class !== "E") continue;
+-        const text = Buffer.from(corpus().oracle(instance)).toString("latin1");
+-        if (text.startsWith("\x1b[")) continue;
+-        const lines = text.split("\r\n");
+-        let end = lines.findIndex(l => l.startsWith("!!! ") || /^==== .* \(\d+ errors\) ====$/s.test(l));
+-        if (end < 0) end = lines.length;
+-        while (end > 0 && lines[end - 1] === "") end--;
+-        // The harness masks the position in a library file, which no tool prints.
+-        const top = lines
+-          .slice(0, end)
+-          .map(l => l.replace(/^(lib.*\.d\.ts)\(--,--\)/i, "$1(1,1)") + "\n")
+-          .join("");
+-        const parsed = parsePlainDiagnostics(top);
+-        read++;
+-        if (!parsed.ok) differ.push(`${instance.name}: line ${parsed.at}: ${parsed.reason}`);
+-        else if (writePlainDiagnostics(parsed.diagnostics) !== top) differ.push(`${instance.name}: not written back`);
++  test(
++    "the first section of the baselines of one of 250 cases is the plain format",
++    () => {
++      const differ: string[] = [];
++      let read = 0;
++      for (const path of [...cases().values()].filter(path => sampled(path, 250)).sort()) {
++        for (const instance of corpus().enumerateCase(path)) {
++          if (instance.status !== "run" || instance.oracle.class !== "E") continue;
++          const text = Buffer.from(corpus().oracle(instance)).toString("latin1");
++          if (text.startsWith("\x1b[")) continue;
++          const lines = text.split("\r\n");
++          let end = lines.findIndex(l => l.startsWith("!!! ") || /^==== .* \(\d+ errors\) ====$/s.test(l));
++          if (end < 0) end = lines.length;
++          while (end > 0 && lines[end - 1] === "") end--;
++          // The harness masks the position in a library file, which no tool prints.
++          const top = lines
++            .slice(0, end)
++            .map(l => l.replace(/^(lib.*\.d\.ts)\(--,--\)/i, "$1(1,1)") + "\n")
++            .join("");
++          const parsed = parsePlainDiagnostics(top);
++          read++;
++          if (!parsed.ok) differ.push(`${instance.name}: line ${parsed.at}: ${parsed.reason}`);
++          else if (writePlainDiagnostics(parsed.diagnostics) !== top) differ.push(`${instance.name}: not written back`);
++        }
+       }
+-    }
+-    expect(differ).toEqual([]);
+-    expect(read).toBeGreaterThan(10);
+-  });
++      expect(differ).toEqual([]);
++      expect(read).toBeGreaterThan(10);
++    },
++    readTimeout,
++  );
+ });
+ 
+ describe("default check", () => {
+@@ -924,7 +953,12 @@
+   const ending = async (instance: Instance, check: Check, content: string, oracle?: () => Uint8Array) => {
+     using dir = tempDir("lint-conformance", {});
+     const input = unitInput({ unitName: "/.src/a.ts", content });
+-    const options = { input, oracle: oracle ?? (() => new Uint8Array()), directory: join(String(dir), "instances") };
++    const options = {
++      input,
++      oracle: oracle ?? (() => new Uint8Array()),
++      directory: join(String(dir), "instances"),
++      timeoutMs: spawnTimeout,
++    };
+     return endingOf(await runInstance(instance, check, options));
+   };
+ 
+@@ -1106,27 +1140,35 @@
+   ];
+   const batch = [...E.map(name => ({ name, list: "E" as const })), { name: "2dArrays.ts", list: "C" as const }];
+ 
+-  test("a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported", async () => {
+-    using dir = tempDir("lint-conformance", {});
+-    expect(await failuresOf(batch, replayCheck(corpusRun.oracle), String(dir))).toEqual([]);
+-    const silent = await failuresOf(batch, emptyCheck, String(dir));
+-    expect(silent.map(f => [f.name, f.outcome])).toEqual(E.map(name => [name, "fail"]));
+-  });
++  test(
++    "a batch passes when the oracle is replayed, and fails its names of list E when nothing is reported",
++    async () => {
++      using dir = tempDir("lint-conformance", {});
++      expect(await failuresOf(batch, replayCheck(corpusRun.oracle), String(dir))).toEqual([]);
++      const silent = await failuresOf(batch, emptyCheck, String(dir));
++      expect(silent.map(f => [f.name, f.outcome])).toEqual(E.map(name => [name, "fail"]));
++    },
++    readTimeout,
++  );
+ 
+-  test("a name in the list of the other class, a skipped instance and a name of no instance are failures", async () => {
+-    using dir = tempDir("lint-conformance", {});
+-    const wrong = [
+-      { name: "2dArrays.ts", list: "E" as const },
+-      { name: "abstractPropertyNegative(target=es5).ts", list: "E" as const },
+-      { name: "noSuchCase.ts", list: "C" as const },
+-    ];
+-    const failures = await failuresOf(wrong, emptyCheck, String(dir));
+-    expect(failures.map(f => [f.name, f.outcome]).sort()).toEqual([
+-      ["2dArrays.ts", "fail"],
+-      ["abstractPropertyNegative(target=es5).ts", "skip"],
+-      ["noSuchCase.ts", "unsupported"],
+-    ]);
+-  });
++  test(
++    "a name in the list of the other class, a skipped instance and a name of no instance are failures",
++    async () => {
++      using dir = tempDir("lint-conformance", {});
++      const wrong = [
++        { name: "2dArrays.ts", list: "E" as const },
++        { name: "abstractPropertyNegative(target=es5).ts", list: "E" as const },
++        { name: "noSuchCase.ts", list: "C" as const },
++      ];
++      const failures = await failuresOf(wrong, emptyCheck, String(dir));
++      expect(failures.map(f => [f.name, f.outcome]).sort()).toEqual([
++        ["2dArrays.ts", "fail"],
++        ["abstractPropertyNegative(target=es5).ts", "skip"],
++        ["noSuchCase.ts", "unsupported"],
++      ]);
++    },
++    readTimeout,
++  );
+ });
+ 
+ describe("corpus", () => {

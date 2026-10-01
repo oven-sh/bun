@@ -332,11 +332,8 @@ pub fn do_patch_commit(
             }
         };
 
-        // If the package has nested a node_modules folder, we don't want this to
-        // appear in the patch file when we run git diff.
-        //
-        // There isn't an option to exclude it with `git diff --no-index`, so we
-        // will `rename()` it out and back again.
+        // `git diff --no-index` cannot exclude a nested node_modules folder, so
+        // it is renamed out and back.
         let has_nested_node_modules: bool = sys::renameat_concurrently_a(
             new_folder_handle.fd,
             b"node_modules",
@@ -348,12 +345,9 @@ pub fn do_patch_commit(
         )
         .is_ok();
 
-        // A patched package carries an empty `.bun-tag-<hash>` marker that
-        // `bun install` checks before it trusts the folder. The marker is not
-        // part of the package, so it leaves the folder for the diff and comes
-        // back afterwards. The folder is scanned for it because the lockfile
-        // only learns the hash during an install, and a folder that went
-        // through several patch rounds can hold more than one marker.
+        // `.bun-tag-<hash>` markers are install state, not package files. The
+        // folder is scanned for them because the lockfile does not know the
+        // hash before an install.
         let bun_patch_tags: Vec<Vec<u8>> = {
             let mut tags: Vec<Vec<u8>> = Vec::new();
             let mut iterator = sys::iterate_dir(new_folder_handle.fd);

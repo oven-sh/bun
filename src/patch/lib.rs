@@ -1891,11 +1891,8 @@ fn git_diff_postprocess(
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 
-    // `git diff --no-index` writes a/ and b/ in front of whichever folder a
-    // side names: `a/$old/f b/$new/f` for a modified file, `a/$new/f b/$new/f`
-    // for an added file and `a/$old/f b/$old/f` for a deleted file. Both
-    // prefixes are tried for both folders, so the needle's first byte is
-    // flipped between `a` and `b` in place.
+    // An added or deleted file's header names the same folder on both sides,
+    // so each needle is tried with `a/` and with `b/`.
     let mut old_buf: Vec<u8> = Vec::with_capacity(old_folder_trimmed.len() + 3);
     old_buf.extend_from_slice(b"a/");
     old_buf.extend_from_slice(old_folder_trimmed);
@@ -1906,8 +1903,7 @@ fn git_diff_postprocess(
     new_buf.extend_from_slice(new_folder_trimmed);
     new_buf.push(b'/');
 
-    /// Finds `a/$folder/` or `b/$folder/` in `line`. Returns the index of the
-    /// `$folder/` part.
+    /// Returns the index of `$folder/` in `line` after an `a/` or `b/` prefix.
     fn find_prefixed_folder(line: &[u8], needle: &mut [u8]) -> Option<usize> {
         needle[0] = b'a';
         if let Some(idx) = strings::index_of(line, needle) {

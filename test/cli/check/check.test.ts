@@ -161,7 +161,8 @@ describe.concurrent("bun check", () => {
   test("errors come file by file, in order, whatever thread finds them", async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 60; i++) {
-      files[`src/m${String(i).padStart(2, "0")}.ts`] = `export const v${i}: string = ${i};\nexport const w${i}: number = "${i}";\n`;
+      files[`src/m${String(i).padStart(2, "0")}.ts`] =
+        `export const v${i}: string = ${i};\nexport const w${i}: number = "${i}";\n`;
     }
     using dir = project(files);
     const { stdout, exitCode } = await check(dir);
@@ -367,7 +368,9 @@ describe.concurrent("bun check", () => {
         "b.ts": `export const b: string = 1;\n`,
       });
       const { stdout, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"tsconfig.json(1,40): error TS5052: Option 'checkJs' cannot be specified without specifying option 'allowJs'."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"tsconfig.json(1,40): error TS5052: Option 'checkJs' cannot be specified without specifying option 'allowJs'."`,
+      );
       expect(exitCode).toBe(1);
     });
   });
@@ -408,7 +411,9 @@ describe.concurrent("bun check", () => {
         check(dir, ["-p", "packages/a"]),
         check(dir, ["--project=packages/a/tsconfig.json"]),
       ]);
-      expect(byDirectory.stdout).toMatchInlineSnapshot(`"packages/a/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`);
+      expect(byDirectory.stdout).toMatchInlineSnapshot(
+        `"packages/a/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
       expect(byFile.stdout).toBe(byDirectory.stdout);
     });
 
@@ -454,7 +459,9 @@ describe.concurrent("bun check", () => {
         "scripts/s.ts": `export const s: string = 1;\n`,
       });
       const { stdout } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"src/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"src/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
     });
 
     test("extends, with comments and trailing commas", async () => {
@@ -464,7 +471,9 @@ describe.concurrent("bun check", () => {
         "a.ts": `export function f(x) {\n  return x;\n}\nexport const n: null = undefined;\n`,
       });
       const { stdout } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"a.ts(4,14): error TS2322: Type 'undefined' is not assignable to type 'null'."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(4,14): error TS2322: Type 'undefined' is not assignable to type 'null'."`,
+      );
     });
 
     test("without a tsconfig.json", async () => {
@@ -472,7 +481,9 @@ describe.concurrent("bun check", () => {
       mkdirSync(join(String(dir), "node_modules"));
       symlinkSync(typescript, join(String(dir), "node_modules", "typescript"), "junction");
       const { stdout, exitCode } = await check(dir, ["a.ts"]);
-      expect(stdout).toMatchInlineSnapshot(`"a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,
+      );
       expect(exitCode).toBe(1);
     });
 
@@ -532,7 +543,9 @@ describe.concurrent("bun check", () => {
       const lines = stdout.split("\n");
       expect(lines).toHaveLength(40);
       for (const line of lines) {
-        expect(line).toMatch(/^test\/t\d+\.test\.ts\(3,16\): error TS2322: Type 'string' is not assignable to type 'number'\.$/);
+        expect(line).toMatch(
+          /^test\/t\d+\.test\.ts\(3,16\): error TS2322: Type 'string' is not assignable to type 'number'\.$/,
+        );
       }
     });
   });
@@ -591,7 +604,9 @@ describe.concurrent("bun check", () => {
         "a.ts": `export const a = [wanted, unwanted];\n`,
       });
       const { stdout } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"a.ts(1,27): error TS2552: Cannot find name 'unwanted'. Did you mean 'wanted'?"`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(1,27): error TS2552: Cannot find name 'unwanted'. Did you mean 'wanted'?"`,
+      );
     });
   });
 
@@ -751,7 +766,9 @@ export {};
     test("TypeScript's lib files are nowhere to be found", async () => {
       using dir = project({ "a.ts": `export const a = 1;\n` }, { withTypeScript: false });
       const { stdout, stderr, exitCode } = await check(dir);
-      expect(stdout).toMatchInlineSnapshot(`"error: Cannot find TypeScript's standard library (lib.es5.d.ts and the rest), which declares Array, Promise and everything else that is built in. It comes with the typescript package: bun add -d typescript"`);
+      expect(stdout).toMatchInlineSnapshot(
+        `"error: Cannot find TypeScript's standard library (lib.es5.d.ts and the rest), which declares Array, Promise and everything else that is built in. It comes with the typescript package: bun add -d typescript"`,
+      );
       expect(stderr).toMatchInlineSnapshot(`"Found 1 error, checked 0 files [time]"`);
       expect(exitCode).toBe(1);
     });
@@ -774,7 +791,9 @@ export {};
     test("-p names nothing", async () => {
       using dir = project({});
       const { stdout, stderr, exitCode } = await check(dir, ["-p", "nowhere"]);
-      expect(stdout + stderr).toMatchInlineSnapshot(`"error TS5058: The specified path does not exist: '<dir>/nowhere'.Found 1 error, checked 0 files [time]"`);
+      expect(stdout + stderr).toMatchInlineSnapshot(
+        `"error TS5058: The specified path does not exist: '<dir>/nowhere'.Found 1 error, checked 0 files [time]"`,
+      );
       expect(exitCode).toBe(1);
     });
 

@@ -92,7 +92,7 @@ impl Checker<'_> {
                 .map(|&(start, code)| Diagnostic { start, code }),
         );
         self.check_js_syntax(file, &mut syntactic);
-        if !self.reports_semantic_errors(file) {
+        if self.only_syntax || !self.reports_semantic_errors(file) {
             syntactic.sort_unstable();
             syntactic.dedup();
             return syntactic;

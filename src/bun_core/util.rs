@@ -2216,6 +2216,14 @@ impl StackCheck {
         remaining > Self::THRESHOLD
     }
 
+    /// How many bytes of stack this thread has left before `is_safe_to_recurse` says no.
+    #[inline]
+    pub fn remaining(self) -> usize {
+        Self::frame_address()
+            .saturating_sub(self.cached_stack_end)
+            .saturating_sub(Self::THRESHOLD)
+    }
+
     /// Like [`is_safe_to_recurse`] but reserves `extra` bytes of additional
     /// headroom on top of the platform threshold. Use when the code after the
     /// check makes a deep call (e.g. into the transpiler) before reaching the

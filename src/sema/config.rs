@@ -14,6 +14,8 @@ pub struct ConfigError {
     pub at: Option<(String, u32, u32)>,
     /// What is said below it: how far it is indented, the code, what goes into the message.
     pub chain: Vec<(u32, u32, Vec<String>)>,
+    /// `GetProgramDiagnostics`, not `GetConfigFileParsingDiagnostics`: the file could be read, and what it says does not go together.
+    pub is_about_options: bool,
 }
 
 impl ConfigError {
@@ -23,6 +25,7 @@ impl ConfigError {
             args: args.iter().map(|&a| a.to_owned()).collect(),
             at: None,
             chain: Vec::new(),
+            is_about_options: false,
         }
     }
 
@@ -42,6 +45,7 @@ impl ConfigError {
             args: problem.args.clone(),
             at,
             chain: problem.chain.clone(),
+            is_about_options: true,
         }
     }
 }
@@ -196,6 +200,7 @@ fn parse_config(
                     args: problem.args,
                     at: problem.span.map(|(from, to)| (path.to_owned(), from, to)),
                     chain: Vec::new(),
+                    is_about_options: false,
                 }),
         );
         let mut said = Vec::with_capacity(compiler.len());

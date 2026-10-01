@@ -923,6 +923,7 @@ fn run_one(
         only: None,
         ends_the_process: false,
         keeps_everything: false,
+        stops_where_tsc_does: false,
         says_it_as_typescript_does: true,
         loaded: None,
         checked: None,

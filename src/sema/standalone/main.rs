@@ -597,6 +597,7 @@ fn main() {
                     only: args.iter().find_map(|a| a.strip_prefix("--only=")),
                     ends_the_process: true,
                     keeps_everything: args.iter().any(|a| a == "--keep"),
+                    stops_where_tsc_does: !args.iter().any(|a| a == "--all"),
                     says_it_as_typescript_does: false,
                     loaded: args.iter().any(|a| a == "--memory").then_some(
                         &print_loaded_sizes as &(dyn Fn(&bun_sema::check::Program) + Sync),

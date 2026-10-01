@@ -210,6 +210,8 @@ fn run_quietly(
         only: None,
         ends_the_process,
         keeps_everything: false,
+        stops_where_tsc_does: true,
+        says_it_as_typescript_does: false,
         loaded: None,
         checked: None,
     })
@@ -291,11 +293,12 @@ impl CheckCommand {
             use core::fmt::Write;
             let _ = writeln!(
                 summary,
-                "  {} files loaded in {:.1}ms, {} checked in {:.1}ms",
+                "  {} files loaded in {:.1}ms, {} checked in {:.1}ms, {} KB of stack at the most",
                 report.files_loaded,
                 report.load_time.as_secs_f64() * 1000.0,
                 report.files_checked,
                 report.check_time.as_secs_f64() * 1000.0,
+                report.deepest_stack / 1024,
             );
         }
         let _ = Output::error_writer().write_all(summary.as_bytes());
@@ -321,7 +324,7 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
     }
     let cwd = working_directory();
     let report = run(&cwd, None, &paths, 0, false);
-    if report.diagnostics.is_empty() && report.gave_up.is_empty() {
+    if report.diagnostics.is_empty() && report.gave_up.is_empty() && report.incomplete.is_empty() {
         return true;
     }
     let shown_from = bun_sema_driver::host::from_native(&cwd);
@@ -334,7 +337,7 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
     );
     let mut out = String::new();
     format::write_diagnostics(&mut out, &report, &style);
-    if report.error_count() > 0 || !report.gave_up.is_empty() {
+    if report.error_count() > 0 || !report.gave_up.is_empty() || !report.incomplete.is_empty() {
         format::write_summary(&mut out, &report, &style);
     }
     let _ = Output::error_writer().write_all(out.as_bytes());

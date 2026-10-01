@@ -18,10 +18,6 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-/// How much of the stack of a thread of the pool the checker lets itself use. What takes more is answered "unknown". The deepest any file of
-/// a project of 45,000 goes is a quarter of a megabyte.
-pub const STACK: usize = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize * 3 / 4;
-
 /// Runs `work(i)` for every `i` below `count` on the threads everything else in Bun runs on, no more than `threads` of them at a time. They take
 /// the numbers in order, each the next one when it is done with the last.
 pub fn for_each_parallel(threads: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
@@ -91,6 +87,9 @@ pub struct Request<'a> {
     pub ends_the_process: bool,
     /// Nothing is forgotten once it is checked: for whoever goes on to ask about the program. It takes several times the memory.
     pub keeps_everything: bool,
+    /// As `tsc` does: if something does not parse, that is all that is said. If the options do not go together, that is. Only then come the
+    /// errors about types.
+    pub stops_where_tsc_does: bool,
     /// Word for word, where Bun would put it otherwise (`bun add -d` for `npm i --save-dev`). For comparing with TypeScript.
     pub says_it_as_typescript_does: bool,
     /// Called with everything that was loaded, before any of it is checked.
@@ -129,12 +128,16 @@ pub struct Report {
     pub diagnostics: Vec<Diagnostic>,
     /// Files whose check was given up on.
     pub gave_up: Vec<String>,
+    /// Files in which something went unanswered for want of stack: errors may be missing.
+    pub incomplete: Vec<String>,
     /// The configuration file that was used. Empty if there is none.
     pub config_path: String,
     pub files_loaded: usize,
     pub files_checked: usize,
     pub load_time: Duration,
     pub check_time: Duration,
+    /// The most stack any file took, in bytes.
+    pub deepest_stack: usize,
 }
 
 impl Report {
@@ -410,9 +413,21 @@ pub fn check_project(
             None => said,
         }
     };
-    report
-        .diagnostics
-        .extend(project.errors.iter().map(of_configuration));
+    // `GetDiagnosticsOfAnyProgram`: what is wrong with the way the configuration file is written is said whatever else there is to say.
+    report.diagnostics.extend(
+        project
+            .errors
+            .iter()
+            .filter(|error| !error.is_about_options)
+            .map(of_configuration),
+    );
+    let said_at_any_rate = report.diagnostics.len();
+    let mut about_options: Vec<Diagnostic> = project
+        .errors
+        .iter()
+        .filter(|error| error.is_about_options)
+        .map(of_configuration)
+        .collect();
     let config_path = project.config_path.clone();
     let lib_dir = match request.lib_dir {
         Some(dir) => Some(host::from_native(dir)),
@@ -452,7 +467,7 @@ pub fn check_project(
     if let Some(loaded) = request.loaded {
         loaded(&program);
     }
-    report.diagnostics.extend(
+    about_options.extend(
         program
             .files
             .program_problems()
@@ -499,6 +514,8 @@ pub fn check_project(
     }
     let found: Mutex<Vec<Diagnostic>> = Mutex::new(Vec::new());
     let gave_up: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let incomplete: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let deepest_stack = AtomicUsize::new(0);
     // Files that ask a lot of the same types tend to be next to each other. When a small file turns out to take long, what else is in its
     // directory goes first, so that none of it is left for the end.
     let mut neighbors: std::collections::HashMap<&str, Vec<usize>> = Default::default();
@@ -511,18 +528,24 @@ pub fn check_project(
     }
     let is_taken: Vec<AtomicBool> = to_check.iter().map(|_| AtomicBool::new(false)).collect();
     let goes_first: Mutex<Vec<usize>> = Mutex::new(Vec::new());
-    let check_one = |i: usize| {
-        let file = to_check[i];
+    let check_file = |file: FileId, only_syntax: bool| {
         // Dropped last, after all that was found out about the file.
         let _at_hand = program.files.bring_in(host, file);
         let module = &program.files.modules[file.idx()];
         let mut checker = program.checker();
-        checker.set_stack_limit(STACK);
+        checker.set_only_syntax(only_syntax);
+        // What the thread really has left, whatever thread it is and however it was built.
+        checker.set_stack_limit(bun_core::StackCheck::init().remaining());
         checker.set_time_limit(request.file_time_limit);
         let errors = checker.check_file_explained(file);
+        deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
         if checker.timed_out() {
             gave_up.lock().unwrap().push(module.path.clone());
             return;
+        }
+        // What was found stands. What was not may be missing, and that is said.
+        if checker.ran_out_of_stack() {
+            incomplete.lock().unwrap().push(module.path.clone());
         }
         if errors.is_empty() {
             return;
@@ -584,7 +607,7 @@ pub fn check_project(
             return;
         }
         let began = Instant::now();
-        check_one(i);
+        check_file(to_check[i], false);
         if let Some(progress) = request.progress {
             progress.checked.fetch_add(1, Ordering::Relaxed);
             progress
@@ -610,21 +633,56 @@ pub fn check_project(
             }
         }
     };
-    for_each_parallel(threads, to_check.len(), &|i| {
-        take_what_goes_first();
-        take(i);
-        // Whoever finds out at the very end is the only one left to act on it.
-        take_what_goes_first();
-    });
-    report.diagnostics.extend(found.into_inner().unwrap());
-    report.diagnostics.extend(
+    let global_errors = || -> Vec<Diagnostic> {
         program
             .global_errors()
             .iter()
-            .map(|(code, args)| global(*code, args)),
-    );
+            .map(|(code, args)| global(*code, args))
+            .collect()
+    };
+    // `GetDiagnosticsOfAnyProgram`: TypeScript's command line goes on to the next kind of error only if there is none of the last. What
+    // does not parse, or is checked under options that make no sense, gives errors that are not worth reading.
+    let stops = request.stops_where_tsc_does;
+    'stages: {
+        if stops {
+            let suspects: Vec<FileId> = (0..program.files.modules.len())
+                .filter(|&i| {
+                    let hir = &program.files.modules[i].hir;
+                    hir.has_parse_diagnostics || !hir.early_errors.is_empty() || hir.is_js
+                })
+                .map(|i| FileId(i as u32))
+                .collect();
+            for_each_parallel(threads, suspects.len(), &|i| check_file(suspects[i], true));
+            let mut found = found.lock().unwrap();
+            if !found.is_empty() {
+                report.diagnostics.append(&mut found);
+                report.files_checked = 0;
+                break 'stages;
+            }
+        }
+        report.diagnostics.append(&mut about_options);
+        if stops {
+            report.diagnostics.extend(global_errors());
+            if report.diagnostics.len() > said_at_any_rate {
+                report.files_checked = 0;
+                break 'stages;
+            }
+        }
+        for_each_parallel(threads, to_check.len(), &|i| {
+            take_what_goes_first();
+            take(i);
+            // Whoever finds out at the very end is the only one left to act on it.
+            take_what_goes_first();
+        });
+        report.diagnostics.append(&mut found.lock().unwrap());
+        report.diagnostics.extend(global_errors());
+    }
     report.gave_up = gave_up.into_inner().unwrap();
+    report.deepest_stack = deepest_stack.into_inner();
     report.gave_up.sort();
+    report.incomplete = incomplete.into_inner().unwrap();
+    report.incomplete.sort();
+    report.incomplete.dedup();
     // `CompareDiagnostics`
     report.diagnostics.sort_by(|a, b| {
         (&a.path, a.start, a.end, a.code, &a.text).cmp(&(&b.path, b.start, b.end, b.code, &b.text))

@@ -235,6 +235,8 @@ fn stub_of(hir: &mut hir::File, keeps_text: bool) -> hir::File {
         has_module_syntax: hir.has_module_syntax,
         is_module_by_decree: hir.is_module_by_decree,
         has_errors: hir.has_errors,
+        // Whether it is worth parsing again to hear what the parser has to say.
+        has_parse_diagnostics: hir.has_parse_diagnostics || !hir.early_errors.is_empty(),
         ..Default::default()
     }
 }

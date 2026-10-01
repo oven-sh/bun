@@ -26,6 +26,9 @@ pub struct Related {
     pub args: Vec<String>,
 }
 
+/// Given as the end of an error: it ends where it starts. TypeScript reports such errors on nodes that are missing and at bare positions.
+pub(super) const NO_LENGTH: u32 = u32::MAX;
+
 /// What is noted of the error `code` at `start`.
 #[derive(Clone, Debug)]
 pub(super) struct Note {
@@ -302,6 +305,7 @@ impl Checker<'_> {
         Explained {
             start: d.start,
             end: match note {
+                Some(note) if note.end == NO_LENGTH => d.start,
                 Some(note) if note.end > d.start => note.end,
                 _ => token_end,
             },

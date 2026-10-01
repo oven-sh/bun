@@ -555,12 +555,14 @@ impl Program {
             trap_on_timeout: std::env::var_os("BUN_SEMA_TIME_TRAP").is_some(),
             trap_on_low_stack: std::env::var_os("BUN_SEMA_DEBUG_STACK").is_some(),
             deepest_stack: std::cell::Cell::new(0),
+            ran_out_of_stack: std::cell::Cell::new(false),
             exprs_by_kind: None,
             shapes_for_now: Vec::new(),
             held_for_now: FxHashMap::default(),
             trials: FxHashMap::default(),
             named_plain_aliases_of: None,
             explains: false,
+            only_syntax: false,
             notes: Default::default(),
             timed_out: false,
             ticks: 0,
@@ -602,10 +604,7 @@ impl Program {
             provisional_arg_contexts: FxHashMap::default(),
             forces_provisional_contexts: false,
             outside_const_context: Vec::new(),
-            stack_base: {
-                let probe = 0u8;
-                (&raw const probe).addr()
-            },
+            stack_base: stack_pointer(),
             stack_limit: 6 << 20,
             work: 0,
             work_trap: std::env::var("BUN_SEMA_WORK_TRAP")
@@ -792,6 +791,7 @@ pub struct Checker<'p> {
     trap_on_timeout: bool,
     trap_on_low_stack: bool,
     deepest_stack: std::cell::Cell<usize>,
+    ran_out_of_stack: std::cell::Cell<bool>,
     /// Of the file that was last asked about.
     exprs_by_kind: Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>,
     /// The file at hand in this thread when the checker was made: see `local`. `u32::MAX` if there was none.
@@ -808,6 +808,8 @@ pub struct Checker<'p> {
     named_plain_aliases_of: Option<FileId>,
     /// What is noted of errors is kept: somebody is going to read it.
     explains: bool,
+    /// `GetSyntacticDiagnostics`: only what the parser and the scanner say is reported.
+    only_syntax: bool,
     notes: std::cell::RefCell<Vec<explain::Note>>,
     timed_out: bool,
     ticks: u32,
@@ -898,6 +900,35 @@ pub struct Checker<'p> {
     work_trap: u64,
 }
 
+/// Where the stack of the thread has got to. The register, not the address of a local: under a sanitizer that looks for uses after a
+/// return, locals whose address is taken are not on the stack at all.
+#[inline(always)]
+fn stack_pointer() -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let sp: usize;
+        // SAFETY: reading the register has no effect.
+        unsafe {
+            core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack, preserves_flags))
+        };
+        sp
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let sp: usize;
+        // SAFETY: reading the register has no effect.
+        unsafe {
+            core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags))
+        };
+        sp
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        let probe = 0u8;
+        (&raw const probe).addr()
+    }
+}
+
 impl<'p> Checker<'p> {
     // ───────────────────────────── access ─────────────────────────────
 
@@ -974,20 +1005,34 @@ impl<'p> Checker<'p> {
 
     // ───────────────────────────── questions in progress ─────────────────────────────
 
+    /// From now on only what the parser and the scanner say of a file is reported: `GetSyntacticDiagnostics`.
+    pub fn set_only_syntax(&mut self, only_syntax: bool) {
+        self.only_syntax = only_syntax;
+    }
+
     /// How much stack the thread has from here on. Questions that need more are answered "unresolved".
     pub fn set_stack_limit(&mut self, bytes: usize) {
+        self.stack_base = stack_pointer();
         self.stack_limit = bytes;
     }
 
     /// Whether there is little room left to recurse in.
     #[inline]
     pub(crate) fn is_stack_low(&self) -> bool {
-        let probe = 0u8;
-        let used = self.stack_base.wrapping_sub((&raw const probe).addr());
-        if used > self.deepest_stack.get() && used < (1 << 40) {
+        let used = self.stack_base.saturating_sub(stack_pointer());
+        if used > self.deepest_stack.get() {
             self.deepest_stack.set(used);
         }
-        used > self.stack_limit
+        if used > self.stack_limit {
+            self.ran_out_of_stack.set(true);
+            return true;
+        }
+        false
+    }
+
+    /// Whether a question has gone unanswered for want of room to recurse in. Errors may be missing for it.
+    pub fn ran_out_of_stack(&self) -> bool {
+        self.ran_out_of_stack.get()
     }
 
     /// The most stack that was in use when a question was asked.

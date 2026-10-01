@@ -607,6 +607,15 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
             relative_path(path, style.cwd)
         );
     }
+    for path in &report.incomplete {
+        paint.put(out, &[YELLOW], "warning");
+        paint.put(out, &[DIM], ": ");
+        let _ = writeln!(
+            out,
+            "ran out of stack in {}. This is a bug in Bun: errors in this file may be missing.",
+            relative_path(path, style.cwd)
+        );
+    }
     let errors = report.error_count();
     let took = format!(" [{}]", duration(report.load_time + report.check_time));
     if errors == 0 {

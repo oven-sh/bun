@@ -28,6 +28,18 @@ pub struct Style<'a> {
     pub github_annotations: bool,
     /// How many columns the terminal has. 0: it is not known, or there is none.
     pub width: usize,
+    /// Every error is shown by itself, however many there are.
+    pub shows_all: bool,
+}
+
+/// `path` as a person is shown it: from where they are, unless that is further up than down.
+fn shown_path(path: &str, style: &Style) -> String {
+    let relative = relative_path(path, style.cwd);
+    if relative.starts_with("../../") {
+        crate::host::to_native(path).to_string()
+    } else {
+        relative
+    }
 }
 
 /// `ConvertToRelativePath`
@@ -163,10 +175,12 @@ fn write_source(
     before: usize,
     after: usize,
     width: usize,
+    indent: &str,
 ) {
     if d.source.is_empty() {
         return;
     }
+    let width = width.saturating_sub(indent.len());
     let first_error_index = (d.line - d.source_line) as usize;
     let error_lines = (d.end_line - d.line) as usize + 1;
     let is_blank = |i: usize| d.source[i].trim().is_empty();
@@ -194,6 +208,7 @@ fn write_source(
         // Of an error that goes over five lines or more, the first two and the last two.
         if in_error && error_lines >= 5 && nth >= 2 && nth < error_lines - 2 {
             if nth == 2 {
+                out.push_str(indent);
                 paint.put(out, &[DIM], &format!("{:>gutter$} |", "..."));
                 out.push('\n');
             }
@@ -218,6 +233,7 @@ fn write_source(
         };
         let (start, end) = window(line, from, to, room);
         let number = format!("{:>gutter$} | ", d.source_line as usize + i);
+        out.push_str(indent);
         paint.put(out, &[if in_error { BOLD } else { DIM }], &number);
         if start > 0 {
             paint.put(out, &[DIM], "\u{2026}");
@@ -237,8 +253,9 @@ fn write_source(
         if carets == 0 {
             continue;
         }
-        let indent = gutter + 3 + usize::from(start > 0) + columns(&line[start..from]);
-        out.extend(std::iter::repeat_n(' ', indent));
+        let before_carets = gutter + 3 + usize::from(start > 0) + columns(&line[start..from]);
+        out.push_str(indent);
+        out.extend(std::iter::repeat_n(' ', before_carets));
         paint.put(
             out,
             &[BOLD, category_color(d.category)],
@@ -371,15 +388,22 @@ fn write_message(
 }
 
 fn write_location(out: &mut String, d: &Diagnostic, style: &Style, paint: &Paint) {
-    paint.put(out, &[CYAN], &relative_path(&d.path, style.cwd));
+    paint.put(out, &[CYAN], &shown_path(&d.path, style));
     paint.put(out, &[DIM], ":");
     paint.put(out, &[YELLOW], &d.line.to_string());
     paint.put(out, &[DIM], ":");
     paint.put(out, &[YELLOW], &d.column.to_string());
 }
 
-fn write_pretty(out: &mut String, d: &Diagnostic, style: &Style, paint: &Paint) {
-    write_source(out, d, paint, 2, 0, style.width);
+/// `also`: the other errors that say the same.
+fn write_pretty(
+    out: &mut String,
+    d: &Diagnostic,
+    also: &[&Diagnostic],
+    style: &Style,
+    paint: &Paint,
+) {
+    write_source(out, d, paint, 2, 0, style.width, "");
     paint.put(out, &[category_color(d.category)], d.category.name());
     // What is Bun's own to say has no code.
     let label = match d.code {
@@ -442,7 +466,124 @@ fn write_pretty(out: &mut String, d: &Diagnostic, style: &Style, paint: &Paint) 
         write_location(out, d, style, paint);
         out.push('\n');
     }
+    if !also.is_empty() {
+        write_where_else(out, d, also, style, paint);
+    }
+    for note in d.related.iter().take(MOST_NOTES) {
+        // What is in sight already is not shown again.
+        let is_in_sight = note.path == d.path
+            && note.line <= d.line
+            && note.line + 2 >= d.line
+            && !d.source.is_empty();
+        out.push_str("      ");
+        paint.put(out, &[BLUE], "note");
+        paint.put(out, &[DIM], ": ");
+        write_message(out, &note.text, paint, &[], 12, "          ", style.width);
+        if !note.path.is_empty() {
+            out.push_str("        ");
+            paint.put(out, &[DIM], "at ");
+            write_location(out, note, style, paint);
+            out.push('\n');
+        }
+        if !is_in_sight {
+            write_source(out, note, paint, 0, 0, style.width, "        ");
+        }
+    }
 }
+
+/// How often the error `first` comes up, `also` being the other times, and in which files most.
+fn write_where_else(
+    out: &mut String,
+    first: &Diagnostic,
+    also: &[&Diagnostic],
+    style: &Style,
+    paint: &Paint,
+) {
+    // The errors are in the order of their paths.
+    let mut by_file: Vec<(&Diagnostic, usize)> = vec![(first, 1)];
+    for &d in also {
+        match by_file.last_mut() {
+            Some((of, count)) if of.path == d.path => *count += 1,
+            _ => by_file.push((d, 1)),
+        }
+    }
+    out.push_str("      ");
+    let times = format!("{} times", with_commas(also.len() + 1));
+    paint.put(out, &[BOLD, YELLOW], &times);
+    if let [_] = by_file[..] {
+        let mut lines: Vec<u32> = also
+            .iter()
+            .map(|d| d.line)
+            .filter(|&line| line != first.line)
+            .collect();
+        lines.dedup();
+        if lines.is_empty() {
+            paint.put(out, &[DIM], " on this line\n");
+            return;
+        }
+        let more = lines.len() > MOST_LINES;
+        let lines: Vec<String> = lines
+            .iter()
+            .take(MOST_LINES)
+            .map(|line| line.to_string())
+            .collect();
+        paint.put(out, &[DIM], " in this file, next on ");
+        paint.put(
+            out,
+            &[DIM],
+            if lines.len() == 1 { "line " } else { "lines " },
+        );
+        paint.put(out, &[YELLOW], &lines.join(", "));
+        if more {
+            paint.put(out, &[DIM], " \u{2026}");
+        }
+        out.push('\n');
+        return;
+    }
+    paint.put(
+        out,
+        &[DIM],
+        &format!(" in {}", plural(by_file.len(), "file", "files")),
+    );
+    out.push('\n');
+    by_file.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+    let shown = if by_file.len() > MOST_PLACES + 1 {
+        MOST_PLACES
+    } else {
+        by_file.len()
+    };
+    let rest: usize = by_file[shown..].iter().map(|(_, count)| count).sum();
+    let width = with_commas(by_file[0].1.max(rest)).len();
+    for (of, count) in &by_file[..shown] {
+        let _ = write!(out, "        {:>width$}  ", with_commas(*count));
+        paint.put(out, &[CYAN], &shown_path(&of.path, style));
+        paint.put(out, &[DIM], &format!(":{}", of.line));
+        out.push('\n');
+    }
+    if shown < by_file.len() {
+        let _ = write!(out, "        {:>width$}  ", with_commas(rest));
+        paint.put(
+            out,
+            &[DIM],
+            &format!("in {} more files", with_commas(by_file.len() - shown)),
+        );
+        out.push('\n');
+    }
+}
+
+/// How many of the lines an error comes up again on are named.
+const MOST_LINES: usize = 8;
+/// How many more kinds of error get a line each.
+const MOST_KINDS_IN_A_LINE: usize = 15;
+
+/// How many of the places an error comes up again in are named.
+const MOST_PLACES: usize = 3;
+/// How many notes are shown under an error.
+const MOST_NOTES: usize = 3;
+/// With more errors than this, a person or an agent is shown what kinds there are instead of each one.
+const MANY: usize = 50;
+/// How many kinds of error are shown then.
+const MOST_KINDS: usize = 12;
 
 /// `WriteFormatDiagnostic`
 fn write_plain(out: &mut String, d: &Diagnostic, style: &Style) {
@@ -470,13 +611,13 @@ fn attribute(text: &str) -> String {
     text.replace('&', "&amp;").replace('"', "&quot;")
 }
 
-fn write_agent(out: &mut String, d: &Diagnostic, style: &Style) {
+fn write_agent(out: &mut String, d: &Diagnostic, also: &[&Diagnostic], style: &Style) {
     let _ = write!(out, "<{}", d.category.name());
     if !d.path.is_empty() {
         let _ = write!(
             out,
             " file=\"{}\" line=\"{}\" column=\"{}\"",
-            attribute(&relative_path(&d.path, style.cwd)),
+            attribute(&shown_path(&d.path, style)),
             d.line,
             d.column
         );
@@ -484,16 +625,51 @@ fn write_agent(out: &mut String, d: &Diagnostic, style: &Style) {
     if d.code != 0 {
         let _ = write!(out, " code=\"TS{}\"", d.code);
     }
+    if !also.is_empty() {
+        let _ = write!(out, " times=\"{}\"", also.len() + 1);
+    }
     out.push_str(">\n");
     out.push_str(&d.text);
     out.push('\n');
     if !d.source.is_empty() {
         out.push_str("<source>\n");
-        write_source(out, d, &Paint { on: false }, 3, 2, 0);
+        write_source(out, d, &Paint { on: false }, 3, 2, 0, "");
         out.push_str("</source>\n");
+    }
+    for note in &d.related {
+        out.push_str("<related");
+        if !note.path.is_empty() {
+            let _ = write!(
+                out,
+                " file=\"{}\" line=\"{}\" column=\"{}\"",
+                attribute(&shown_path(&note.path, style)),
+                note.line,
+                note.column
+            );
+        }
+        let _ = writeln!(out, ">{}</related>", note.text);
+    }
+    if !also.is_empty() {
+        out.push_str("<also>");
+        for (i, other) in also.iter().take(MOST_PLACES_FOR_AGENTS).enumerate() {
+            let _ = write!(
+                out,
+                "{}{}:{}:{}",
+                if i > 0 { " " } else { "" },
+                shown_path(&other.path, style),
+                other.line,
+                other.column
+            );
+        }
+        if also.len() > MOST_PLACES_FOR_AGENTS {
+            let _ = write!(out, " and {} more", also.len() - MOST_PLACES_FOR_AGENTS);
+        }
+        out.push_str("</also>\n");
     }
     let _ = writeln!(out, "</{}>", d.category.name());
 }
+
+const MOST_PLACES_FOR_AGENTS: usize = 10;
 
 /// The data of a workflow command: `%`, carriage returns and line feeds are escaped, and in a property `:` and `,` too.
 fn github_escape(text: &str, is_property: bool) -> String {
@@ -535,14 +711,18 @@ fn write_github_annotation(out: &mut String, d: &Diagnostic, style: &Style) {
 /// The errors, one after the other.
 pub fn write_diagnostics(out: &mut String, report: &Report, style: &Style) {
     let paint = Paint { on: style.color };
-    for d in &report.diagnostics {
-        match style.layout {
-            Layout::Pretty => {
-                write_pretty(out, d, style, &paint);
-                out.push('\n');
+    if shows_kinds(report, style) {
+        write_kinds(out, report, style, &paint);
+    } else {
+        for d in &report.diagnostics {
+            match style.layout {
+                Layout::Pretty => {
+                    write_pretty(out, d, &[], style, &paint);
+                    out.push('\n');
+                }
+                Layout::Plain => write_plain(out, d, style),
+                Layout::Agent => write_agent(out, d, &[], style),
             }
-            Layout::Plain => write_plain(out, d, style),
-            Layout::Agent => write_agent(out, d, style),
         }
     }
     if style.github_annotations {
@@ -550,6 +730,109 @@ pub fn write_diagnostics(out: &mut String, report: &Report, style: &Style) {
             write_github_annotation(out, d, style);
         }
     }
+}
+
+/// What an error says, in a line. That no overload matches says little: what the last one has against the call says more.
+fn gist(text: &str) -> &str {
+    let mut lines = text.lines();
+    let first = lines.next().unwrap_or("");
+    if first != "No overload matches this call." {
+        return first;
+    }
+    lines
+        .map(str::trim_start)
+        .find(|line| !line.starts_with("Overload ") && !line.starts_with("The last overload gave"))
+        .unwrap_or(first)
+}
+
+/// Whether there are too many errors to show each.
+fn shows_kinds(report: &Report, style: &Style) -> bool {
+    style.layout != Layout::Plain && !style.shows_all && report.diagnostics.len() > MANY
+}
+
+/// A project in a bad way has the same few things wrong with it over and over. Each kind of error once, with how often and where
+/// else it comes up, what there is most of first: that is where to start.
+fn write_kinds(out: &mut String, report: &Report, style: &Style, paint: &Paint) {
+    let mut index: std::collections::HashMap<(u32, &str), usize> = std::collections::HashMap::new();
+    let mut kinds: Vec<Vec<&Diagnostic>> = Vec::new();
+    for d in &report.diagnostics {
+        let at = *index.entry((d.code, d.text.as_str())).or_insert_with(|| {
+            kinds.push(Vec::new());
+            kinds.len() - 1
+        });
+        kinds[at].push(d);
+    }
+    // Among those that come up as often, in the order they come up.
+    kinds.sort_by_key(|kind| std::cmp::Reverse(kind.len()));
+    let shown = kinds.len().min(MOST_KINDS);
+    for kind in &kinds[..shown] {
+        match style.layout {
+            Layout::Agent => write_agent(out, kind[0], &kind[1..], style),
+            _ => {
+                write_pretty(out, kind[0], &kind[1..], style, paint);
+                out.push('\n');
+            }
+        }
+    }
+    // The next most common, a line each.
+    let in_a_line = (kinds.len() - shown).min(MOST_KINDS_IN_A_LINE);
+    if style.layout == Layout::Pretty && in_a_line > 0 {
+        let width = with_commas(kinds[shown].len()).len();
+        for kind in &kinds[shown..shown + in_a_line] {
+            let first = kind[0];
+            let _ = write!(out, "  {:>width$}  ", with_commas(kind.len()));
+            let code = format!("TS{:<6}", first.code);
+            paint.put(out, &[DIM], &code);
+            let said = gist(&first.text);
+            let place = format!("{}:{}", shown_path(&first.path, style), first.line);
+            // The message, cut to what room there is, and where it comes up first if that fits too.
+            let room = match style.width {
+                0 => usize::MAX,
+                columns => columns.saturating_sub(width + 12),
+            };
+            let cut = fitting(said, room);
+            out.push_str(cut);
+            if cut.len() < said.len() {
+                paint.put(out, &[DIM], "\u{2026}");
+            } else if columns(said) + columns(&place) + 2 <= room {
+                out.push_str("  ");
+                paint.put(out, &[DIM], &place);
+            }
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    let shown = if style.layout == Layout::Pretty {
+        shown + in_a_line
+    } else {
+        shown
+    };
+    let rest: usize = kinds[shown..].iter().map(Vec::len).sum();
+    if rest == 0 {
+        return;
+    }
+    let (errors, more) = (
+        plural(rest, "more error", "more errors"),
+        plural(kinds.len() - shown, "other kind", "other kinds"),
+    );
+    if style.layout == Layout::Agent {
+        let _ = writeln!(
+            out,
+            "<not-shown>{errors} of {more}. `bun check --all` shows every error. `bun check <path>` shows those of a file or a directory.</not-shown>"
+        );
+        return;
+    }
+    paint.put(out, &[BOLD], &format!("{errors} of {more}"));
+    paint.put(out, &[DIM], " not shown\n");
+    for (command, shows) in [
+        ("bun check --all ", "every error"),
+        ("bun check <path>", "those of a file or a directory"),
+    ] {
+        out.push_str("  ");
+        paint.put(out, &[CYAN], command);
+        paint.put(out, &[DIM], &format!("  {shows}\n"));
+    }
+    out.push('\n');
 }
 
 /// How far it has got, in a line that takes the place of the one before it. `tick` counts how often it has been shown.
@@ -595,6 +878,22 @@ pub fn write_progress(out: &mut String, progress: &crate::Progress, style: &Styl
 /// Back to the start of the line, with nothing on it.
 pub const ERASE_LINE: &str = "\r\u{1b}[2K";
 
+/// Whether something is reported missing that `@types/bun` declares.
+fn lacks_types_of_bun(report: &Report) -> bool {
+    report.diagnostics.iter().any(|d| match d.code {
+        // `Cannot find name 'console'. Do you need to change your target library? ..`
+        2584 => true,
+        // `Cannot find module 'bun:test' or its corresponding type declarations.`
+        2307 => {
+            d.text.starts_with("Cannot find module 'bun:")
+                || d.text.starts_with("Cannot find module 'bun'")
+        }
+        // `Cannot find name 'Bun'. Do you need to install type definitions for Bun? ..`
+        2867 | 2868 => true,
+        _ => false,
+    })
+}
+
 /// How it went, in a line or a few.
 pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
     let paint = Paint { on: style.color };
@@ -615,6 +914,15 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
             "ran out of stack in {}. This is a bug in Bun: errors in this file may be missing.",
             relative_path(path, style.cwd)
         );
+    }
+    if style.layout != Layout::Plain && lacks_types_of_bun(report) {
+        paint.put(out, &[BLUE], "hint");
+        paint.put(out, &[DIM], ": ");
+        out.push_str(
+            "The types of what Bun provides (console, fetch, Bun, bun:test) are not installed: ",
+        );
+        paint.put(out, &[CYAN], "bun add -d @types/bun");
+        out.push('\n');
     }
     let errors = report.error_count();
     let took = format!(" [{}]", duration(report.load_time + report.check_time));
@@ -681,7 +989,12 @@ pub fn write_summary(out: &mut String, report: &Report, style: &Style) {
         .unwrap_or(1);
     for (first, count) in &by_file[..shown] {
         let _ = write!(out, "  {:>width$}  ", with_commas(*count));
-        paint.put(out, &[CYAN], &relative_path(&first.path, style.cwd));
+        let path = if style.layout == Layout::Plain {
+            relative_path(&first.path, style.cwd)
+        } else {
+            shown_path(&first.path, style)
+        };
+        paint.put(out, &[CYAN], &path);
         paint.put(out, &[DIM], &format!(":{}", first.line));
         out.push('\n');
     }

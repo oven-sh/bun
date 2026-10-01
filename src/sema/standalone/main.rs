@@ -557,6 +557,7 @@ fn main() {
                         cwd: "",
                         github_annotations: false,
                         width: bun_sema_standalone::terminal_width(),
+                        shows_all: false,
                     };
                     for tick in 0.. {
                         let mut line = String::new();
@@ -597,7 +598,7 @@ fn main() {
                     only: args.iter().find_map(|a| a.strip_prefix("--only=")),
                     ends_the_process: true,
                     keeps_everything: args.iter().any(|a| a == "--keep"),
-                    stops_where_tsc_does: !args.iter().any(|a| a == "--all"),
+                    stops_where_tsc_does: !args.iter().any(|a| a == "--every-stage"),
                     says_it_as_typescript_does: false,
                     loaded: args.iter().any(|a| a == "--memory").then_some(
                         &print_loaded_sizes as &(dyn Fn(&bun_sema::check::Program) + Sync),
@@ -623,6 +624,7 @@ fn main() {
                     .find_map(|a| a.strip_prefix("--width="))
                     .and_then(|w| w.parse().ok())
                     .unwrap_or_else(bun_sema_standalone::terminal_width),
+                shows_all: has("--all"),
             };
             if progress.is_some() {
                 eprint!("{}", bun_sema_driver::format::ERASE_LINE);

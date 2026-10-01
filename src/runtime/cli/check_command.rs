@@ -17,6 +17,8 @@ struct Options {
     threads: usize,
     /// `--pretty`, `--no-pretty`. Not said: by where the output goes.
     pretty: Option<bool>,
+    /// `--all`: every error by itself, however many there are.
+    all: bool,
     timing: bool,
 }
 
@@ -97,6 +99,8 @@ fn parse(args: &[&ZStr]) -> Options {
             options.pretty = Some(true);
         } else if arg == b"--no-pretty" || arg == b"--pretty=false" {
             options.pretty = Some(false);
+        } else if arg == b"--all" {
+            options.all = true;
         } else if arg == b"--timing" {
             options.timing = true;
         } else if arg == b"--noEmit" || arg == b"--no-emit" {
@@ -172,6 +176,7 @@ fn run(
         bun_core::Fd::stderr(),
         true,
         Output::enable_ansi_colors_stderr(),
+        false,
     );
     std::thread::scope(|scope| {
         let shown = scope.spawn(|| show_progress(&progress, &is_done, &style));
@@ -225,6 +230,7 @@ fn style_for(
     to: bun_core::Fd,
     is_tty: bool,
     colors: bool,
+    shows_all: bool,
 ) -> Style<'_> {
     let layout = match pretty {
         Some(true) => Layout::Pretty,
@@ -245,6 +251,7 @@ fn style_for(
         } else {
             0
         },
+        shows_all,
     }
 }
 
@@ -271,6 +278,7 @@ impl CheckCommand {
                 bun_core::Fd::stdout(),
                 Output::is_stdout_tty(),
                 Output::enable_ansi_colors_stdout(),
+                options.all,
             ),
         );
         let _ = Output::writer().write_all(out.as_bytes());
@@ -286,6 +294,7 @@ impl CheckCommand {
                     bun_core::Fd::stderr(),
                     Output::is_stderr_tty(),
                     true,
+                    options.all,
                 )
             },
         );
@@ -334,6 +343,7 @@ pub(crate) fn check_before(entry_points: &[&[u8]]) -> bool {
         bun_core::Fd::stderr(),
         Output::is_stderr_tty(),
         Output::enable_ansi_colors_stderr(),
+        false,
     );
     let mut out = String::new();
     format::write_diagnostics(&mut out, &report, &style);

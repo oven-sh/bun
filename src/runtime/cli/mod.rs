@@ -2188,6 +2188,7 @@ Execute a shell script directly from Bun.
   <cyan>-p<r>, <cyan>--project<r> <d>\\<path\\><r>   A tsconfig.json, or a directory with one in it
       <cyan>--pretty<r>           Show the source around each error <d>(default in a terminal)<r>
       <cyan>--no-pretty<r>        One line an error, as <b>tsc --pretty false<r> prints them <d>(default elsewhere)<r>
+      <cyan>--all<r>              Show every error by itself <d>(past 50, errors that say the same are shown once)<r>
       <cyan>--threads<r> <d>\\<n\\><r>      How many threads to check on <d>(default: one for each core)<r>
       <cyan>--timing<r>           Say how long loading and checking took
       <cyan>--cwd<r> <d>\\<path\\><r>       Run from another directory

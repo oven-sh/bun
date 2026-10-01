@@ -963,7 +963,16 @@ describe("minimum-release-age", () => {
       "bunfig.toml": Bun.TOML.stringify({ install: { registry: mockRegistryUrl, ...bunfig } }),
     });
 
-    const cachedManifests = (cacheDir: string) => readdirSync(cacheDir).filter(name => name.endsWith(".npm"));
+    // bun install does not wait for the manifest cache write before it exits.
+    async function cachedManifests(cacheDir: string) {
+      const deadline = Date.now() + 5_000;
+      let manifests = readdirSync(cacheDir).filter(name => name.endsWith(".npm"));
+      while (manifests.length === 0 && Date.now() < deadline) {
+        await Bun.sleep(10);
+        manifests = readdirSync(cacheDir).filter(name => name.endsWith(".npm"));
+      }
+      return manifests;
+    }
 
     async function runWithCache(cwd: string, cacheDir: string, args: string[], { stale = false } = {}) {
       const firstRequest = registryRequests.length;
@@ -997,7 +1006,7 @@ describe("minimum-release-age", () => {
       const first = await runWithCache(String(ungated), String(cache), ["install"]);
       expect(first.manifestRequests).toEqual(["abbreviated"]);
       expect(first.exitCode).toBe(0);
-      expect(cachedManifests(String(cache))).toHaveLength(1);
+      expect(await cachedManifests(String(cache))).toHaveLength(1);
 
       const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs]);
       expect(second.stderr).toContain(blockedByResolution);
@@ -1014,7 +1023,7 @@ describe("minimum-release-age", () => {
       const first = await runWithCache(String(ungated), String(cache), ["install"]);
       expect(first.manifestRequests).toEqual(["abbreviated"]);
       expect(first.exitCode).toBe(0);
-      expect(cachedManifests(String(cache))).toHaveLength(1);
+      expect(await cachedManifests(String(cache))).toHaveLength(1);
 
       const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs]);
       expect(second.manifestRequests).toEqual(["full"]);
@@ -1030,7 +1039,7 @@ describe("minimum-release-age", () => {
       const first = await runWithCache(String(ungated), String(cache), ["install"]);
       expect(first.manifestRequests).toEqual(["abbreviated"]);
       expect(first.exitCode).toBe(0);
-      expect(cachedManifests(String(cache))).toHaveLength(1);
+      expect(await cachedManifests(String(cache))).toHaveLength(1);
 
       const second = await runWithCache(String(gated), String(cache), ["add", "regular-package@3.0.0", ...minAgeArgs]);
       expect(second.stderr).toContain(blockedByResolution);
@@ -1081,7 +1090,7 @@ describe("minimum-release-age", () => {
       const first = await runWithCache(String(ungated), String(cache), ["install"]);
       expect(first.manifestRequests).toEqual(["abbreviated"]);
       expect(first.exitCode).toBe(0);
-      expect(cachedManifests(String(cache))).toHaveLength(1);
+      expect(await cachedManifests(String(cache))).toHaveLength(1);
 
       const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs], { stale: true });
       expect(second.manifestRequests).toEqual([]);

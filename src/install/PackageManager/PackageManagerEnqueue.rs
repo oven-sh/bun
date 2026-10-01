@@ -1170,8 +1170,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     } {
                                         loaded_manifest = Some(manifest.clone());
 
-                                        // The age check below needs publish times, which only the
-                                        // extended manifest carries, unless the package is excluded from it.
                                         let age_check_can_use_cache = {
                                             let manifest = loaded_manifest.as_ref().unwrap();
                                             !needs_extended_manifest

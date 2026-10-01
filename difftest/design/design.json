@@ -1,0 +1,56 @@
+{
+  "_note": "Result of design review run 59afcb31cb38 (completed_with_failures: 7 subagents died with the container at 17:20 UTC; 239 agents, 57.1M tokens). The task notification truncated every long string (marked with '…[+Nc]') and cut the object after pick_title, so premise, pick_reason, why_not_minimal, tell_reporter and ranking did not arrive. The journal is not readable from the container. The operational details of the pick were reconstructed from the review's own artifacts in /tmp: recon-knh/replayA.c and replayB.c (syscall replay of the pick, 'atomic' variant = 'hyb'), rev1-knh/model.py, rev1-knh/probe.py, acct1-knh/kprobe.py, knh-adv/p.py.",
+  "premise": "(not delivered: truncated) The pick is a build, so the premise held: the report is a defect.",
+  "pick": "kernel-nofollow-open-hybrid",
+  "pick_title": "archive: refuse symlinks inside the open each member already makes (openat2 RESOLVE… (truncated)",
+  "pick_reason": "(not delivered: truncated) Reconstructed from the plan, the measurements and the replay programs: the open that each member already makes refuses symlinks in the kernel (Linux openat2 RESOLVE_NO_SYMLINKS, macOS O_NOFOLLOW_ANY), so a member in an existing directory costs the same one syscall as on main, nothing is cached between entries, and the refusal is atomic with the open (no window for a rename-exchange). The per-component O_NOFOLLOW walk with cached directory fds (the PR as written) stays only as the fallback where the kernel cannot refuse (no openat2, Android, FreeBSD). Private fresh destinations (bun install, --compile download) keep main's syscalls exactly through an explicit DestinationKind::PrivateFresh; the default is the strict CallerProvided.",
+  "why_not_minimal": "(not delivered: truncated) From the siblings and plan: a leaf-only O_NOFOLLOW or a per-entry component walk (#31585) leaves parents followed or pays a walk per entry; the cached walk as written pays +1 or +2 syscalls per directory on every extraction, 2.75x on random order, and holds up to 128 descriptors; none of them makes the refusal atomic with the open.",
+  "tell_reporter": "(not delivered; not needed: the pick is a build)",
+  "plan": [
+    "Start from local HEAD 8de1be4c71 on branch robobun/b77b4ad7/archive-extract-nofollow and keep the uncommitted working-tree edits another session has in docs/run…[+257c]",
+    "bun_sys: add openat_no_symlinks(dir, rel, flags, mode) returning Option<Maybe<Fd>> beside openat2_beneath. cfg(target_os = \"linux\") only, not android: openat2 w…[+554c]",
+    "bun_libarchive: one set of contained arm functions (create_file, make_dir, symlink, unlink, open_existing) that are the only code issuing creating calls on a ca…[+652c]",
+    "Scope: ExtractOptions (lib.rs:1547) gains destination: DestinationKind { CallerProvided, PrivateFresh } with CallerProvided as Default so a new caller fails clo…[+278c]",
+    "extract_to_dir: route the directory arm, the file arm (pluckers and make_lib_uv_owned still receive an ordinary writable fd) and create_deferred_symlinks (two p…[+357c]",
+    "extract_to_disk_filtered (Archive.rs:1290): use the same functions for the directory arm, the file arm and the cleanup unlinkat, and defer symlink members throu…[+185c]",
+    "Link-in-the-way policy in ONE function: reject with ELOOP and the member path in both extractors, so the new refusal never looks like success. ExtractError carr…[+280c]",
+    "bun create pre-check: Archiver::get_overwriting_file_list (lib.rs:1586 at HEAD, :1362 on main) opens through the contained open with O_NONBLOCK, so it no longer…[+45c]",
+    "Tests in the existing files, each failing with USE_SYSTEM_BUN=1. Run every shape for default and glob, and again with BUN_FEATURE_FLAG_DISABLE_OPENAT2=1 so CI r…[+491c]",
+    "Docs and types in the same PR: a file member replaces a symlink at its own name; extract() rejects with ELOOP when a parent component inside the destination is …[+265c]"
+  ],
+  "plan_reconstructed_from_replay": {
+    "file": "fd = open_no_symlinks(root, path, O_WRONLY|O_CREAT|O_TRUNC). ENOENT with a dirname: make_parents(dirname), then the same open again. ELOOP: open the parent with open_no_symlinks(root, dirname, O_PATH|O_DIRECTORY); if that fails a parent component is a link: reject; else unlinkat(parent, name) and openat(parent, name, O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW); close the parent.",
+    "make_parents": "Find the deepest existing ancestor: probe prefixes of n-1 .. 1 components with open_no_symlinks(root, prefix, O_PATH|O_DIRECTORY); an error other than ENOENT fails. Then for each missing component: mkdirat(parent fd, name, 0o755) (EEXIST is fine), step down with openat(parent fd, name, O_PATH|O_DIRECTORY|O_NOFOLLOW), close the previous fd.",
+    "directory": "parent = open_no_symlinks(root, dirname, O_PATH|O_DIRECTORY); ENOENT: make_parents then open again; failure: reject; mkdirat(parent, name, mode); close.",
+    "symlink": "deferred to the end, parent as for a directory, symlinkat(target, parent, name).",
+    "variant": "atomic: nothing is kept between entries (the measurement expects root + file + one transient parent descriptor).",
+    "fallback": "where open_no_symlinks is None (kernel without openat2 or seccomp refusing it, Android, FreeBSD): the cached per-component O_NOFOLLOW walk of the PR as written (ParentDirs)."
+  },
+  "measurements": [
+    {"what": "Extraction syscalls for Bun.Archive#extract, default and glob, first and second extraction", "how": "Regenerate five 2000-file tars with a fixed seed: D flat; A 421 implied directories at depth 4, path-sorted, no directory members; E = A with directory members; B 2656 directories with one file each, … (truncated)", "tool": "/tmp/arc/st (ptrace tracer), /tmp/arc/count.mjs", "report_as": "extraction syscalls D/A/E/B/C, main vs PR: default first __/__/__/__/__ vs __/__/__/__/__, second __ vs __; glob …"},
+    {"what": "bun install, both extractors, and the --compile download must issue main's syscalls exactly", "how": "Install a fixed set of file: tarballs in npm member order (rxjs 7.8.1 and aws-cdk-lib 2.148.0 layouts) with a fresh cache and HOME, once with BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL=1 (buffered) an… (truncated)", "tool": "/tmp/arc/st", "report_as": "bun install syscall vector, buffered and streaming: __ differing syscalls of __ total, openat2 __ vs __ (main …"},
+    {"what": "Cost of the fallback resolver (kernels without openat2, Android, FreeBSD) on the same shapes", "how": "Same D/A/E/B/C runs as the first entry with BUN_FEATURE_FLAG_DISABLE_OPENAT2=1 on the PR build, first and second extraction, default and glob. Expected to equal the as-written numbers 6004/7268/7267/13973/31175", "tool": "/tmp/arc/st", "report_as": "fallback walk (openat2 disabled) D/A/E/B/C first extraction: __/__/__/__/__ syscalls vs main __/__/__/__/__"},
+    {"what": "Rare path: a link at the member's own name, and a link in a parent", "how": "2000 file members over 2000 pre-made leaf symlinks at depth 0 and at depth 3: syscalls per member minus the no-link run. One archive whose first member sits under a symlinked parent: syscalls from the… (truncated)", "tool": "/tmp/arc/st", "report_as": "leaf-link replace: +__ syscalls per replaced member (depth 0) and +__ (depth 3); refusal through a symlinked p…"},
+    {"what": "Binary size", "how": "size on release linux-x64 builds of merge base bf42a525d5 and the PR head built from the same tree and toolchain (the earlier pair under /tmp/arc is gone; as-written alone measured text +5632 bytes).", "tool": "size", "report_as": "release binary text: +__ bytes (size, bf42a525d5 vs PR head, linux-x64)"},
+    {"what": "Instructions per file open: openat2(RESOLVE_NO_SYMLINKS) against openat, kernel and user", "how": "A C loop of 100,000 O_WRONLY|O_CREAT|O_TRUNC opens of a depth-4 path in each mode, and the extraction of D, under perf stat -e instructions:u,instructions:k, base and PR interleaved, 10 runs each, spr… (truncated)", "tool": "perf stat", "report_as": "per open: +__ user and +__ kernel instructions (perf stat, 100,000 opens, spread __); extraction of D: __ vs _…"},
+    {"what": "Descriptors held during an extraction", "how": "Peak count of entries in /proc/<pid>/fd sampled by the tracer at each openat return during extraction of B, base vs PR, on the kernel arm (expected: root + file + one transient parent) and on the forc… (truncated)", "tool": "/tmp/arc/st, prlimit, /tmp/arc/deepfd.mjs", "report_as": "peak descriptors during extraction: main __, PR kernel arm __, PR fallback __; 70-deep tree under RLIMIT_NOFIL…"},
+    {"what": "New syscall number on the Bun.Archive path and behaviour when it is filtered", "how": "Count syscall 437 (openat2) during extraction of A on base and PR. Then run the same extraction under a seccomp filter that returns ENOSYS for 437 and one that returns EPERM: the result and tree must … (truncated)", "tool": "/tmp/arc/st, a small seccomp wrapper", "report_as": "openat2 calls per extraction of A: main __, PR __; under seccomp ENOSYS/EPERM for openat2: __ calls, tree iden…"}
+  ],
+  "siblings_in_scope": [
+    "Bun.Archive#extract(path, { glob }): directory, file, cleanup-unlinkat and symlink arms of extract_t…[+95c]",
+    "create_deferred_symlinks (/workspace/bun/src/libarchive/lib.rs:1419 at HEAD), for every caller inclu…[+85c]",
+    "bun create: extract_to_disk gets the strict default, and the pre-check Archiver::get_overwriting_fil…[+102c]",
+    "bun install buffered path and the --compile download: explicit DestinationKind::PrivateFresh, syscal…[+144c]",
+    "The rename-exchange race for every entry created on a caller-provided destination",
+    "One archive that names a path both as a symlink and as a file or directory in the glob extractor (ma…[+77c]"
+  ],
+  "siblings_noted": [
+    "Windows arms of all three extractors (make_path_u16 / openat_windows in /workspace/bun/src/libarchiv…[+496c]",
+    "TarballStream::open_output_file and make_directory stay on main's whole-path calls on the same premi…[+178c]",
+    "A hard link at a member's own name is still rewritten in place (GNU tar and node-tar unlink first). …[+206c]",
+    "A directory member or a symlink member whose own name is already a symlink: GNU tar and node-tar rep…[+274c]",
+    "Following links that stay inside the destination (policy c) needs a user-space in-root step on every…[+127c]",
+    "Same mechanism outside the archive code: bun patch apply (/workspace/bun/src/patch/lib.rs) and the p…[+100c]"
+  ],
+  "revive": "PR #31481 (alii, open): its design, one O_NOFOLLOW_ANY open with a component walk only where needed, is adopted, generalised to Linux openat2(RESOLVE_NO_SYMLINKS) and made unconditional for caller-pro…[+177c]"
+}

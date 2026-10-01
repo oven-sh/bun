@@ -62,6 +62,20 @@ extern "C"
     }
   }
 
+  void uws_app_sort_routes(int ssl, uws_app_t *app)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->sortRoutes();
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->sortRoutes();
+    }
+  }
+
   void uws_app_get(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
     std::string_view pattern = std::string_view(pattern_ptr, pattern_len);

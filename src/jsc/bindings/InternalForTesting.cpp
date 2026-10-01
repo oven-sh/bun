@@ -254,6 +254,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject
 namespace {
 
 struct HttpRouterScriptData {
+    // uWS::HttpRouter adds its loop iterations to a member of this name.
+    uint64_t routerSteps = 0;
     uint64_t request = 0;
     std::string* trace = nullptr;
 };
@@ -346,6 +348,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_httpRouterScript, (JSC::JSGlobalObject * glo
             router->getUserData().request = requests++;
             bool matched = router->route(fields[1], fields[2]);
             output.append(matched ? "1" : "0").append(trace).append("\n");
+        } else if (command == "steps" && fields.size() == 1) {
+            output.append("s").append(std::to_string(router->getUserData().routerSteps)).append("\n");
+            router->getUserData().routerSteps = 0;
+        } else if (command == "sort" && fields.size() == 1) {
+            router->sortRoutes();
         } else if (command == "reset" && fields.size() == 1) {
             router = std::make_unique<ScriptedHttpRouter>();
         } else {

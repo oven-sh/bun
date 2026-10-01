@@ -2486,6 +2486,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut needs_plugins = dev_server.is_some();
         let mut has_static_route_for_star_path = false;
 
+        // Sorted, so that a static route looks its path up and does not scan the user routes.
+        let mut user_head_route_paths: Vec<&[u8]> = self
+            .user_routes
+            .iter()
+            .filter(|route| {
+                matches!(
+                    &route.route.method,
+                    server_config::RouteMethod::Specific(method)
+                        if *method == http_method::Method::HEAD
+                )
+            })
+            .map(|route| route.route.path.as_bytes())
+            .collect();
+        user_head_route_paths.sort_unstable();
+
         for entry in &self.config.static_routes {
             if &*entry.path == b"/*" {
                 has_static_route_for_star_path = true;
@@ -2509,15 +2524,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // path: uWS keeps the last registration for a method and path, and
             // static routes register after user routes.
             let path_has_user_head_route =
-                self.user_routes
-                    .iter()
-                    .any(|route| match &route.route.method {
-                        server_config::RouteMethod::Specific(method) => {
-                            *method == http_method::Method::HEAD
-                                && route.route.path.as_bytes() == &*entry.path
-                        }
-                        server_config::RouteMethod::Any => false,
-                    });
+                user_head_route_paths.binary_search(&&*entry.path).is_ok();
 
             // Each `p`/`r` is the live `RefPtr<_>` stored in `entry.route`;
             // `app`/`h2_app`/`h3_app` are the live uWS app handles owned by `self`.
@@ -2759,6 +2766,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.config.is_node_http_server {
             ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>());
         }
+
+        app.sort_routes();
+        for_each_mux_app!(self, |mux| {
+            mux.sort_routes();
+        });
 
         route_list_value
     }

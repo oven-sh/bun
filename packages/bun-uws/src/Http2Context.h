@@ -765,6 +765,8 @@ struct Http2Context {
      * route lambda copied what it needs and returns straight after. */
     void clearRoutes() { router = decltype(router){}; }
 
+    void sortRoutes() { router.sortRoutes(); }
+
     /* fn may close connections (and run JS that closes others), so snapshot
      * the group's list first and pin each entry across the call. */
     template <typename F> void forEachConnection(F &&fn) {

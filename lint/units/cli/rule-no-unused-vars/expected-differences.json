@@ -1,0 +1,16 @@
+[
+{"why":"X4.1: a macro import leaves no statement; its name has no place","ext":"js","code":"import { x } from \"./m.js\" with { type: \"macro\" };"},
+{"why":"X4.1: an import from bun:bundle leaves no statement","ext":"js","code":"import { feature } from \"bun:bundle\";"},
+{"why":"X4.3: the body of an interface is not built; every identifier token in it is a read, its own name too","ext":"ts","code":"interface Foo { next: Foo }"},
+{"why":"X4.3: the type of an alias is not built; its own name in it is a read","ext":"ts","code":"type Foo = Foo[];"},
+{"why":"X4.3: a property name in an unbuilt type is a read of the variable of that name","ext":"ts","code":"const foo = 1; export type F = (x: number) => { foo: string };"},
+{"why":"X4.3: a parameter name in an unbuilt signature is a read of the outer variable of that name","ext":"ts","code":"const foo = 1; export interface I { m(foo: string): void }"},
+{"why":"X4.3: `typeof x` in an unbuilt type is a plain read: no 'only used as a type'","ext":"ts","code":"const foo = 1; export interface I { m(x: string): typeof foo }"},
+{"why":"X4.3: a type parameter declared inside an unbuilt type has no variable","ext":"ts","code":"export interface I { m<T>(): void }"},
+{"why":"X4.3: a type parameter declared inside an unbuilt type has no variable","ext":"ts","code":"export type F = <T>() => void;"},
+{"why":"X4.3: `infer U` inside an unbuilt type has no variable","ext":"ts","code":"export type A<T> = T extends infer U ? 1 : 2;"},
+{"why":"the names in the parameters of a signature are read from the tokens: a type keyword that is a variable name marks that variable","ext":"ts","code":"const string = 1; export declare function f(x: string): void;"},
+{"why":"only when the whole signature is scanned and not its parameter list alone","ext":"ts","code":"const foo = 1; export declare function f(x: number): typeof foo;"},
+{"why":"only when the type visitor visits the annotation of a catch binding; typescript-eslint does not","ext":"ts","code":"import { T } from 'x'; try {} catch (e: T) { e; }"},
+{"why":"an empty statement after the return leaves no statement: the block has one statement for bun, two for typescript-eslint","ext":"ts","code":"export function g(o: any) { for (const k in o) { return; ; } }"}
+]

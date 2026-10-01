@@ -1,0 +1,1241 @@
+2dArrays.ts	C	compiler/2dArrays.ts	pass	silent		
+AmbientModuleAndAmbientFunctionWithTheSameNameAndCommonRoot.ts	C	conformance/internalModules/DeclarationMerging/AmbientModuleAndAmbientFunctionWithTheSameNameAndCommonRoot.ts	pass	silent		
+AmbientModuleAndAmbientWithSameNameAndCommonRoot.ts	C	conformance/internalModules/DeclarationMerging/AmbientModuleAndAmbientWithSameNameAndCommonRoot.ts	pass	silent		
+AmbientModuleAndNonAmbientClassWithSameNameAndCommonRoot.ts	C	conformance/internalModules/DeclarationMerging/AmbientModuleAndNonAmbientClassWithSameNameAndCommonRoot.ts	pass	silent		
+AmbientModuleAndNonAmbientFunctionWithTheSameNameAndCommonRoot.ts	C	conformance/internalModules/DeclarationMerging/AmbientModuleAndNonAmbientFunctionWithTheSameNameAndCommonRoot.ts	pass	silent		
+ArrowFunction1.ts	E	conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/ArrowFunction1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ArrowFunction3.ts	E	conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/ArrowFunction3.ts	fail	silent		no diagnostic where the oracle has a baseline
+ArrowFunction4.ts	C	conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/ArrowFunction4.ts	pass	silent		
+ArrowFunctionExpression1.ts	E	compiler/ArrowFunctionExpression1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ClassAndModuleThatMergeWithModuleMemberThatUsesClassTypeParameter.ts	E	conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModuleMemberThatUsesClassTypeParameter.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassAndModuleThatMergeWithModulesExportedGenericFunctionAndGenericClassStaticFunctionOfTheSameName.ts	E	conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModulesExportedGenericFunctionAndGenericClassStaticFunctionOfTheSameName.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassAndModuleThatMergeWithModulesExportedGenericFunctionAndNonGenericClassStaticFunctionOfTheSameName.ts	E	conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModulesExportedGenericFunctionAndNonGenericClassStaticFunctionOfTheSameName.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassAndModuleThatMergeWithModulesExportedStaticFunctionUsingClassPrivateStatics.ts	E	conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithModulesExportedStaticFunctionUsingClassPrivateStatics.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassAndModuleThatMergeWithStaticFunctionAndExportedFunctionThatShareAName.ts	E	conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStaticFunctionAndExportedFunctionThatShareAName.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassAndModuleThatMergeWithStaticFunctionAndNonExportedFunctionThatShareAName.ts	C	conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStaticFunctionAndNonExportedFunctionThatShareAName.ts	pass	silent		
+ClassAndModuleThatMergeWithStaticVariableAndExportedVarThatShareAName.ts	E	conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStaticVariableAndExportedVarThatShareAName.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassAndModuleThatMergeWithStaticVariableAndNonExportedVarThatShareAName.ts	C	conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStaticVariableAndNonExportedVarThatShareAName.ts	pass	silent		
+ClassAndModuleThatMergeWithStringIndexerAndExportedFunctionWithTypeIncompatibleWithIndexer.ts	C	conformance/internalModules/DeclarationMerging/ClassAndModuleThatMergeWithStringIndexerAndExportedFunctionWithTypeIncompatibleWithIndexer.ts	pass	silent		
+ClassAndModuleWithSameNameAndCommonRoot.ts	E	conformance/internalModules/DeclarationMerging/ClassAndModuleWithSameNameAndCommonRoot.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassAndModuleWithSameNameAndCommonRootES6.ts	E	conformance/internalModules/DeclarationMerging/ClassAndModuleWithSameNameAndCommonRootES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclaration10.ts	E	compiler/ClassDeclaration10.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclaration11.ts	E	compiler/ClassDeclaration11.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclaration13.ts	E	compiler/ClassDeclaration13.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclaration14.ts	E	compiler/ClassDeclaration14.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclaration15.ts	E	compiler/ClassDeclaration15.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclaration21.ts	E	compiler/ClassDeclaration21.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclaration22.ts	E	compiler/ClassDeclaration22.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclaration24.ts	E	compiler/ClassDeclaration24.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclaration25.ts	E	compiler/ClassDeclaration25.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclaration26.ts	E	compiler/ClassDeclaration26.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ClassDeclaration8.ts	E	compiler/ClassDeclaration8.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclaration9.ts	E	compiler/ClassDeclaration9.ts	fail	silent		no diagnostic where the oracle has a baseline
+ClassDeclarationWithInvalidConstOnPropertyDeclaration.ts	E	compiler/ClassDeclarationWithInvalidConstOnPropertyDeclaration.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ClassDeclarationWithInvalidConstOnPropertyDeclaration2.ts	C	compiler/ClassDeclarationWithInvalidConstOnPropertyDeclaration2.ts	pass	silent		
+DeclarationErrorsNoEmitOnError.ts	C	compiler/DeclarationErrorsNoEmitOnError.ts	pass	silent		
+ES3For-ofTypeCheck1(target=es2015).ts	C	conformance/statements/for-ofStatements/ES3For-ofTypeCheck1.ts	pass	silent		
+ES3For-ofTypeCheck2(target=es2015).ts	C	conformance/statements/for-ofStatements/ES3For-ofTypeCheck2.ts	pass	silent		
+ES3For-ofTypeCheck4(target=es2015).ts	E	conformance/statements/for-ofStatements/ES3For-ofTypeCheck4.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES3For-ofTypeCheck6(target=es2015).ts	E	conformance/statements/for-ofStatements/ES3For-ofTypeCheck6.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of1(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of1.ts	pass	silent		
+ES5For-of10(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of10.ts	pass	silent		
+ES5For-of11(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of11.ts	pass	silent		
+ES5For-of12(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of12.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ES5For-of13(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of13.ts	pass	silent		
+ES5For-of14(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of14.ts	pass	silent		
+ES5For-of15(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of15.ts	pass	silent		
+ES5For-of16(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of16.ts	pass	silent		
+ES5For-of17(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of17.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of18(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of18.ts	pass	silent		
+ES5For-of19(alwaysstrict=true,target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of19.ts	pass	silent		
+ES5For-of2(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of2.ts	pass	silent		
+ES5For-of20(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of20.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ES5For-of21(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of21.ts	pass	silent		
+ES5For-of22(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of22.ts	pass	silent		
+ES5For-of23(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of23.ts	pass	silent		
+ES5For-of24(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of24.ts	pass	silent		
+ES5For-of25(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of25.ts	pass	silent		
+ES5For-of26(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of26.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of27(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of27.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of28(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of28.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of29(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of29.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of3(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of3.ts	pass	silent		
+ES5For-of30(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of30.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of31(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of31.ts	pass	silent		
+ES5For-of33(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of33.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of34(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of34.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of35(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of35.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of36(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of36.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of37(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of37.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of4(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of4.ts	pass	silent		
+ES5For-of5(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of5.ts	pass	silent		
+ES5For-of6(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of6.ts	pass	silent		
+ES5For-of7(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of7.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of8(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-of8.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-of9(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-of9.ts	pass	silent		
+ES5For-ofTypeCheck1(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-ofTypeCheck1.ts	pass	silent		
+ES5For-ofTypeCheck10(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-ofTypeCheck10.ts	pass	silent		
+ES5For-ofTypeCheck11(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-ofTypeCheck11.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-ofTypeCheck12(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-ofTypeCheck12.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-ofTypeCheck13(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-ofTypeCheck13.ts	pass	silent		
+ES5For-ofTypeCheck14(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-ofTypeCheck14.ts	pass	silent		
+ES5For-ofTypeCheck2(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-ofTypeCheck2.ts	pass	silent		
+ES5For-ofTypeCheck3(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5For-ofTypeCheck3.ts	pass	silent		
+ES5For-ofTypeCheck4(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-ofTypeCheck4.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-ofTypeCheck5(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-ofTypeCheck5.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-ofTypeCheck6(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-ofTypeCheck6.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-ofTypeCheck7(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-ofTypeCheck7.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-ofTypeCheck8(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-ofTypeCheck8.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5For-ofTypeCheck9(target=es2015).ts	E	conformance/statements/for-ofStatements/ES5For-ofTypeCheck9.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5SymbolProperty1(target=es2015).ts	C	conformance/Symbols/ES5SymbolProperty1.ts	pass	silent		
+ES5SymbolProperty2(target=es2015).ts	C	conformance/Symbols/ES5SymbolProperty2.ts	pass	silent		
+ES5SymbolProperty3(target=es2015).ts	E	conformance/Symbols/ES5SymbolProperty3.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5SymbolProperty4(target=es2015).ts	E	conformance/Symbols/ES5SymbolProperty4.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5SymbolProperty5(target=es2015).ts	E	conformance/Symbols/ES5SymbolProperty5.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5SymbolProperty6(target=es2015).ts	C	conformance/Symbols/ES5SymbolProperty6.ts	pass	silent		
+ES5SymbolProperty7(target=es2015).ts	E	conformance/Symbols/ES5SymbolProperty7.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5SymbolType1(target=es2015).ts	E	conformance/Symbols/ES5SymbolType1.ts	fail	silent		no diagnostic where the oracle has a baseline
+ES5for-of32(target=es2015).ts	C	conformance/statements/for-ofStatements/ES5for-of32.ts	pass	silent		
+EnumAndModuleWithSameNameAndCommonRoot.ts	C	conformance/internalModules/DeclarationMerging/EnumAndModuleWithSameNameAndCommonRoot.ts	pass	silent		
+ExportAssignment7.ts	E	compiler/ExportAssignment7.ts	fail	silent		no diagnostic where the oracle has a baseline
+ExportAssignment8.ts	E	compiler/ExportAssignment8.ts	fail	silent		no diagnostic where the oracle has a baseline
+ExportClassWhichExtendsInterfaceWithInaccessibleType.ts	C	conformance/internalModules/exportDeclarations/ExportClassWhichExtendsInterfaceWithInaccessibleType.ts	pass	silent		
+ExportClassWithAccessibleTypesInTypeParameterConstraintsClassHeritageListMemberTypeAnnotations.ts	E	conformance/internalModules/exportDeclarations/ExportClassWithAccessibleTypesInTypeParameterConstraintsClassHeritageListMemberTypeAnnotations.ts	fail	silent		no diagnostic where the oracle has a baseline
+ExportClassWithInaccessibleTypeInIndexerTypeAnnotations.ts	E	conformance/internalModules/exportDeclarations/ExportClassWithInaccessibleTypeInIndexerTypeAnnotations.ts	fail	silent		no diagnostic where the oracle has a baseline
+ExportClassWithInaccessibleTypeInTypeParameterConstraint.ts	E	conformance/internalModules/exportDeclarations/ExportClassWithInaccessibleTypeInTypeParameterConstraint.ts	fail	silent		no diagnostic where the oracle has a baseline
+ExportFunctionWithAccessibleTypesInParameterAndReturnTypeAnnotation.ts	E	conformance/internalModules/exportDeclarations/ExportFunctionWithAccessibleTypesInParameterAndReturnTypeAnnotation.ts	fail	silent		no diagnostic where the oracle has a baseline
+ExportFunctionWithInaccessibleTypesInParameterTypeAnnotation.ts	E	conformance/internalModules/exportDeclarations/ExportFunctionWithInaccessibleTypesInParameterTypeAnnotation.ts	fail	silent		no diagnostic where the oracle has a baseline
+ExportFunctionWithInaccessibleTypesInReturnTypeAnnotation.ts	E	conformance/internalModules/exportDeclarations/ExportFunctionWithInaccessibleTypesInReturnTypeAnnotation.ts	fail	silent		no diagnostic where the oracle has a baseline
+ExportInterfaceWithAccessibleTypesInTypeParameterConstraintsClassHeritageListMemberTypeAnnotations.ts	C	conformance/internalModules/exportDeclarations/ExportInterfaceWithAccessibleTypesInTypeParameterConstraintsClassHeritageListMemberTypeAnnotations.ts	pass	silent		
+ExportInterfaceWithInaccessibleTypeInIndexerTypeAnnotations.ts	C	conformance/internalModules/exportDeclarations/ExportInterfaceWithInaccessibleTypeInIndexerTypeAnnotations.ts	pass	silent		
+ExportInterfaceWithInaccessibleTypeInTypeParameterConstraint.ts	C	conformance/internalModules/exportDeclarations/ExportInterfaceWithInaccessibleTypeInTypeParameterConstraint.ts	pass	silent		
+ExportModuleWithAccessibleTypesOnItsExportedMembers.ts	C	conformance/internalModules/exportDeclarations/ExportModuleWithAccessibleTypesOnItsExportedMembers.ts	pass	silent		
+ExportObjectLiteralAndObjectTypeLiteralWithAccessibleTypesInMemberTypeAnnotations.ts	C	conformance/internalModules/exportDeclarations/ExportObjectLiteralAndObjectTypeLiteralWithAccessibleTypesInMemberTypeAnnotations.ts	pass	silent		
+ExportObjectLiteralAndObjectTypeLiteralWithAccessibleTypesInNestedMemberTypeAnnotations.ts	E	conformance/internalModules/exportDeclarations/ExportObjectLiteralAndObjectTypeLiteralWithAccessibleTypesInNestedMemberTypeAnnotations.ts	fail	silent		no diagnostic where the oracle has a baseline
+ExportVariableOfGenericTypeWithInaccessibleTypeAsTypeArgument.ts	E	conformance/internalModules/exportDeclarations/ExportVariableOfGenericTypeWithInaccessibleTypeAsTypeArgument.ts	fail	silent		no diagnostic where the oracle has a baseline
+ExportVariableWithAccessibleTypeInTypeAnnotation.ts	C	conformance/internalModules/exportDeclarations/ExportVariableWithAccessibleTypeInTypeAnnotation.ts	pass	silent		
+ExportVariableWithInaccessibleTypeInTypeAnnotation.ts	C	conformance/internalModules/exportDeclarations/ExportVariableWithInaccessibleTypeInTypeAnnotation.ts	pass	silent		
+FunctionAndModuleWithSameNameAndCommonRoot.ts	E	conformance/internalModules/DeclarationMerging/FunctionAndModuleWithSameNameAndCommonRoot.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionAndModuleWithSameNameAndDifferentCommonRoot.ts	C	conformance/internalModules/DeclarationMerging/FunctionAndModuleWithSameNameAndDifferentCommonRoot.ts	pass	silent		
+FunctionDeclaration10_es6.ts	E	conformance/es6/functionDeclarations/FunctionDeclaration10_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+FunctionDeclaration11_es6.ts	E	conformance/es6/functionDeclarations/FunctionDeclaration11_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionDeclaration12_es6.ts	E	conformance/es6/functionDeclarations/FunctionDeclaration12_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+FunctionDeclaration13_es6.ts	E	conformance/es6/functionDeclarations/FunctionDeclaration13_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionDeclaration1_es6.ts	C	conformance/es6/functionDeclarations/FunctionDeclaration1_es6.ts	pass	silent		
+FunctionDeclaration2_es6(alwaysstrict=true).ts	E	conformance/es6/functionDeclarations/FunctionDeclaration2_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionDeclaration3.ts	E	compiler/FunctionDeclaration3.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionDeclaration3_es6.ts	E	conformance/es6/functionDeclarations/FunctionDeclaration3_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionDeclaration4.ts	E	compiler/FunctionDeclaration4.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionDeclaration4_es6.ts	E	conformance/es6/functionDeclarations/FunctionDeclaration4_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionDeclaration5_es6.ts	E	conformance/es6/functionDeclarations/FunctionDeclaration5_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+FunctionDeclaration6.ts	E	compiler/FunctionDeclaration6.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionDeclaration6_es6.ts	E	conformance/es6/functionDeclarations/FunctionDeclaration6_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+FunctionDeclaration7.ts	E	compiler/FunctionDeclaration7.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionDeclaration7_es6.ts	E	conformance/es6/functionDeclarations/FunctionDeclaration7_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+FunctionDeclaration8_es6.ts	E	conformance/es6/functionDeclarations/FunctionDeclaration8_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionDeclaration9_es6.ts	C	conformance/es6/functionDeclarations/FunctionDeclaration9_es6.ts	pass	silent		
+FunctionExpression1_es6.ts	C	conformance/es6/functionExpressions/FunctionExpression1_es6.ts	pass	silent		
+FunctionExpression2_es6.ts	C	conformance/es6/functionExpressions/FunctionExpression2_es6.ts	pass	silent		
+FunctionPropertyAssignments1_es6.ts	C	conformance/es6/functionPropertyAssignments/FunctionPropertyAssignments1_es6.ts	pass	silent		
+FunctionPropertyAssignments2_es6.ts	E	conformance/es6/functionPropertyAssignments/FunctionPropertyAssignments2_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+FunctionPropertyAssignments3_es6.ts	E	conformance/es6/functionPropertyAssignments/FunctionPropertyAssignments3_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+FunctionPropertyAssignments4_es6.ts	E	conformance/es6/functionPropertyAssignments/FunctionPropertyAssignments4_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+FunctionPropertyAssignments5_es6.ts	E	conformance/es6/functionPropertyAssignments/FunctionPropertyAssignments5_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+FunctionPropertyAssignments6_es6.ts	E	conformance/es6/functionPropertyAssignments/FunctionPropertyAssignments6_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+InterfaceDeclaration8.ts	E	compiler/InterfaceDeclaration8.ts	fail	silent		no diagnostic where the oracle has a baseline
+InvalidNonInstantiatedModule.ts	E	conformance/internalModules/moduleDeclarations/InvalidNonInstantiatedModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+MemberAccessorDeclaration15.ts	E	compiler/MemberAccessorDeclaration15.ts	fail	silent		no diagnostic where the oracle has a baseline
+MemberFunctionDeclaration1_es6.ts	C	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration1_es6.ts	pass	silent		
+MemberFunctionDeclaration2_es6.ts	C	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration2_es6.ts	pass	silent		
+MemberFunctionDeclaration3_es6.ts	E	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration3_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+MemberFunctionDeclaration4_es6.ts	E	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration4_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+MemberFunctionDeclaration5_es6.ts	E	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration5_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+MemberFunctionDeclaration6_es6.ts	E	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration6_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+MemberFunctionDeclaration7_es6.ts	C	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration7_es6.ts	pass	silent		
+MemberFunctionDeclaration8_es6.ts	E	conformance/es6/memberFunctionDeclarations/MemberFunctionDeclaration8_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ModuleAndClassWithSameNameAndCommonRoot.ts	E	conformance/internalModules/DeclarationMerging/ModuleAndClassWithSameNameAndCommonRoot.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ModuleAndEnumWithSameNameAndCommonRoot.ts	C	conformance/internalModules/DeclarationMerging/ModuleAndEnumWithSameNameAndCommonRoot.ts	pass	silent		
+ModuleAndFunctionWithSameNameAndCommonRoot.ts	E	conformance/internalModules/DeclarationMerging/ModuleAndFunctionWithSameNameAndCommonRoot.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ModuleWithExportedAndNonExportedClasses.ts	E	conformance/internalModules/exportDeclarations/ModuleWithExportedAndNonExportedClasses.ts	fail	silent		no diagnostic where the oracle has a baseline
+ModuleWithExportedAndNonExportedEnums.ts	E	conformance/internalModules/exportDeclarations/ModuleWithExportedAndNonExportedEnums.ts	fail	silent		no diagnostic where the oracle has a baseline
+ModuleWithExportedAndNonExportedFunctions.ts	E	conformance/internalModules/exportDeclarations/ModuleWithExportedAndNonExportedFunctions.ts	fail	silent		no diagnostic where the oracle has a baseline
+ModuleWithExportedAndNonExportedImportAlias.ts	E	conformance/internalModules/exportDeclarations/ModuleWithExportedAndNonExportedImportAlias.ts	fail	silent		no diagnostic where the oracle has a baseline
+ModuleWithExportedAndNonExportedVariables.ts	E	conformance/internalModules/exportDeclarations/ModuleWithExportedAndNonExportedVariables.ts	fail	silent		no diagnostic where the oracle has a baseline
+NonInitializedExportInInternalModule(alwaysstrict=true).ts	E	conformance/internalModules/exportDeclarations/NonInitializedExportInInternalModule.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ParameterList13.ts	E	compiler/ParameterList13.ts	fail	silent		no diagnostic where the oracle has a baseline
+ParameterList4.ts	E	compiler/ParameterList4.ts	fail	silent		no diagnostic where the oracle has a baseline
+ParameterList5.ts	E	compiler/ParameterList5.ts	fail	silent		no diagnostic where the oracle has a baseline
+ParameterList6.ts	E	compiler/ParameterList6.ts	fail	silent		no diagnostic where the oracle has a baseline
+ParameterList7.ts	E	compiler/ParameterList7.ts	fail	silent		no diagnostic where the oracle has a baseline
+ParameterList8.ts	E	compiler/ParameterList8.ts	fail	silent		no diagnostic where the oracle has a baseline
+Protected1.ts	E	conformance/parser/ecmascript5/Protected/Protected1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+Protected2.ts	E	conformance/parser/ecmascript5/Protected/Protected2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+Protected3.ts	C	conformance/parser/ecmascript5/Protected/Protected3.ts	pass	silent		
+Protected4.ts	E	conformance/parser/ecmascript5/Protected/Protected4.ts	fail	silent		no diagnostic where the oracle has a baseline
+Protected5.ts	C	conformance/parser/ecmascript5/Protected/Protected5.ts	pass	silent		
+Protected6.ts	E	conformance/parser/ecmascript5/Protected/Protected6.ts	fail	silent		no diagnostic where the oracle has a baseline
+Protected7.ts	E	conformance/parser/ecmascript5/Protected/Protected7.ts	fail	silent		no diagnostic where the oracle has a baseline
+Protected8.ts	C	conformance/parser/ecmascript5/Protected/Protected8.ts	pass	silent		
+Protected9.ts	C	conformance/parser/ecmascript5/Protected/Protected9.ts	pass	silent		
+TemplateExpression1.ts	E	conformance/es6/templates/TemplateExpression1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+TransportStream.ts	E	compiler/TransportStream.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+TupleType1.ts	C	conformance/parser/ecmascript5/TupleTypes/TupleType1.ts	pass	silent		
+TupleType2.ts	C	conformance/parser/ecmascript5/TupleTypes/TupleType2.ts	pass	silent		
+TupleType3.ts	C	conformance/parser/ecmascript5/TupleTypes/TupleType3.ts	pass	silent		
+TupleType4.ts	E	conformance/parser/ecmascript5/TupleTypes/TupleType4.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+TupleType5.ts	C	conformance/parser/ecmascript5/TupleTypes/TupleType5.ts	pass	silent		
+TupleType6.ts	E	conformance/parser/ecmascript5/TupleTypes/TupleType6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+TwoInternalModulesThatMergeEachWithExportedAndNonExportedClassesOfTheSameName.ts	E	conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedAndNonExportedClassesOfTheSameName.ts	fail	silent		no diagnostic where the oracle has a baseline
+TwoInternalModulesThatMergeEachWithExportedAndNonExportedInterfacesOfTheSameName.ts	C	conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedAndNonExportedInterfacesOfTheSameName.ts	pass	silent		
+TwoInternalModulesThatMergeEachWithExportedAndNonExportedLocalVarsOfTheSameName.ts	C	conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedAndNonExportedLocalVarsOfTheSameName.ts	pass	silent		
+TwoInternalModulesThatMergeEachWithExportedClassesOfTheSameName.ts	E	conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedClassesOfTheSameName.ts	fail	silent		no diagnostic where the oracle has a baseline
+TwoInternalModulesThatMergeEachWithExportedInterfacesOfTheSameName.ts	C	conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedInterfacesOfTheSameName.ts	pass	silent		
+TwoInternalModulesThatMergeEachWithExportedLocalVarsOfTheSameName.ts	E	conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedLocalVarsOfTheSameName.ts	fail	silent		no diagnostic where the oracle has a baseline
+TwoInternalModulesThatMergeEachWithExportedModulesOfTheSameName.ts	E	conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedModulesOfTheSameName.ts	fail	silent		no diagnostic where the oracle has a baseline
+TwoInternalModulesWithTheSameNameAndDifferentCommonRoot.ts	C	conformance/internalModules/DeclarationMerging/TwoInternalModulesWithTheSameNameAndDifferentCommonRoot.ts	pass	silent		
+TwoInternalModulesWithTheSameNameAndSameCommonRoot.ts	C	conformance/internalModules/DeclarationMerging/TwoInternalModulesWithTheSameNameAndSameCommonRoot.ts	pass	silent		
+TypeArgumentList1.ts	E	conformance/parser/ecmascript5/ErrorRecovery/TypeArgumentLists/TypeArgumentList1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+TypeGuardWithArrayUnion.ts	E	conformance/expressions/typeGuards/TypeGuardWithArrayUnion.ts	fail	silent		no diagnostic where the oracle has a baseline
+TypeGuardWithEnumUnion.ts	C	conformance/expressions/typeGuards/TypeGuardWithEnumUnion.ts	pass	silent		
+VariableDeclaration10_es6.ts	C	conformance/es6/variableDeclarations/VariableDeclaration10_es6.ts	pass	silent		
+VariableDeclaration11_es6.ts	E	conformance/es6/variableDeclarations/VariableDeclaration11_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+VariableDeclaration12_es6.ts	C	conformance/es6/variableDeclarations/VariableDeclaration12_es6.ts	pass	silent		
+VariableDeclaration13_es6.ts	E	conformance/es6/variableDeclarations/VariableDeclaration13_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+VariableDeclaration1_es6.ts	E	conformance/es6/variableDeclarations/VariableDeclaration1_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+VariableDeclaration2_es6.ts	E	conformance/es6/variableDeclarations/VariableDeclaration2_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+VariableDeclaration3_es6.ts	C	conformance/es6/variableDeclarations/VariableDeclaration3_es6.ts	pass	silent		
+VariableDeclaration4_es6.ts	E	conformance/es6/variableDeclarations/VariableDeclaration4_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+VariableDeclaration5_es6.ts	C	conformance/es6/variableDeclarations/VariableDeclaration5_es6.ts	pass	silent		
+VariableDeclaration6_es6.ts	E	conformance/es6/variableDeclarations/VariableDeclaration6_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+VariableDeclaration7_es6.ts	C	conformance/es6/variableDeclarations/VariableDeclaration7_es6.ts	pass	silent		
+VariableDeclaration8_es6.ts	C	conformance/es6/variableDeclarations/VariableDeclaration8_es6.ts	pass	silent		
+VariableDeclaration9_es6.ts	C	conformance/es6/variableDeclarations/VariableDeclaration9_es6.ts	pass	silent		
+YieldExpression10_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression10_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+YieldExpression11_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression11_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+YieldExpression12_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression12_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+YieldExpression13_es6.ts	C	conformance/es6/yieldExpressions/YieldExpression13_es6.ts	pass	silent		
+YieldExpression14_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression14_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+YieldExpression15_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression15_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+YieldExpression16_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression16_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+YieldExpression17_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression17_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+YieldExpression18_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression18_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+YieldExpression19_es6.ts	C	conformance/es6/yieldExpressions/YieldExpression19_es6.ts	pass	silent		
+YieldExpression1_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression1_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+YieldExpression20_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression20_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+YieldExpression2_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression2_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+YieldExpression3_es6.ts	C	conformance/es6/yieldExpressions/YieldExpression3_es6.ts	pass	silent		
+YieldExpression4_es6.ts	C	conformance/es6/yieldExpressions/YieldExpression4_es6.ts	pass	silent		
+YieldExpression5_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression5_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+YieldExpression6_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression6_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+YieldExpression7_es6.ts	C	conformance/es6/yieldExpressions/YieldExpression7_es6.ts	pass	silent		
+YieldExpression8_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression8_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+YieldExpression9_es6.ts	E	conformance/es6/yieldExpressions/YieldExpression9_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+YieldStarExpression1_es6.ts	E	conformance/es6/yieldExpressions/YieldStarExpression1_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+YieldStarExpression2_es6.ts	E	conformance/es6/yieldExpressions/YieldStarExpression2_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+YieldStarExpression3_es6.ts	E	conformance/es6/yieldExpressions/YieldStarExpression3_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+YieldStarExpression4_es6.ts	C	conformance/es6/yieldExpressions/YieldStarExpression4_es6.ts	pass	silent		
+abstractClassInLocalScope.ts	C	compiler/abstractClassInLocalScope.ts	pass	silent		
+abstractClassInLocalScopeIsAbstract.ts	E	compiler/abstractClassInLocalScopeIsAbstract.ts	fail	silent		no diagnostic where the oracle has a baseline
+abstractClassUnionInstantiation.ts	E	compiler/abstractClassUnionInstantiation.ts	fail	silent		no diagnostic where the oracle has a baseline
+abstractIdentifierNameStrict.ts	C	compiler/abstractIdentifierNameStrict.ts	pass	silent		
+abstractInterfaceIdentifierName.ts	C	compiler/abstractInterfaceIdentifierName.ts	pass	silent		
+abstractProperty(target=es2015).ts	C	conformance/classes/propertyMemberDeclarations/abstractProperty.ts	pass	silent		
+abstractProperty(target=esnext).ts	C	conformance/classes/propertyMemberDeclarations/abstractProperty.ts	pass	silent		
+abstractPropertyBasics(target=es2015).ts	C	compiler/abstractPropertyBasics.ts	pass	silent		
+abstractPropertyInConstructor.ts	E	compiler/abstractPropertyInConstructor.ts	fail	silent		no diagnostic where the oracle has a baseline
+abstractPropertyInitializer.ts	E	conformance/classes/propertyMemberDeclarations/abstractPropertyInitializer.ts	fail	silent		no diagnostic where the oracle has a baseline
+abstractPropertyNegative(target=es2015).ts	E	compiler/abstractPropertyNegative.ts	fail	silent		no diagnostic where the oracle has a baseline
+acceptSymbolAsWeakType.ts	C	compiler/acceptSymbolAsWeakType.ts	pass	silent		
+acceptableAlias1.ts	C	compiler/acceptableAlias1.ts	pass	silent		
+accessInstanceMemberFromStaticMethod01.ts	E	compiler/accessInstanceMemberFromStaticMethod01.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessOverriddenBaseClassMember1.ts	C	compiler/accessOverriddenBaseClassMember1.ts	pass	silent		
+accessStaticMemberFromInstanceMethod01.ts	E	compiler/accessStaticMemberFromInstanceMethod01.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessibilityModifiers(target=es2015).ts	E	conformance/classes/propertyMemberDeclarations/accessibilityModifiers.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorAccidentalCallDiagnostic(target=es2015).ts	E	compiler/accessorAccidentalCallDiagnostic.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorBodyInTypeContext.ts	E	compiler/accessorBodyInTypeContext.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorDeclarationEmitJs.ts	C	compiler/accessorDeclarationEmitJs.ts	pass	silent		
+accessorDeclarationEmitVisibilityErrors.ts	E	compiler/accessorDeclarationEmitVisibilityErrors.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorDeclarationOrder.ts	E	compiler/accessorDeclarationOrder.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorInAmbientContextES5(target=es2015).ts	E	compiler/accessorInAmbientContextES5.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorInferredReturnTypeErrorInReturnStatement.ts	E	compiler/accessorInferredReturnTypeErrorInReturnStatement.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorParameterAccessibilityModifier(target=es2015).ts	E	compiler/accessorParameterAccessibilityModifier.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorWithES5(target=es2015).ts	C	conformance/classes/propertyMemberDeclarations/memberAccessorDeclarations/accessorWithES5.ts	pass	silent		
+accessorWithInitializer(target=es2015).ts	E	compiler/accessorWithInitializer.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorWithLineTerminator(target=es2015).ts	C	compiler/accessorWithLineTerminator.ts	pass	silent		
+accessorWithMismatchedAccessibilityModifiers(target=es2015).ts	C	conformance/classes/propertyMemberDeclarations/memberAccessorDeclarations/accessorWithMismatchedAccessibilityModifiers.ts	pass	silent		
+accessorWithRestParam(target=es2015).ts	E	compiler/accessorWithRestParam.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorWithoutBody1(target=es2015).ts	E	compiler/accessorWithoutBody1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+accessorWithoutBody2(target=es2015).ts	E	compiler/accessorWithoutBody2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+accessorsAreNotContextuallyTyped.ts	E	conformance/classes/propertyMemberDeclarations/memberAccessorDeclarations/accessorsAreNotContextuallyTyped.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorsEmit.ts	C	compiler/accessorsEmit.ts	pass	silent		
+accessorsInAmbientContext(target=es2015).ts	E	compiler/accessorsInAmbientContext.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorsOverrideMethod.ts	E	conformance/classes/propertyMemberDeclarations/accessorsOverrideMethod.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorsOverrideProperty.ts	E	conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorsOverrideProperty10.ts	E	conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty10.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorsOverrideProperty2.ts	E	conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty2.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorsOverrideProperty3.ts	E	conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty3.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorsOverrideProperty4.ts	E	conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty4.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorsOverrideProperty5.ts	C	conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty5.ts	pass	silent		
+accessorsOverrideProperty6.ts	E	conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty6.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorsOverrideProperty7(target=es2015).ts	E	conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty7.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessorsOverrideProperty8.ts	C	conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty8.ts	pass	silent		
+accessorsOverrideProperty9.ts	C	conformance/classes/propertyMemberDeclarations/accessorsOverrideProperty9.ts	pass	silent		
+accessors_spec_section-4.5_error-cases.ts	E	compiler/accessors_spec_section-4.5_error-cases.ts	fail	silent		no diagnostic where the oracle has a baseline
+accessors_spec_section-4.5_inference.ts	C	compiler/accessors_spec_section-4.5_inference.ts	pass	silent		
+addMoreCallSignaturesToBaseSignature.ts	E	compiler/addMoreCallSignaturesToBaseSignature.ts	fail	silent		no diagnostic where the oracle has a baseline
+addMoreCallSignaturesToBaseSignature2.ts	E	compiler/addMoreCallSignaturesToBaseSignature2.ts	fail	silent		no diagnostic where the oracle has a baseline
+addMoreOverloadsToBaseSignature.ts	E	compiler/addMoreOverloadsToBaseSignature.ts	fail	silent		no diagnostic where the oracle has a baseline
+additionOperatorWithAnyAndEveryType.ts	C	conformance/expressions/binaryOperators/additionOperator/additionOperatorWithAnyAndEveryType.ts	pass	silent		
+additionOperatorWithConstrainedTypeParameter.ts	C	conformance/expressions/binaryOperators/additionOperator/additionOperatorWithConstrainedTypeParameter.ts	pass	silent		
+additionOperatorWithInvalidOperands.ts	E	conformance/expressions/binaryOperators/additionOperator/additionOperatorWithInvalidOperands.ts	fail	silent		no diagnostic where the oracle has a baseline
+additionOperatorWithNullValueAndInvalidOperator.ts	E	conformance/expressions/binaryOperators/additionOperator/additionOperatorWithNullValueAndInvalidOperator.ts	fail	silent		no diagnostic where the oracle has a baseline
+additionOperatorWithNullValueAndValidOperator.ts	E	conformance/expressions/binaryOperators/additionOperator/additionOperatorWithNullValueAndValidOperator.ts	fail	silent		no diagnostic where the oracle has a baseline
+additionOperatorWithNumberAndEnum.ts	E	conformance/expressions/binaryOperators/additionOperator/additionOperatorWithNumberAndEnum.ts	fail	silent		no diagnostic where the oracle has a baseline
+additionOperatorWithOnlyNullValueOrUndefinedValue.ts	E	conformance/expressions/binaryOperators/additionOperator/additionOperatorWithOnlyNullValueOrUndefinedValue.ts	fail	silent		no diagnostic where the oracle has a baseline
+additionOperatorWithStringAndEveryType.ts	E	conformance/expressions/binaryOperators/additionOperator/additionOperatorWithStringAndEveryType.ts	fail	silent		no diagnostic where the oracle has a baseline
+additionOperatorWithTypeParameter.ts	E	conformance/expressions/binaryOperators/additionOperator/additionOperatorWithTypeParameter.ts	fail	silent		no diagnostic where the oracle has a baseline
+additionOperatorWithUndefinedValueAndInvalidOperands.ts	E	conformance/expressions/binaryOperators/additionOperator/additionOperatorWithUndefinedValueAndInvalidOperands.ts	fail	silent		no diagnostic where the oracle has a baseline
+additionOperatorWithUndefinedValueAndValidOperator.ts	E	conformance/expressions/binaryOperators/additionOperator/additionOperatorWithUndefinedValueAndValidOperator.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasAssignments.ts	E	compiler/aliasAssignments.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasBug.ts	E	compiler/aliasBug.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasDoesNotDuplicateSignatures.ts	E	compiler/aliasDoesNotDuplicateSignatures.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasErrors.ts	E	compiler/aliasErrors.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+aliasInaccessibleModule.ts	C	compiler/aliasInaccessibleModule.ts	pass	silent		
+aliasInaccessibleModule2.ts	C	compiler/aliasInaccessibleModule2.ts	pass	silent		
+aliasInstantiationExpressionGenericIntersectionNoCrash1.ts	E	compiler/aliasInstantiationExpressionGenericIntersectionNoCrash1.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasInstantiationExpressionGenericIntersectionNoCrash2.ts	E	compiler/aliasInstantiationExpressionGenericIntersectionNoCrash2.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasOfGenericFunctionWithRestBehavedSameAsUnaliased.ts	C	compiler/aliasOfGenericFunctionWithRestBehavedSameAsUnaliased.ts	pass	silent		
+aliasOnMergedModuleInterface.ts	E	compiler/aliasOnMergedModuleInterface.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasUsageInAccessorsOfClass(target=es2015).ts	E	compiler/aliasUsageInAccessorsOfClass.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasUsageInArray.ts	E	compiler/aliasUsageInArray.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasUsageInFunctionExpression.ts	E	compiler/aliasUsageInFunctionExpression.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasUsageInGenericFunction.ts	E	compiler/aliasUsageInGenericFunction.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasUsageInIndexerOfClass.ts	E	compiler/aliasUsageInIndexerOfClass.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasUsageInObjectLiteral.ts	E	compiler/aliasUsageInObjectLiteral.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasUsageInOrExpression.ts	E	compiler/aliasUsageInOrExpression.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasUsageInTypeArgumentOfExtendsClause.ts	E	compiler/aliasUsageInTypeArgumentOfExtendsClause.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasUsageInVarAssignment.ts	E	compiler/aliasUsageInVarAssignment.ts	fail	silent		no diagnostic where the oracle has a baseline
+aliasUsedAsNameValue.ts	C	compiler/aliasUsedAsNameValue.ts	pass	silent		
+aliasWithInterfaceExportAssignmentUsedInVarInitializer.ts	E	compiler/aliasWithInterfaceExportAssignmentUsedInVarInitializer.ts	fail	silent		no diagnostic where the oracle has a baseline
+allowImportClausesToMergeWithTypes.ts	E	compiler/allowImportClausesToMergeWithTypes.ts	fail	silent		no diagnostic where the oracle has a baseline
+allowImportingTsExtensions(moduleresolution=bundler).ts	E	conformance/moduleResolution/allowImportingTsExtensions.ts	fail	silent		no diagnostic where the oracle has a baseline
+allowImportingTsExtensions(moduleresolution=node16).ts	E	conformance/moduleResolution/allowImportingTsExtensions.ts	fail	silent		no diagnostic where the oracle has a baseline
+allowImportingTsExtensions(moduleresolution=nodenext).ts	E	conformance/moduleResolution/allowImportingTsExtensions.ts	fail	silent		no diagnostic where the oracle has a baseline
+allowImportingTypesDtsExtension(allowimportingtsextensions=false,moduleresolution=node16).ts	E	conformance/moduleResolution/allowImportingTypesDtsExtension.ts	fail	silent		no diagnostic where the oracle has a baseline
+allowImportingTypesDtsExtension(allowimportingtsextensions=false,moduleresolution=nodenext).ts	E	conformance/moduleResolution/allowImportingTypesDtsExtension.ts	fail	silent		no diagnostic where the oracle has a baseline
+allowImportingTypesDtsExtension(allowimportingtsextensions=true,moduleresolution=node16).ts	E	conformance/moduleResolution/allowImportingTypesDtsExtension.ts	fail	silent		no diagnostic where the oracle has a baseline
+allowImportingTypesDtsExtension(allowimportingtsextensions=true,moduleresolution=nodenext).ts	E	conformance/moduleResolution/allowImportingTypesDtsExtension.ts	fail	silent		no diagnostic where the oracle has a baseline
+allowJsClassThisTypeCrash.ts	C	compiler/allowJsClassThisTypeCrash.ts	pass	silent		
+allowJsCrossMonorepoPackage.ts	C	compiler/allowJsCrossMonorepoPackage.ts	pass	silent		
+allowJscheckJsTypeParameterNoCrash.ts	E	compiler/allowJscheckJsTypeParameterNoCrash.ts	fail	silent		no diagnostic where the oracle has a baseline
+allowSyntheticDefaultImports1.ts	C	compiler/allowSyntheticDefaultImports1.ts	pass	silent		
+allowSyntheticDefaultImports10.ts	E	compiler/allowSyntheticDefaultImports10.ts	fail	silent		no diagnostic where the oracle has a baseline
+allowSyntheticDefaultImports4.ts	C	compiler/allowSyntheticDefaultImports4.ts	pass	silent		
+allowSyntheticDefaultImports9.ts	C	compiler/allowSyntheticDefaultImports9.ts	pass	silent		
+allowSyntheticDefaultImportsCanPaintCrossModuleDeclaration.ts	C	compiler/allowSyntheticDefaultImportsCanPaintCrossModuleDeclaration.ts	pass	silent		
+allowUnescapedParagraphAndLineSeparatorsInStringLiteral.ts	C	conformance/es2019/allowUnescapedParagraphAndLineSeparatorsInStringLiteral.ts	pass	silent		
+allowsImportingTsExtension.ts	E	conformance/externalModules/typeOnly/allowsImportingTsExtension.ts	fail	silent		no diagnostic where the oracle has a baseline
+alwaysStrict.ts	E	compiler/alwaysStrict.ts	fail	silent		no diagnostic where the oracle has a baseline
+alwaysStrictAlreadyUseStrict.ts	C	compiler/alwaysStrictAlreadyUseStrict.ts	pass	silent		
+alwaysStrictES6.ts	E	compiler/alwaysStrictES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+alwaysStrictModule.ts	E	compiler/alwaysStrictModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+alwaysStrictModule3.ts	C	compiler/alwaysStrictModule3.ts	pass	silent		
+alwaysStrictModule4.ts	C	compiler/alwaysStrictModule4.ts	pass	silent		
+alwaysStrictModule5.ts	C	compiler/alwaysStrictModule5.ts	pass	silent		
+alwaysStrictModule6(target=es2015).ts	C	compiler/alwaysStrictModule6.ts	pass	silent		
+ambient.ts	C	conformance/externalModules/typeOnly/ambient.ts	pass	silent		
+ambientAccessors(target=es2015).ts	C	conformance/classes/propertyMemberDeclarations/memberAccessorDeclarations/ambientAccessors.ts	pass	silent		
+ambientClassDeclarationWithExtends.ts	C	compiler/ambientClassDeclarationWithExtends.ts	pass	silent		
+ambientClassDeclaredBeforeBase.ts	C	compiler/ambientClassDeclaredBeforeBase.ts	pass	silent		
+ambientClassMergesOverloadsWithInterface.ts	C	compiler/ambientClassMergesOverloadsWithInterface.ts	pass	silent		
+ambientClassOverloadForFunction.ts	C	compiler/ambientClassOverloadForFunction.ts	pass	silent		
+ambientConstLiterals.ts	C	compiler/ambientConstLiterals.ts	pass	silent		
+ambientDeclarations.ts	C	conformance/ambient/ambientDeclarations.ts	pass	silent		
+ambientDeclarationsExternal.ts	C	conformance/ambient/ambientDeclarationsExternal.ts	pass	silent		
+ambientDeclarationsPatterns.ts	C	conformance/ambient/ambientDeclarationsPatterns.ts	pass	silent		
+ambientDeclarationsPatterns_merging1.ts	E	conformance/ambient/ambientDeclarationsPatterns_merging1.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientDeclarationsPatterns_merging2.ts	E	conformance/ambient/ambientDeclarationsPatterns_merging2.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientDeclarationsPatterns_merging3.ts	E	conformance/ambient/ambientDeclarationsPatterns_merging3.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientDeclarationsPatterns_tooManyAsterisks.ts	E	conformance/ambient/ambientDeclarationsPatterns_tooManyAsterisks.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientEnum1.ts	E	compiler/ambientEnum1.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientEnumDeclaration1.ts	C	conformance/ambient/ambientEnumDeclaration1.ts	pass	silent		
+ambientEnumDeclaration2.ts	C	conformance/ambient/ambientEnumDeclaration2.ts	pass	silent		
+ambientEnumElementInitializer1.ts	C	compiler/ambientEnumElementInitializer1.ts	pass	silent		
+ambientEnumElementInitializer2.ts	C	compiler/ambientEnumElementInitializer2.ts	pass	silent		
+ambientEnumElementInitializer3.ts	C	compiler/ambientEnumElementInitializer3.ts	pass	silent		
+ambientEnumElementInitializer4.ts	C	compiler/ambientEnumElementInitializer4.ts	pass	silent		
+ambientEnumElementInitializer5.ts	C	compiler/ambientEnumElementInitializer5.ts	pass	silent		
+ambientEnumElementInitializer6.ts	C	compiler/ambientEnumElementInitializer6.ts	pass	silent		
+ambientErrors.ts	E	conformance/ambient/ambientErrors.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientErrors1.ts	E	compiler/ambientErrors1.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientExportDefaultErrors.ts	E	compiler/ambientExportDefaultErrors.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientExternalModuleInAnotherExternalModule.ts	E	compiler/ambientExternalModuleInAnotherExternalModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientExternalModuleInsideNonAmbient.ts	E	conformance/ambient/ambientExternalModuleInsideNonAmbient.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientExternalModuleInsideNonAmbientExternalModule.ts	E	conformance/ambient/ambientExternalModuleInsideNonAmbientExternalModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientExternalModuleReopen.ts	C	compiler/ambientExternalModuleReopen.ts	pass	silent		
+ambientExternalModuleWithRelativeExternalImportDeclaration.ts	E	compiler/ambientExternalModuleWithRelativeExternalImportDeclaration.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientExternalModuleWithRelativeModuleName.ts	E	compiler/ambientExternalModuleWithRelativeModuleName.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientFundule.ts	C	compiler/ambientFundule.ts	pass	silent		
+ambientGetters(target=es2015).ts	E	compiler/ambientGetters.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientInsideNonAmbient.ts	C	conformance/ambient/ambientInsideNonAmbient.ts	pass	silent		
+ambientModuleDeclarationWithReservedIdentifierInDottedPath.ts	E	conformance/ambient/ambientModuleDeclarationWithReservedIdentifierInDottedPath.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ambientModuleDeclarationWithReservedIdentifierInDottedPath2.ts	E	conformance/ambient/ambientModuleDeclarationWithReservedIdentifierInDottedPath2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ambientModuleExports.ts	C	compiler/ambientModuleExports.ts	pass	silent		
+ambientModuleWithClassDeclarationWithExtends.ts	C	compiler/ambientModuleWithClassDeclarationWithExtends.ts	pass	silent		
+ambientModuleWithTemplateLiterals.ts	C	compiler/ambientModuleWithTemplateLiterals.ts	pass	silent		
+ambientModules.ts	C	compiler/ambientModules.ts	pass	silent		
+ambientNameRestrictions.ts	C	compiler/ambientNameRestrictions.ts	pass	silent		
+ambientPropertyDeclarationInJs.ts	E	compiler/ambientPropertyDeclarationInJs.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ambientRequireFunction(module=commonjs).ts	C	compiler/ambientRequireFunction.ts	pass	silent		
+ambientRequireFunction(module=preserve).ts	C	compiler/ambientRequireFunction.ts	pass	silent		
+ambientShorthand.ts	C	conformance/ambient/ambientShorthand.ts	pass	silent		
+ambientShorthand_declarationEmit.ts	C	conformance/ambient/ambientShorthand_declarationEmit.ts	pass	silent		
+ambientShorthand_duplicate.ts	C	conformance/ambient/ambientShorthand_duplicate.ts	pass	silent		
+ambientShorthand_merging.ts	C	conformance/ambient/ambientShorthand_merging.ts	pass	silent		
+ambientShorthand_reExport.ts	C	conformance/ambient/ambientShorthand_reExport.ts	pass	silent		
+ambientStatement1.ts	E	compiler/ambientStatement1.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambientWithStatements(alwaysstrict=true).ts	E	compiler/ambientWithStatements.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ambiguousCallsWhereReturnTypesAgree.ts	C	compiler/ambiguousCallsWhereReturnTypesAgree.ts	pass	silent		
+ambiguousGenericAssertion1.ts	E	compiler/ambiguousGenericAssertion1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+ambiguousOverload.ts	E	compiler/ambiguousOverload.ts	fail	silent		no diagnostic where the oracle has a baseline
+ambiguousOverloadResolution.ts	C	compiler/ambiguousOverloadResolution.ts	pass	silent		
+amdDependencyComment1.ts	E	compiler/amdDependencyComment1.ts	fail	silent		no diagnostic where the oracle has a baseline
+amdDependencyCommentName1.ts	E	compiler/amdDependencyCommentName1.ts	fail	silent		no diagnostic where the oracle has a baseline
+amdLikeInputDeclarationEmit.ts	C	compiler/amdLikeInputDeclarationEmit.ts	pass	silent		
+annotatedThisPropertyInitializerDoesntNarrow.ts	C	conformance/salsa/annotatedThisPropertyInitializerDoesntNarrow.ts	pass	silent		
+anonClassDeclarationEmitIsAnon.ts	C	compiler/anonClassDeclarationEmitIsAnon.ts	pass	silent		
+anonterface.ts	C	compiler/anonterface.ts	pass	silent		
+anonymousClassAccessorsDeclarationEmit1.ts	C	conformance/declarationEmit/anonymousClassAccessorsDeclarationEmit1.ts	pass	silent		
+anonymousClassDeclarationDoesntPrintWithReadonly.ts	C	compiler/anonymousClassDeclarationDoesntPrintWithReadonly.ts	pass	silent		
+anonymousClassExpression1.ts	C	compiler/anonymousClassExpression1.ts	pass	silent		
+anonymousClassExpression2.ts	E	compiler/anonymousClassExpression2.ts	fail	silent		no diagnostic where the oracle has a baseline
+anonymousDefaultExportsCommonjs.ts	C	conformance/es6/moduleExportsCommonjs/anonymousDefaultExportsCommonjs.ts	pass	silent		
+anonymousModules.ts	E	compiler/anonymousModules.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+anyAndUnknownHaveFalsyComponents.ts	C	compiler/anyAndUnknownHaveFalsyComponents.ts	pass	silent		
+anyAsConstructor.ts	E	conformance/types/any/anyAsConstructor.ts	fail	silent		no diagnostic where the oracle has a baseline
+anyAsFunctionCall.ts	C	conformance/types/any/anyAsFunctionCall.ts	pass	silent		
+anyAsGenericFunctionCall.ts	E	conformance/types/any/anyAsGenericFunctionCall.ts	fail	silent		no diagnostic where the oracle has a baseline
+anyAsReturnTypeForNewOnCall.ts	C	compiler/anyAsReturnTypeForNewOnCall.ts	pass	silent		
+anyAssignabilityInInheritance.ts	C	conformance/types/typeRelationships/assignmentCompatibility/anyAssignabilityInInheritance.ts	pass	silent		
+anyAssignableToEveryType.ts	E	conformance/types/typeRelationships/assignmentCompatibility/anyAssignableToEveryType.ts	fail	silent		no diagnostic where the oracle has a baseline
+anyAssignableToEveryType2.ts	C	conformance/types/typeRelationships/assignmentCompatibility/anyAssignableToEveryType2.ts	pass	silent		
+anyDeclare.ts	E	compiler/anyDeclare.ts	fail	silent		no diagnostic where the oracle has a baseline
+anyIdenticalToItself.ts	E	compiler/anyIdenticalToItself.ts	fail	silent		no diagnostic where the oracle has a baseline
+anyIndexedAccessArrayNoException.ts	E	compiler/anyIndexedAccessArrayNoException.ts	fail	silent		no diagnostic where the oracle has a baseline
+anyInferenceAnonymousFunctions.ts	E	compiler/anyInferenceAnonymousFunctions.ts	fail	silent		no diagnostic where the oracle has a baseline
+anyIsAssignableToObject.ts	C	compiler/anyIsAssignableToObject.ts	pass	silent		
+anyIsAssignableToVoid.ts	C	compiler/anyIsAssignableToVoid.ts	pass	silent		
+anyMappedTypesError.ts	E	compiler/anyMappedTypesError.ts	fail	silent		no diagnostic where the oracle has a baseline
+anyPlusAny1.ts	C	compiler/anyPlusAny1.ts	pass	silent		
+anyPropertyAccess.ts	C	conformance/types/any/anyPropertyAccess.ts	pass	silent		
+apparentTypeSubtyping.ts	E	conformance/types/typeRelationships/apparentType/apparentTypeSubtyping.ts	fail	silent		no diagnostic where the oracle has a baseline
+apparentTypeSupertype.ts	E	conformance/types/typeRelationships/apparentType/apparentTypeSupertype.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_exportEmpty.ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_exportEmpty.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_importEmpty.ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_importEmpty.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_module(module=commonjs).ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_module(module=es2020).ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_module(module=es2022).ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_module(module=es6).ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_module(module=esnext).ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_module(module=node16).ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_module(module=node18).ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_module(module=node20).ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_module(module=nodenext).ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_module(module=preserve).ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_module.ts	fail	silent		no diagnostic where the oracle has a baseline
+arbitraryModuleNamespaceIdentifiers_syntax.ts	E	conformance/es2022/arbitraryModuleNamespaceIdentifiers/arbitraryModuleNamespaceIdentifiers_syntax.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+argsInScope.ts	C	compiler/argsInScope.ts	pass	silent		
+argumentExpressionContextualTyping.ts	E	conformance/expressions/contextualTyping/argumentExpressionContextualTyping.ts	fail	silent		no diagnostic where the oracle has a baseline
+arguments.ts	E	compiler/arguments.ts	fail	silent		no diagnostic where the oracle has a baseline
+argumentsAsPropertyName.ts	C	compiler/argumentsAsPropertyName.ts	pass	silent		
+argumentsAsPropertyName2.ts	C	compiler/argumentsAsPropertyName2.ts	pass	silent		
+argumentsBindsToFunctionScopeArgumentList(alwaysstrict=true).ts	E	compiler/argumentsBindsToFunctionScopeArgumentList.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+argumentsObjectCreatesRestForJs.ts	E	compiler/argumentsObjectCreatesRestForJs.ts	fail	silent		no diagnostic where the oracle has a baseline
+argumentsObjectIterator01_ES5(target=es2015).ts	C	compiler/argumentsObjectIterator01_ES5.ts	pass	silent		
+argumentsObjectIterator01_ES6.ts	C	compiler/argumentsObjectIterator01_ES6.ts	pass	silent		
+argumentsObjectIterator02_ES5(target=es2015).ts	C	compiler/argumentsObjectIterator02_ES5.ts	pass	silent		
+argumentsObjectIterator02_ES6.ts	C	compiler/argumentsObjectIterator02_ES6.ts	pass	silent		
+argumentsObjectIterator03_ES5(target=es2015).ts	C	compiler/argumentsObjectIterator03_ES5.ts	pass	silent		
+argumentsObjectIterator03_ES6.ts	C	compiler/argumentsObjectIterator03_ES6.ts	pass	silent		
+argumentsPropertyNameInJsMode1.ts	E	compiler/argumentsPropertyNameInJsMode1.ts	fail	silent		no diagnostic where the oracle has a baseline
+argumentsPropertyNameInJsMode2.ts	E	compiler/argumentsPropertyNameInJsMode2.ts	fail	silent		no diagnostic where the oracle has a baseline
+argumentsReferenceInConstructor1_Js.ts	C	compiler/argumentsReferenceInConstructor1_Js.ts	pass	silent		
+argumentsReferenceInConstructor2_Js.ts	C	compiler/argumentsReferenceInConstructor2_Js.ts	pass	silent		
+argumentsReferenceInConstructor3_Js.ts	C	compiler/argumentsReferenceInConstructor3_Js.ts	pass	silent		
+argumentsReferenceInConstructor4_Js.ts	E	compiler/argumentsReferenceInConstructor4_Js.ts	fail	silent		no diagnostic where the oracle has a baseline
+argumentsReferenceInConstructor5_Js.ts	C	compiler/argumentsReferenceInConstructor5_Js.ts	pass	silent		
+argumentsReferenceInConstructor6_Js.ts	C	compiler/argumentsReferenceInConstructor6_Js.ts	pass	silent		
+argumentsReferenceInConstructor7_Js.ts	C	compiler/argumentsReferenceInConstructor7_Js.ts	pass	silent		
+argumentsReferenceInFunction1_Js.ts	E	compiler/argumentsReferenceInFunction1_Js.ts	fail	silent		no diagnostic where the oracle has a baseline
+argumentsReferenceInMethod1_Js.ts	C	compiler/argumentsReferenceInMethod1_Js.ts	pass	silent		
+argumentsReferenceInMethod2_Js.ts	C	compiler/argumentsReferenceInMethod2_Js.ts	pass	silent		
+argumentsReferenceInMethod3_Js.ts	C	compiler/argumentsReferenceInMethod3_Js.ts	pass	silent		
+argumentsReferenceInMethod4_Js.ts	E	compiler/argumentsReferenceInMethod4_Js.ts	fail	silent		no diagnostic where the oracle has a baseline
+argumentsReferenceInMethod5_Js.ts	C	compiler/argumentsReferenceInMethod5_Js.ts	pass	silent		
+argumentsReferenceInMethod6_Js.ts	C	compiler/argumentsReferenceInMethod6_Js.ts	pass	silent		
+argumentsReferenceInMethod7_Js.ts	C	compiler/argumentsReferenceInMethod7_Js.ts	pass	silent		
+argumentsReferenceInObjectLiteral_Js(alwaysstrict=true).ts	E	compiler/argumentsReferenceInObjectLiteral_Js.ts	fail	silent		no diagnostic where the oracle has a baseline
+argumentsSpreadRestIterables(target=esnext).tsx	C	compiler/argumentsSpreadRestIterables.tsx	pass	silent		
+argumentsUsedInClassFieldInitializerOrStaticInitializationBlock.ts	E	compiler/argumentsUsedInClassFieldInitializerOrStaticInitializationBlock.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+argumentsUsedInObjectLiteralProperty.ts	C	compiler/argumentsUsedInObjectLiteralProperty.ts	pass	silent		
+arithAssignTyping.ts	E	compiler/arithAssignTyping.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOnInvalidTypes.ts	E	compiler/arithmeticOnInvalidTypes.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOnInvalidTypes2.ts	E	compiler/arithmeticOnInvalidTypes2.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOperatorWithAnyAndNumber.ts	E	conformance/expressions/binaryOperators/arithmeticOperator/arithmeticOperatorWithAnyAndNumber.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOperatorWithEnum.ts	E	conformance/expressions/binaryOperators/arithmeticOperator/arithmeticOperatorWithEnum.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOperatorWithEnumUnion.ts	E	conformance/expressions/binaryOperators/arithmeticOperator/arithmeticOperatorWithEnumUnion.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOperatorWithInvalidOperands.ts	E	conformance/expressions/binaryOperators/arithmeticOperator/arithmeticOperatorWithInvalidOperands.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOperatorWithNullValueAndInvalidOperands.ts	E	conformance/expressions/binaryOperators/arithmeticOperator/arithmeticOperatorWithNullValueAndInvalidOperands.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOperatorWithNullValueAndValidOperands.ts	E	conformance/expressions/binaryOperators/arithmeticOperator/arithmeticOperatorWithNullValueAndValidOperands.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOperatorWithOnlyNullValueOrUndefinedValue.ts	E	conformance/expressions/binaryOperators/arithmeticOperator/arithmeticOperatorWithOnlyNullValueOrUndefinedValue.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOperatorWithTypeParameter.ts	E	conformance/expressions/binaryOperators/arithmeticOperator/arithmeticOperatorWithTypeParameter.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOperatorWithUndefinedValueAndInvalidOperands.ts	E	conformance/expressions/binaryOperators/arithmeticOperator/arithmeticOperatorWithUndefinedValueAndInvalidOperands.ts	fail	silent		no diagnostic where the oracle has a baseline
+arithmeticOperatorWithUndefinedValueAndValidOperands.ts	E	conformance/expressions/binaryOperators/arithmeticOperator/arithmeticOperatorWithUndefinedValueAndValidOperands.ts	fail	silent		no diagnostic where the oracle has a baseline
+arityAndOrderCompatibility01.ts	E	conformance/types/tuple/arityAndOrderCompatibility01.ts	fail	silent		no diagnostic where the oracle has a baseline
+arityErrorRelatedSpanBindingPattern.ts	E	compiler/arityErrorRelatedSpanBindingPattern.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayAssignmentPatternWithAny.ts	C	conformance/es6/destructuring/arrayAssignmentPatternWithAny.ts	pass	silent		
+arrayAssignmentTest1.ts	E	compiler/arrayAssignmentTest1.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayAssignmentTest2.ts	E	compiler/arrayAssignmentTest2.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayAssignmentTest3.ts	E	compiler/arrayAssignmentTest3.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayAssignmentTest4.ts	E	compiler/arrayAssignmentTest4.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayAssignmentTest5.ts	E	compiler/arrayAssignmentTest5.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayAssignmentTest6.ts	E	compiler/arrayAssignmentTest6.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayAugment.ts	C	compiler/arrayAugment.ts	pass	silent		
+arrayBestCommonTypes.ts	E	compiler/arrayBestCommonTypes.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayBindingPatternOmittedExpressions.ts	E	compiler/arrayBindingPatternOmittedExpressions.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayBufferIsViewNarrowsType.ts	E	compiler/arrayBufferIsViewNarrowsType.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayCast.ts	E	compiler/arrayCast.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayConcat2.ts	C	compiler/arrayConcat2.ts	pass	silent		
+arrayConcat3.ts	C	compiler/arrayConcat3.ts	pass	silent		
+arrayConcatMap.ts	E	compiler/arrayConcatMap.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayConstructors1.ts	C	compiler/arrayConstructors1.ts	pass	silent		
+arrayDestructuringInSwitch1.ts	C	compiler/arrayDestructuringInSwitch1.ts	pass	silent		
+arrayDestructuringInSwitch2.ts	E	compiler/arrayDestructuringInSwitch2.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayEvery.ts	C	compiler/arrayEvery.ts	pass	silent		
+arrayFakeFlatNoCrashInferenceDeclarations.ts	E	compiler/arrayFakeFlatNoCrashInferenceDeclarations.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayFilter.ts	C	compiler/arrayFilter.ts	pass	silent		
+arrayFind.ts	C	compiler/arrayFind.ts	pass	silent		
+arrayFlatMap.ts	C	compiler/arrayFlatMap.ts	pass	silent		
+arrayFlatNoCrashInference.ts	C	compiler/arrayFlatNoCrashInference.ts	pass	silent		
+arrayFlatNoCrashInferenceDeclarations.ts	C	compiler/arrayFlatNoCrashInferenceDeclarations.ts	pass	silent		
+arrayFrom.ts	E	compiler/arrayFrom.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayFromAsync.ts	C	compiler/arrayFromAsync.ts	pass	silent		
+arrayIndexWithArrayFails.ts	E	compiler/arrayIndexWithArrayFails.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayIterationLibES5TargetDifferent(nolib=false,target=es2015).ts	E	compiler/arrayIterationLibES5TargetDifferent.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayIterationLibES5TargetDifferent(nolib=false,target=esnext).ts	E	compiler/arrayIterationLibES5TargetDifferent.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayIterationLibES5TargetDifferent(nolib=true,target=es2015).ts	E	compiler/arrayIterationLibES5TargetDifferent.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayIterationLibES5TargetDifferent(nolib=true,target=esnext).ts	E	compiler/arrayIterationLibES5TargetDifferent.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayLiteral.ts	C	conformance/types/specifyingTypes/typeLiterals/arrayLiteral.ts	pass	silent		
+arrayLiteral1.ts	C	compiler/arrayLiteral1.ts	pass	silent		
+arrayLiteral2.ts	C	compiler/arrayLiteral2.ts	pass	silent		
+arrayLiteralAndArrayConstructorEquivalence1.ts	E	compiler/arrayLiteralAndArrayConstructorEquivalence1.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayLiteralComments.ts	C	compiler/arrayLiteralComments.ts	pass	silent		
+arrayLiteralContextualType.ts	C	compiler/arrayLiteralContextualType.ts	pass	silent		
+arrayLiteralExpressionContextualTyping.ts	E	conformance/expressions/contextualTyping/arrayLiteralExpressionContextualTyping.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayLiteralInNonVarArgParameter.ts	C	compiler/arrayLiteralInNonVarArgParameter.ts	pass	silent		
+arrayLiteralInference.ts	C	conformance/expressions/arrayLiterals/arrayLiteralInference.ts	pass	silent		
+arrayLiteralSpread.ts	C	conformance/es6/spread/arrayLiteralSpread.ts	pass	silent		
+arrayLiteralSpreadES5iterable(target=es2015).ts	E	conformance/es6/spread/arrayLiteralSpreadES5iterable.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayLiteralTypeInference.ts	E	compiler/arrayLiteralTypeInference.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayLiteralWidened.ts	C	conformance/types/typeRelationships/widenedTypes/arrayLiteralWidened.ts	pass	silent		
+arrayLiteralWithMultipleBestCommonTypes.ts	E	conformance/types/typeRelationships/bestCommonType/arrayLiteralWithMultipleBestCommonTypes.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayLiterals.ts	E	conformance/expressions/arrayLiterals/arrayLiterals.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayLiterals2ES5.ts	C	conformance/expressions/arrayLiterals/arrayLiterals2ES5.ts	pass	silent		
+arrayLiterals2ES6.ts	C	conformance/expressions/arrayLiterals/arrayLiterals2ES6.ts	pass	silent		
+arrayLiterals3.ts	E	conformance/expressions/arrayLiterals/arrayLiterals3.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayLiteralsWithRecursiveGenerics.ts	C	conformance/types/typeRelationships/recursiveTypes/arrayLiteralsWithRecursiveGenerics.ts	pass	silent		
+arrayOfExportedClass.ts	E	compiler/arrayOfExportedClass.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayOfFunctionTypes3.ts	E	conformance/types/specifyingTypes/typeLiterals/arrayOfFunctionTypes3.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayOfSubtypeIsAssignableToReadonlyArray.ts	E	compiler/arrayOfSubtypeIsAssignableToReadonlyArray.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayReferenceWithoutTypeArgs.ts	E	compiler/arrayReferenceWithoutTypeArgs.ts	fail	silent		no diagnostic where the oracle has a baseline
+arraySigChecking.ts	E	compiler/arraySigChecking.ts	fail	silent		no diagnostic where the oracle has a baseline
+arraySlice.ts	E	compiler/arraySlice.ts	fail	silent		no diagnostic where the oracle has a baseline
+arraySpreadImportHelpers(target=es2015).ts	C	conformance/es6/spread/arraySpreadImportHelpers.ts	pass	silent		
+arraySpreadInCall.ts	E	conformance/es6/spread/arraySpreadInCall.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayToLocaleStringES2015.ts	C	compiler/arrayToLocaleStringES2015.ts	pass	silent		
+arrayToLocaleStringES2020.ts	C	compiler/arrayToLocaleStringES2020.ts	pass	silent		
+arrayToLocaleStringES5(target=es2015).ts	C	compiler/arrayToLocaleStringES5.ts	pass	silent		
+arrayTypeInSignatureOfInterfaceAndClass.ts	C	compiler/arrayTypeInSignatureOfInterfaceAndClass.ts	pass	silent		
+arrayTypeOfFunctionTypes.ts	E	conformance/types/specifyingTypes/typeLiterals/arrayTypeOfFunctionTypes.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayTypeOfFunctionTypes2.ts	E	conformance/types/specifyingTypes/typeLiterals/arrayTypeOfFunctionTypes2.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrayTypeOfTypeOf.ts	C	conformance/types/specifyingTypes/typeLiterals/arrayTypeOfTypeOf.ts	pass	silent		
+arrayconcat.ts	E	compiler/arrayconcat.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrowExpressionBodyJSDoc.ts	E	compiler/arrowExpressionBodyJSDoc.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrowExpressionJs.ts	C	compiler/arrowExpressionJs.ts	pass	silent		
+arrowFunctionContexts(alwaysstrict=true).ts	E	conformance/expressions/functions/arrowFunctionContexts.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+arrowFunctionErrorSpan.ts	E	compiler/arrowFunctionErrorSpan.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+arrowFunctionExpressions.ts	C	conformance/expressions/functions/arrowFunctionExpressions.ts	pass	silent		
+arrowFunctionInConstructorArgument1.ts	E	compiler/arrowFunctionInConstructorArgument1.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrowFunctionInExpressionStatement1.ts	C	compiler/arrowFunctionInExpressionStatement1.ts	pass	silent		
+arrowFunctionInExpressionStatement2.ts	C	compiler/arrowFunctionInExpressionStatement2.ts	pass	silent		
+arrowFunctionJSDocAnnotation.ts	C	compiler/arrowFunctionJSDocAnnotation.ts	pass	silent		
+arrowFunctionMissingCurlyWithSemicolon.ts	E	compiler/arrowFunctionMissingCurlyWithSemicolon.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+arrowFunctionParsingDoesNotConfuseParenthesizedObjectForArrowHead.ts	C	compiler/arrowFunctionParsingDoesNotConfuseParenthesizedObjectForArrowHead.ts	pass	silent		
+arrowFunctionParsingGenericInObject.ts	C	compiler/arrowFunctionParsingGenericInObject.ts	pass	silent		
+arrowFunctionWithObjectLiteralBody1.ts	E	compiler/arrowFunctionWithObjectLiteralBody1.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrowFunctionWithObjectLiteralBody2.ts	E	compiler/arrowFunctionWithObjectLiteralBody2.ts	fail	silent		no diagnostic where the oracle has a baseline
+arrowFunctionWithObjectLiteralBody3.ts	C	compiler/arrowFunctionWithObjectLiteralBody3.ts	pass	silent		
+arrowFunctionWithObjectLiteralBody4.ts	C	compiler/arrowFunctionWithObjectLiteralBody4.ts	pass	silent		
+arrowFunctionWithObjectLiteralBody5.ts	C	compiler/arrowFunctionWithObjectLiteralBody5.ts	pass	silent		
+arrowFunctionWithObjectLiteralBody6.ts	C	compiler/arrowFunctionWithObjectLiteralBody6.ts	pass	silent		
+arrowFunctionWithParameterNameAsync_es2017(target=es2015).ts	C	conformance/async/es2017/asyncArrowFunction/arrowFunctionWithParameterNameAsync_es2017.ts	pass	silent		
+arrowFunctionWithParameterNameAsync_es5(target=es2015).ts	C	conformance/async/es5/asyncArrowFunction/arrowFunctionWithParameterNameAsync_es5.ts	pass	silent		
+arrowFunctionWithParameterNameAsync_es6(target=es2015).ts	C	conformance/async/es6/asyncArrowFunction/arrowFunctionWithParameterNameAsync_es6.ts	pass	silent		
+arrowFunctionsMissingTokens.ts	E	compiler/arrowFunctionsMissingTokens.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asOpEmitParens.ts	C	conformance/expressions/asOperator/asOpEmitParens.ts	pass	silent		
+asOperator1.ts	E	conformance/expressions/asOperator/asOperator1.ts	fail	silent		no diagnostic where the oracle has a baseline
+asOperator2.ts	E	conformance/expressions/asOperator/asOperator2.ts	fail	silent		no diagnostic where the oracle has a baseline
+asOperator3.ts	C	conformance/expressions/asOperator/asOperator3.ts	pass	silent		
+asOperator4.ts	C	conformance/expressions/asOperator/asOperator4.ts	pass	silent		
+asOperatorASI.ts	C	conformance/expressions/asOperator/asOperatorASI.ts	pass	silent		
+asOperatorAmbiguity.ts	E	conformance/expressions/asOperator/asOperatorAmbiguity.ts	fail	silent		no diagnostic where the oracle has a baseline
+asOperatorContextualType.ts	E	conformance/expressions/asOperator/asOperatorContextualType.ts	fail	silent		no diagnostic where the oracle has a baseline
+asOperatorNames.ts	E	conformance/expressions/asOperator/asOperatorNames.ts	fail	silent		no diagnostic where the oracle has a baseline
+asiAbstract.ts	E	compiler/asiAbstract.ts	fail	silent		no diagnostic where the oracle has a baseline
+asiAmbientFunctionDeclaration.ts	E	compiler/asiAmbientFunctionDeclaration.ts	fail	silent		no diagnostic where the oracle has a baseline
+asiArith.ts	C	compiler/asiArith.ts	pass	silent		
+asiBreak.ts	C	compiler/asiBreak.ts	pass	silent		
+asiContinue.ts	C	compiler/asiContinue.ts	pass	silent		
+asiInES6Classes.ts	C	compiler/asiInES6Classes.ts	pass	silent		
+asiPreventsParsingAsAmbientExternalModule01.ts	E	conformance/externalModules/asiPreventsParsingAsAmbientExternalModule01.ts	fail	silent		no diagnostic where the oracle has a baseline
+asiPreventsParsingAsAmbientExternalModule02.ts	C	conformance/externalModules/asiPreventsParsingAsAmbientExternalModule02.ts	pass	silent		
+asiPreventsParsingAsInterface01.ts	E	conformance/interfaces/interfaceDeclarations/asiPreventsParsingAsInterface01.ts	fail	silent		no diagnostic where the oracle has a baseline
+asiPreventsParsingAsInterface02.ts	E	conformance/interfaces/interfaceDeclarations/asiPreventsParsingAsInterface02.ts	fail	silent		no diagnostic where the oracle has a baseline
+asiPreventsParsingAsInterface03.ts	E	conformance/interfaces/interfaceDeclarations/asiPreventsParsingAsInterface03.ts	fail	silent		no diagnostic where the oracle has a baseline
+asiPreventsParsingAsInterface04.ts	E	conformance/interfaces/interfaceDeclarations/asiPreventsParsingAsInterface04.ts	fail	silent		no diagnostic where the oracle has a baseline
+asiPreventsParsingAsInterface05.ts	E	conformance/interfaces/interfaceDeclarations/asiPreventsParsingAsInterface05.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asiPreventsParsingAsNamespace01.ts	E	conformance/internalModules/moduleDeclarations/asiPreventsParsingAsNamespace01.ts	fail	silent		no diagnostic where the oracle has a baseline
+asiPreventsParsingAsNamespace02.ts	E	conformance/internalModules/moduleDeclarations/asiPreventsParsingAsNamespace02.ts	fail	silent		no diagnostic where the oracle has a baseline
+asiPreventsParsingAsNamespace03.ts	C	conformance/internalModules/moduleDeclarations/asiPreventsParsingAsNamespace03.ts	pass	silent		
+asiPreventsParsingAsNamespace04.ts	C	conformance/internalModules/moduleDeclarations/asiPreventsParsingAsNamespace04.ts	pass	silent		
+asiPreventsParsingAsNamespace05.ts	C	conformance/internalModules/moduleDeclarations/asiPreventsParsingAsNamespace05.ts	pass	silent		
+asiPreventsParsingAsTypeAlias01.ts	C	conformance/types/typeAliases/asiPreventsParsingAsTypeAlias01.ts	pass	silent		
+asiPreventsParsingAsTypeAlias02.ts	C	conformance/types/typeAliases/asiPreventsParsingAsTypeAlias02.ts	pass	silent		
+asiPublicPrivateProtected(alwaysstrict=true).ts	E	compiler/asiPublicPrivateProtected.ts	fail	silent		no diagnostic where the oracle has a baseline
+asiReturn.ts	E	compiler/asiReturn.ts	fail	silent		no diagnostic where the oracle has a baseline
+assertInWrapSomeTypeParameter.ts	E	compiler/assertInWrapSomeTypeParameter.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+assertionFunctionWildcardImport1.ts	C	compiler/assertionFunctionWildcardImport1.ts	pass	silent		
+assertionFunctionWildcardImport2.ts	C	compiler/assertionFunctionWildcardImport2.ts	pass	silent		
+assertionFunctionsCanNarrowByDiscriminant.ts	C	compiler/assertionFunctionsCanNarrowByDiscriminant.ts	pass	silent		
+assertionTypePredicates1.ts	E	conformance/controlFlow/assertionTypePredicates1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+assertionTypePredicates2.ts	E	conformance/controlFlow/assertionTypePredicates2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assertionsAndNonReturningFunctions.ts	E	conformance/jsdoc/assertionsAndNonReturningFunctions.ts	fail	silent		no diagnostic where the oracle has a baseline
+assign1.ts	C	compiler/assign1.ts	pass	silent		
+assignAnyToEveryType.ts	E	conformance/types/any/assignAnyToEveryType.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignEveryTypeToAny.ts	E	conformance/types/any/assignEveryTypeToAny.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignFromBooleanInterface.ts	E	conformance/types/primitives/boolean/assignFromBooleanInterface.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignFromBooleanInterface2.ts	E	conformance/types/primitives/boolean/assignFromBooleanInterface2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignFromNumberInterface.ts	E	conformance/types/primitives/number/assignFromNumberInterface.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignFromNumberInterface2.ts	E	conformance/types/primitives/number/assignFromNumberInterface2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignFromStringInterface.ts	E	conformance/types/primitives/string/assignFromStringInterface.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignFromStringInterface2.ts	E	conformance/types/primitives/string/assignFromStringInterface2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignLambdaToNominalSubtypeOfFunction.ts	E	compiler/assignLambdaToNominalSubtypeOfFunction.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignObjectToNonPrimitive.ts	C	conformance/types/nonPrimitive/assignObjectToNonPrimitive.ts	pass	silent		
+assignParameterPropertyToPropertyDeclarationES2022.ts	E	conformance/classes/propertyMemberDeclarations/assignParameterPropertyToPropertyDeclarationES2022.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignParameterPropertyToPropertyDeclarationESNext.ts	E	conformance/classes/propertyMemberDeclarations/assignParameterPropertyToPropertyDeclarationESNext.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignSharedArrayBufferToArrayBuffer(target=es2015).ts	E	conformance/es2017/assignSharedArrayBufferToArrayBuffer.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignToEnum.ts	E	compiler/assignToEnum.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignToExistingClass.ts	E	compiler/assignToExistingClass.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignToFn.ts	E	compiler/assignToFn.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignToInvalidLHS.ts	E	compiler/assignToInvalidLHS.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+assignToModule.ts	E	compiler/assignToModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignToObjectTypeWithPrototypeProperty.ts	C	compiler/assignToObjectTypeWithPrototypeProperty.ts	pass	silent		
+assignToPrototype1.ts	C	compiler/assignToPrototype1.ts	pass	silent		
+assigningFromObjectToAnythingElse.ts	E	compiler/assigningFromObjectToAnythingElse.ts	fail	silent		no diagnostic where the oracle has a baseline
+assigningFunctionToTupleIssuesError.ts	E	compiler/assigningFunctionToTupleIssuesError.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompat1.ts	E	compiler/assignmentCompat1.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatBetweenTupleAndArray.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatBetweenTupleAndArray.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatBug2.ts	E	compiler/assignmentCompatBug2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatBug3.ts	C	compiler/assignmentCompatBug3.ts	pass	silent		
+assignmentCompatBug5.ts	E	compiler/assignmentCompatBug5.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatForEnums.ts	C	compiler/assignmentCompatForEnums.ts	pass	silent		
+assignmentCompatFunctionsWithOptionalArgs.ts	E	compiler/assignmentCompatFunctionsWithOptionalArgs.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatInterfaceWithStringIndexSignature.ts	E	compiler/assignmentCompatInterfaceWithStringIndexSignature.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatOnNew.ts	C	compiler/assignmentCompatOnNew.ts	pass	silent		
+assignmentCompatWithCallSignatures.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithCallSignatures.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithCallSignatures2.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithCallSignatures2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithCallSignatures3.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithCallSignatures3.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithCallSignatures4.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithCallSignatures4.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithCallSignatures5.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithCallSignatures5.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithCallSignatures6.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithCallSignatures6.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithCallSignaturesWithOptionalParameters.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithCallSignaturesWithOptionalParameters.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithCallSignaturesWithRestParameters.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithCallSignaturesWithRestParameters.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithConstructSignatures.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithConstructSignatures.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithConstructSignatures2.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithConstructSignatures2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithConstructSignatures3.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithConstructSignatures3.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithConstructSignatures4.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithConstructSignatures4.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithConstructSignatures5.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithConstructSignatures5.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithConstructSignatures6.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithConstructSignatures6.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithConstructSignaturesWithOptionalParameters.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithConstructSignaturesWithOptionalParameters.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithDiscriminatedUnion.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithDiscriminatedUnion.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithEnumIndexer.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithEnumIndexer.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithGenericCallSignatures.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithGenericCallSignatures.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithGenericCallSignatures2.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithGenericCallSignatures2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithGenericCallSignatures3.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithGenericCallSignatures3.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithGenericCallSignatures4.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithGenericCallSignatures4.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithGenericCallSignaturesWithOptionalParameters.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithGenericCallSignaturesWithOptionalParameters.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithNumericIndexer.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithNumericIndexer.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithNumericIndexer2.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithNumericIndexer2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithNumericIndexer3.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithNumericIndexer3.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithObjectMembers.ts	C	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithObjectMembers.ts	pass	silent		
+assignmentCompatWithObjectMembers2.ts	C	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithObjectMembers2.ts	pass	silent		
+assignmentCompatWithObjectMembers3.ts	C	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithObjectMembers3.ts	pass	silent		
+assignmentCompatWithObjectMembers4.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithObjectMembers4.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithObjectMembers5.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithObjectMembers5.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithObjectMembersAccessibility.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithObjectMembersAccessibility.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithObjectMembersNumericNames.ts	C	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithObjectMembersNumericNames.ts	pass	silent		
+assignmentCompatWithObjectMembersOptionality.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithObjectMembersOptionality.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithObjectMembersOptionality2.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithObjectMembersOptionality2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithObjectMembersStringNumericNames.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithObjectMembersStringNumericNames.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithOverloads.ts	E	compiler/assignmentCompatWithOverloads.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithStringIndexer.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithStringIndexer.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithStringIndexer2.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithStringIndexer2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithStringIndexer3.ts	E	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithStringIndexer3.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatWithWithGenericConstructSignatures.ts	C	conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithWithGenericConstructSignatures.ts	pass	silent		
+assignmentCompatability1.ts	C	compiler/assignmentCompatability1.ts	pass	silent		
+assignmentCompatability10.ts	C	compiler/assignmentCompatability10.ts	pass	silent		
+assignmentCompatability11.ts	E	compiler/assignmentCompatability11.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability12.ts	E	compiler/assignmentCompatability12.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability13.ts	E	compiler/assignmentCompatability13.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability14.ts	E	compiler/assignmentCompatability14.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability15.ts	E	compiler/assignmentCompatability15.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability16.ts	E	compiler/assignmentCompatability16.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability17.ts	E	compiler/assignmentCompatability17.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability18.ts	E	compiler/assignmentCompatability18.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability19.ts	E	compiler/assignmentCompatability19.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability2.ts	E	compiler/assignmentCompatability2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability20.ts	E	compiler/assignmentCompatability20.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability21.ts	E	compiler/assignmentCompatability21.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability22.ts	E	compiler/assignmentCompatability22.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability23.ts	E	compiler/assignmentCompatability23.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability24.ts	E	compiler/assignmentCompatability24.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability25.ts	E	compiler/assignmentCompatability25.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability26.ts	E	compiler/assignmentCompatability26.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability27.ts	E	compiler/assignmentCompatability27.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability28.ts	E	compiler/assignmentCompatability28.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability29.ts	E	compiler/assignmentCompatability29.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability3.ts	C	compiler/assignmentCompatability3.ts	pass	silent		
+assignmentCompatability30.ts	E	compiler/assignmentCompatability30.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability31.ts	E	compiler/assignmentCompatability31.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability32.ts	E	compiler/assignmentCompatability32.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability33.ts	E	compiler/assignmentCompatability33.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability34.ts	E	compiler/assignmentCompatability34.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability35.ts	E	compiler/assignmentCompatability35.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability36.ts	E	compiler/assignmentCompatability36.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability37.ts	E	compiler/assignmentCompatability37.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability38.ts	E	compiler/assignmentCompatability38.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability39.ts	E	compiler/assignmentCompatability39.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability4.ts	E	compiler/assignmentCompatability4.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability40.ts	E	compiler/assignmentCompatability40.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability41.ts	E	compiler/assignmentCompatability41.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability42.ts	E	compiler/assignmentCompatability42.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability43.ts	E	compiler/assignmentCompatability43.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability44.ts	E	compiler/assignmentCompatability44.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability45.ts	E	compiler/assignmentCompatability45.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability46.ts	E	compiler/assignmentCompatability46.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability5.ts	C	compiler/assignmentCompatability5.ts	pass	silent		
+assignmentCompatability6.ts	C	compiler/assignmentCompatability6.ts	pass	silent		
+assignmentCompatability7.ts	C	compiler/assignmentCompatability7.ts	pass	silent		
+assignmentCompatability8.ts	C	compiler/assignmentCompatability8.ts	pass	silent		
+assignmentCompatability9.ts	C	compiler/assignmentCompatability9.ts	pass	silent		
+assignmentCompatability_checking-apply-member-off-of-function-interface.ts	E	compiler/assignmentCompatability_checking-apply-member-off-of-function-interface.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatability_checking-call-member-off-of-function-interface.ts	E	compiler/assignmentCompatability_checking-call-member-off-of-function-interface.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentCompatibilityForConstrainedTypeParameters.ts	E	compiler/assignmentCompatibilityForConstrainedTypeParameters.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentGenericLookupTypeNarrowing.ts	C	conformance/expressions/assignmentOperator/assignmentGenericLookupTypeNarrowing.ts	pass	silent		
+assignmentIndexedToPrimitives.ts	E	compiler/assignmentIndexedToPrimitives.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentLHSIsReference.ts	E	conformance/expressions/assignmentOperator/assignmentLHSIsReference.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentLHSIsValue.ts	E	conformance/expressions/assignmentOperator/assignmentLHSIsValue.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+assignmentNestedInLiterals.ts	C	compiler/assignmentNestedInLiterals.ts	pass	silent		
+assignmentNonObjectTypeConstraints.ts	C	compiler/assignmentNonObjectTypeConstraints.ts	pass	silent		
+assignmentRestElementWithErrorSourceType.ts	E	compiler/assignmentRestElementWithErrorSourceType.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentStricterConstraints.ts	E	compiler/assignmentStricterConstraints.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentToAnyArrayRestParameters.ts	E	compiler/assignmentToAnyArrayRestParameters.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentToConditionalBrandedStringTemplateOrMapping.ts	C	compiler/assignmentToConditionalBrandedStringTemplateOrMapping.ts	pass	silent		
+assignmentToExpandingArrayType.ts	C	compiler/assignmentToExpandingArrayType.ts	pass	silent		
+assignmentToFunction.ts	E	compiler/assignmentToFunction.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentToInstantiationExpression.ts	E	compiler/assignmentToInstantiationExpression.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentToObject.ts	E	compiler/assignmentToObject.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentToObjectAndFunction.ts	E	compiler/assignmentToObjectAndFunction.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentToParenthesizedExpression1.ts	E	compiler/assignmentToParenthesizedExpression1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+assignmentToParenthesizedIdentifiers.ts	E	conformance/expressions/valuesAndReferences/assignmentToParenthesizedIdentifiers.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentToReferenceTypes.ts	E	compiler/assignmentToReferenceTypes.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentToVoidZero1.ts	C	conformance/salsa/assignmentToVoidZero1.ts	pass	silent		
+assignmentToVoidZero2.ts	E	conformance/salsa/assignmentToVoidZero2.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignmentTypeNarrowing.ts	E	conformance/expressions/assignmentOperator/assignmentTypeNarrowing.ts	fail	silent		no diagnostic where the oracle has a baseline
+assignments.ts	E	conformance/expressions/valuesAndReferences/assignments.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncAliasReturnType_es5(target=es2015).ts	C	conformance/async/es5/asyncAliasReturnType_es5.ts	pass	silent		
+asyncAliasReturnType_es6.ts	C	conformance/async/es6/asyncAliasReturnType_es6.ts	pass	silent		
+asyncArrowFunction10_es2017.ts	E	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction10_es2017.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncArrowFunction10_es5(target=es2015).ts	E	conformance/async/es5/asyncArrowFunction/asyncArrowFunction10_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncArrowFunction10_es6.ts	E	conformance/async/es6/asyncArrowFunction/asyncArrowFunction10_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncArrowFunction11_es5(target=es2015).ts	E	conformance/async/es5/asyncArrowFunction/asyncArrowFunction11_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncArrowFunction1_es2017.ts	C	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction1_es2017.ts	pass	silent		
+asyncArrowFunction1_es5(target=es2015).ts	C	conformance/async/es5/asyncArrowFunction/asyncArrowFunction1_es5.ts	pass	silent		
+asyncArrowFunction1_es6.ts	C	conformance/async/es6/asyncArrowFunction/asyncArrowFunction1_es6.ts	pass	silent		
+asyncArrowFunction2_es2017.ts	C	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction2_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction2_es5(target=es2015).ts	C	conformance/async/es5/asyncArrowFunction/asyncArrowFunction2_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction2_es6.ts	C	conformance/async/es6/asyncArrowFunction/asyncArrowFunction2_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction3_es2017.ts	E	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction3_es2017.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncArrowFunction3_es5(target=es2015).ts	E	conformance/async/es5/asyncArrowFunction/asyncArrowFunction3_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncArrowFunction3_es6.ts	E	conformance/async/es6/asyncArrowFunction/asyncArrowFunction3_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncArrowFunction4_es2017.ts	C	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction4_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction4_es5(target=es2015).ts	C	conformance/async/es5/asyncArrowFunction/asyncArrowFunction4_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction4_es6.ts	C	conformance/async/es6/asyncArrowFunction/asyncArrowFunction4_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction5_es2017.ts	E	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction5_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction5_es5(target=es2015).ts	E	conformance/async/es5/asyncArrowFunction/asyncArrowFunction5_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction5_es6.ts	E	conformance/async/es6/asyncArrowFunction/asyncArrowFunction5_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction6_es2017.ts	E	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction6_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction6_es5(target=es2015).ts	E	conformance/async/es5/asyncArrowFunction/asyncArrowFunction6_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction6_es6.ts	E	conformance/async/es6/asyncArrowFunction/asyncArrowFunction6_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction7_es2017.ts	E	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction7_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction7_es5(target=es2015).ts	E	conformance/async/es5/asyncArrowFunction/asyncArrowFunction7_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction7_es6.ts	E	conformance/async/es6/asyncArrowFunction/asyncArrowFunction7_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction8_es2017.ts	E	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction8_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction8_es5(target=es2015).ts	E	conformance/async/es5/asyncArrowFunction/asyncArrowFunction8_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction8_es6.ts	E	conformance/async/es6/asyncArrowFunction/asyncArrowFunction8_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction9_es2017.ts	E	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction9_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction9_es5(target=es2015).ts	E	conformance/async/es5/asyncArrowFunction/asyncArrowFunction9_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunction9_es6.ts	E	conformance/async/es6/asyncArrowFunction/asyncArrowFunction9_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncArrowFunctionCapturesArguments_es2017.ts	E	conformance/async/es2017/asyncArrowFunction/asyncArrowFunctionCapturesArguments_es2017.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncArrowFunctionCapturesArguments_es5(target=es2015).ts	E	conformance/async/es5/asyncArrowFunction/asyncArrowFunctionCapturesArguments_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncArrowFunctionCapturesArguments_es6.ts	E	conformance/async/es6/asyncArrowFunction/asyncArrowFunctionCapturesArguments_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncArrowFunctionCapturesThis_es2017.ts	C	conformance/async/es2017/asyncArrowFunction/asyncArrowFunctionCapturesThis_es2017.ts	pass	silent		
+asyncArrowFunctionCapturesThis_es5(target=es2015).ts	C	conformance/async/es5/asyncArrowFunction/asyncArrowFunctionCapturesThis_es5.ts	pass	silent		
+asyncArrowFunctionCapturesThis_es6.ts	C	conformance/async/es6/asyncArrowFunction/asyncArrowFunctionCapturesThis_es6.ts	pass	silent		
+asyncArrowFunction_allowJs.ts	E	conformance/async/es2017/asyncArrowFunction/asyncArrowFunction_allowJs.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncArrowInClassES5(target=es2015).ts	C	compiler/asyncArrowInClassES5.ts	pass	silent		
+asyncAwaitIsolatedModules_es2017.ts	E	conformance/async/es2017/asyncAwaitIsolatedModules_es2017.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncAwaitIsolatedModules_es5(target=es2015).ts	E	conformance/async/es5/asyncAwaitIsolatedModules_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncAwaitIsolatedModules_es6.ts	E	conformance/async/es6/asyncAwaitIsolatedModules_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncAwaitNestedClasses_es5(target=es2015).ts	E	conformance/async/es5/asyncAwaitNestedClasses_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncAwaitWithCapturedBlockScopeVar(target=es2015).ts	E	compiler/asyncAwaitWithCapturedBlockScopeVar.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncAwait_es2017.ts	C	conformance/async/es2017/asyncAwait_es2017.ts	pass	silent		
+asyncAwait_es5(target=es2015).ts	C	conformance/async/es5/asyncAwait_es5.ts	pass	silent		
+asyncAwait_es6.ts	C	conformance/async/es6/asyncAwait_es6.ts	pass	silent		
+asyncClass_es5(target=es2015).ts	E	conformance/async/es5/asyncClass_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncClass_es6.ts	E	conformance/async/es6/asyncClass_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncConstructor_es5(target=es2015).ts	E	conformance/async/es5/asyncConstructor_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncConstructor_es6.ts	E	conformance/async/es6/asyncConstructor_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncDeclare_es5(target=es2015).ts	E	conformance/async/es5/asyncDeclare_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncDeclare_es6.ts	E	conformance/async/es6/asyncDeclare_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncEnum_es5(target=es2015).ts	E	conformance/async/es5/asyncEnum_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncEnum_es6.ts	E	conformance/async/es6/asyncEnum_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionContextuallyTypedReturns.ts	C	compiler/asyncFunctionContextuallyTypedReturns.ts	pass	silent		
+asyncFunctionDeclaration10_es2017.ts	E	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration10_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration10_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration10_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration10_es6.ts	E	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration10_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration11_es2017.ts	C	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration11_es2017.ts	pass	silent		
+asyncFunctionDeclaration11_es5(target=es2015).ts	C	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration11_es5.ts	pass	silent		
+asyncFunctionDeclaration11_es6.ts	C	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration11_es6.ts	pass	silent		
+asyncFunctionDeclaration12_es2017.ts	E	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration12_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration12_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration12_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration12_es6.ts	E	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration12_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration13_es2017.ts	E	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration13_es2017.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionDeclaration13_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration13_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionDeclaration13_es6.ts	E	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration13_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionDeclaration14_es2017.ts	C	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration14_es2017.ts	pass	silent		
+asyncFunctionDeclaration14_es5(target=es2015).ts	C	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration14_es5.ts	pass	silent		
+asyncFunctionDeclaration14_es6.ts	C	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration14_es6.ts	pass	silent		
+asyncFunctionDeclaration15_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration15_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionDeclaration15_es6.ts	E	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration15_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionDeclaration16_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration16_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionDeclaration1_es2017.ts	C	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration1_es2017.ts	pass	silent		
+asyncFunctionDeclaration1_es5(target=es2015).ts	C	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration1_es5.ts	pass	silent		
+asyncFunctionDeclaration1_es6.ts	C	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration1_es6.ts	pass	silent		
+asyncFunctionDeclaration2_es2017.ts	C	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration2_es2017.ts	pass	silent		
+asyncFunctionDeclaration2_es5(target=es2015).ts	C	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration2_es5.ts	pass	silent		
+asyncFunctionDeclaration2_es6.ts	C	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration2_es6.ts	pass	silent		
+asyncFunctionDeclaration3_es2017.ts	E	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration3_es2017.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionDeclaration3_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration3_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionDeclaration3_es6.ts	E	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration3_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionDeclaration4_es2017.ts	C	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration4_es2017.ts	pass	silent		
+asyncFunctionDeclaration4_es5(target=es2015).ts	C	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration4_es5.ts	pass	silent		
+asyncFunctionDeclaration4_es6.ts	C	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration4_es6.ts	pass	silent		
+asyncFunctionDeclaration5_es2017.ts	E	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration5_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration5_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration5_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration5_es6.ts	E	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration5_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration6_es2017.ts	E	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration6_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration6_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration6_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration6_es6.ts	E	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration6_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration7_es2017.ts	E	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration7_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration7_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration7_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration7_es6.ts	E	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration7_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration8_es2017.ts	E	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration8_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration8_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration8_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration8_es6.ts	E	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration8_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration9_es2017.ts	E	conformance/async/es2017/functionDeclarations/asyncFunctionDeclaration9_es2017.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration9_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclaration9_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclaration9_es6.ts	E	conformance/async/es6/functionDeclarations/asyncFunctionDeclaration9_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncFunctionDeclarationCapturesArguments_es5(target=es2015).ts	E	conformance/async/es5/functionDeclarations/asyncFunctionDeclarationCapturesArguments_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionDeclarationParameterEvaluation(target=es2015).ts	E	conformance/async/asyncFunctionDeclarationParameterEvaluation.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionDeclarationParameterEvaluation(target=es2017).ts	E	conformance/async/asyncFunctionDeclarationParameterEvaluation.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionNoReturnType.ts	C	compiler/asyncFunctionNoReturnType.ts	pass	silent		
+asyncFunctionReturnExpressionErrorSpans.ts	E	compiler/asyncFunctionReturnExpressionErrorSpans.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncFunctionReturnType.2.ts	C	compiler/asyncFunctionReturnType.2.ts	pass	silent		
+asyncFunctionReturnType.ts	C	compiler/asyncFunctionReturnType.ts	pass	silent		
+asyncFunctionTempVariableScoping(target=es2015).ts	C	compiler/asyncFunctionTempVariableScoping.ts	pass	silent		
+asyncFunctionWithForStatementNoInitializer.ts	C	compiler/asyncFunctionWithForStatementNoInitializer.ts	pass	silent		
+asyncFunctionsAcrossFiles.ts	C	compiler/asyncFunctionsAcrossFiles.ts	pass	silent		
+asyncFunctionsAndStrictNullChecks.ts	C	compiler/asyncFunctionsAndStrictNullChecks.ts	pass	silent		
+asyncGeneratorGenericNonWrappedReturn.ts	C	conformance/asyncGenerators/asyncGeneratorGenericNonWrappedReturn.ts	pass	silent		
+asyncGeneratorParameterEvaluation(target=es2015).ts	E	conformance/asyncGenerators/asyncGeneratorParameterEvaluation.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncGeneratorParameterEvaluation(target=es2017).ts	E	conformance/asyncGenerators/asyncGeneratorParameterEvaluation.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncGeneratorParameterEvaluation(target=es2018).ts	E	conformance/asyncGenerators/asyncGeneratorParameterEvaluation.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncGeneratorPromiseNextType.ts	C	conformance/asyncGenerators/asyncGeneratorPromiseNextType.ts	pass	silent		
+asyncGetter_es5(target=es2015).ts	E	conformance/async/es5/asyncGetter_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncGetter_es6.ts	E	conformance/async/es6/asyncGetter_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncIIFE.ts	C	compiler/asyncIIFE.ts	pass	silent		
+asyncImportNestedYield.ts	C	compiler/asyncImportNestedYield.ts	pass	silent		
+asyncImportedPromise_es5(target=es2015).ts	E	conformance/async/es5/asyncImportedPromise_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncImportedPromise_es6.ts	E	conformance/async/es6/asyncImportedPromise_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncInterface_es5(target=es2015).ts	E	conformance/async/es5/asyncInterface_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncInterface_es6.ts	E	conformance/async/es6/asyncInterface_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncIteratorExtraParameters.ts	E	compiler/asyncIteratorExtraParameters.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncMethodWithSuperConflict_es6.ts	C	conformance/async/es2017/asyncMethodWithSuperConflict_es6.ts	pass	silent		
+asyncMethodWithSuper_es2017.ts	C	conformance/async/es2017/asyncMethodWithSuper_es2017.ts	pass	silent		
+asyncMethodWithSuper_es5(target=es2015).ts	C	conformance/async/es5/asyncMethodWithSuper_es5.ts	pass	silent		
+asyncMethodWithSuper_es6.ts	C	conformance/async/es6/asyncMethodWithSuper_es6.ts	pass	silent		
+asyncModule_es5(target=es2015).ts	E	conformance/async/es5/asyncModule_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncModule_es6.ts	E	conformance/async/es6/asyncModule_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncMultiFile_es5(target=es2015).ts	C	conformance/async/es5/asyncMultiFile_es5.ts	pass	silent		
+asyncMultiFile_es6.ts	C	conformance/async/es6/asyncMultiFile_es6.ts	pass	silent		
+asyncOrYieldAsBindingIdentifier1.ts	E	conformance/async/es6/functionDeclarations/asyncOrYieldAsBindingIdentifier1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncQualifiedReturnType_es5(target=es2015).ts	E	conformance/async/es5/asyncQualifiedReturnType_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncQualifiedReturnType_es6.ts	E	conformance/async/es6/asyncQualifiedReturnType_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+asyncSetter_es5(target=es2015).ts	E	conformance/async/es5/asyncSetter_es5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncSetter_es6.ts	E	conformance/async/es6/asyncSetter_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncUnParenthesizedArrowFunction_es2017.ts	C	conformance/async/es2017/asyncArrowFunction/asyncUnParenthesizedArrowFunction_es2017.ts	pass	silent		
+asyncUnParenthesizedArrowFunction_es5(target=es2015).ts	C	conformance/async/es5/asyncArrowFunction/asyncUnParenthesizedArrowFunction_es5.ts	pass	silent		
+asyncUnParenthesizedArrowFunction_es6.ts	C	conformance/async/es6/asyncArrowFunction/asyncUnParenthesizedArrowFunction_es6.ts	pass	silent		
+asyncUseStrict_es2017.ts	C	conformance/async/es2017/asyncUseStrict_es2017.ts	pass	silent		
+asyncUseStrict_es5(target=es2015).ts	C	conformance/async/es5/asyncUseStrict_es5.ts	pass	silent		
+asyncUseStrict_es6.ts	C	conformance/async/es6/asyncUseStrict_es6.ts	pass	silent		
+asyncWithVarShadowing_es6.ts	C	conformance/async/es6/asyncWithVarShadowing_es6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+asyncYieldStarContextualType.ts	C	compiler/asyncYieldStarContextualType.ts	pass	silent		
+augmentArray.ts	C	compiler/augmentArray.ts	pass	silent		
+augmentExportEquals1.ts	E	compiler/augmentExportEquals1.ts	fail	silent		no diagnostic where the oracle has a baseline
+augmentExportEquals2.ts	C	compiler/augmentExportEquals2.ts	pass	silent		
+augmentExportEquals3.ts	C	compiler/augmentExportEquals3.ts	pass	silent		
+augmentExportEquals4.ts	C	compiler/augmentExportEquals4.ts	pass	silent		
+augmentExportEquals5.ts	E	compiler/augmentExportEquals5.ts	fail	silent		no diagnostic where the oracle has a baseline
+augmentExportEquals6.ts	C	compiler/augmentExportEquals6.ts	pass	silent		
+augmentExportEquals7.ts	E	compiler/augmentExportEquals7.ts	fail	silent		no diagnostic where the oracle has a baseline
+augmentedClassWithPrototypePropertyOnModule.ts	E	compiler/augmentedClassWithPrototypePropertyOnModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+augmentedTypeAssignmentCompatIndexSignature.ts	E	conformance/types/members/augmentedTypeAssignmentCompatIndexSignature.ts	fail	silent		no diagnostic where the oracle has a baseline
+augmentedTypeBracketAccessIndexSignature.ts	C	conformance/types/members/augmentedTypeBracketAccessIndexSignature.ts	pass	silent		
+augmentedTypeBracketNamedPropertyAccess.ts	C	compiler/augmentedTypeBracketNamedPropertyAccess.ts	pass	silent		
+augmentedTypesClass.ts	E	compiler/augmentedTypesClass.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+augmentedTypesClass2.ts	E	compiler/augmentedTypesClass2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+augmentedTypesClass2a.ts	E	compiler/augmentedTypesClass2a.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+augmentedTypesClass3.ts	C	compiler/augmentedTypesClass3.ts	pass	silent		
+augmentedTypesClass4.ts	E	compiler/augmentedTypesClass4.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+augmentedTypesEnum.ts	E	compiler/augmentedTypesEnum.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+augmentedTypesEnum2.ts	E	compiler/augmentedTypesEnum2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+augmentedTypesEnum3.ts	E	compiler/augmentedTypesEnum3.ts	fail	silent		no diagnostic where the oracle has a baseline
+augmentedTypesFunction.ts	E	compiler/augmentedTypesFunction.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+augmentedTypesInterface.ts	E	compiler/augmentedTypesInterface.ts	fail	silent		no diagnostic where the oracle has a baseline
+augmentedTypesModules.ts	E	compiler/augmentedTypesModules.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+augmentedTypesModules2.ts	E	compiler/augmentedTypesModules2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+augmentedTypesModules3.ts	E	compiler/augmentedTypesModules3.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+augmentedTypesModules3b.ts	C	compiler/augmentedTypesModules3b.ts	pass	silent		
+augmentedTypesModules4.ts	C	compiler/augmentedTypesModules4.ts	pass	silent		
+augmentedTypesVar.ts	E	compiler/augmentedTypesVar.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+autoAccessor1(target=es2015).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor1.ts	pass	silent		
+autoAccessor1(target=es2022).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor1.ts	pass	silent		
+autoAccessor1(target=esnext).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor1.ts	pass	silent		
+autoAccessor10.ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor10.ts	pass	silent		
+autoAccessor11.ts	E	conformance/classes/propertyMemberDeclarations/autoAccessor11.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessor2(target=es2015).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor2.ts	pass	silent		
+autoAccessor2(target=es2022).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor2.ts	pass	silent		
+autoAccessor2(target=esnext).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor2.ts	pass	silent		
+autoAccessor3(target=es2015).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor3.ts	pass	silent		
+autoAccessor3(target=es2022).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor3.ts	pass	silent		
+autoAccessor3(target=esnext).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor3.ts	pass	silent		
+autoAccessor4(target=es2015).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor4.ts	pass	silent		
+autoAccessor4(target=es2022).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor4.ts	pass	silent		
+autoAccessor4(target=esnext).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor4.ts	pass	silent		
+autoAccessor5(target=es2015).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessor5.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessor5(target=es2022).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessor5.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessor5(target=esnext).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessor5.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessor6(target=es2015,usedefineforclassfields=false).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessor6.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessor6(target=es2015,usedefineforclassfields=true).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessor6.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessor6(target=es2022,usedefineforclassfields=false).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessor6.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessor6(target=es2022,usedefineforclassfields=true).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessor6.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessor6(target=esnext,usedefineforclassfields=false).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessor6.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessor6(target=esnext,usedefineforclassfields=true).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessor6.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessor7(target=es2015,usedefineforclassfields=false).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor7.ts	pass	silent		
+autoAccessor7(target=es2015,usedefineforclassfields=true).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor7.ts	pass	silent		
+autoAccessor7(target=es2022,usedefineforclassfields=false).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor7.ts	pass	silent		
+autoAccessor7(target=es2022,usedefineforclassfields=true).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor7.ts	pass	silent		
+autoAccessor7(target=esnext,usedefineforclassfields=false).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor7.ts	pass	silent		
+autoAccessor7(target=esnext,usedefineforclassfields=true).ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor7.ts	pass	silent		
+autoAccessor8.ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor8.ts	pass	silent		
+autoAccessor9.ts	C	conformance/classes/propertyMemberDeclarations/autoAccessor9.ts	pass	silent		
+autoAccessorAllowedModifiers.ts	C	conformance/classes/propertyMemberDeclarations/autoAccessorAllowedModifiers.ts	pass	silent		
+autoAccessorDisallowedModifiers(target=es2017).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessorDisallowedModifiers.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+autoAccessorDisallowedModifiers(target=esnext).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessorDisallowedModifiers.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+autoAccessorExperimentalDecorators(target=es2015).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessorExperimentalDecorators.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessorExperimentalDecorators(target=es2022).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessorExperimentalDecorators.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessorExperimentalDecorators(target=esnext).ts	E	conformance/classes/propertyMemberDeclarations/autoAccessorExperimentalDecorators.ts	fail	silent		no diagnostic where the oracle has a baseline
+autoAccessorNoUseDefineForClassFields.ts	C	conformance/classes/propertyMemberDeclarations/autoAccessorNoUseDefineForClassFields.ts	pass	silent		
+autoAsiForStaticsInClassDeclaration.ts	C	compiler/autoAsiForStaticsInClassDeclaration.ts	pass	silent		
+autoLift2.ts	E	compiler/autoLift2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+autoTypeAssignedUsingDestructuringFromNeverNoCrash.ts	E	compiler/autoTypeAssignedUsingDestructuringFromNeverNoCrash.ts	fail	silent		no diagnostic where the oracle has a baseline
+autolift3.ts	E	compiler/autolift3.ts	fail	silent		no diagnostic where the oracle has a baseline
+autolift4.ts	E	compiler/autolift4.ts	fail	silent		no diagnostic where the oracle has a baseline
+autonumberingInEnums.ts	C	compiler/autonumberingInEnums.ts	pass	silent		
+avoid.ts	C	compiler/avoid.ts	pass	silent		
+avoidCycleWithVoidExpressionReturnedFromArrow.ts	C	compiler/avoidCycleWithVoidExpressionReturnedFromArrow.ts	pass	silent		
+avoidListingPropertiesForTypesWithOnlyCallOrConstructSignatures.ts	E	compiler/avoidListingPropertiesForTypesWithOnlyCallOrConstructSignatures.ts	fail	silent		no diagnostic where the oracle has a baseline
+avoidNarrowingUsingConstVariableFromBindingElementWithLiteralInitializer.ts	C	compiler/avoidNarrowingUsingConstVariableFromBindingElementWithLiteralInitializer.ts	pass	silent		
+awaitAndYield.ts	E	conformance/enums/awaitAndYield.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitAndYieldInProperty.ts	E	conformance/classes/awaitAndYieldInProperty.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitBinaryExpression1_es2017.ts	C	conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression1_es2017.ts	pass	silent		
+awaitBinaryExpression1_es5(target=es2015).ts	C	conformance/async/es5/awaitBinaryExpression/awaitBinaryExpression1_es5.ts	pass	silent		
+awaitBinaryExpression1_es6.ts	C	conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression1_es6.ts	pass	silent		
+awaitBinaryExpression2_es2017.ts	C	conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression2_es2017.ts	pass	silent		
+awaitBinaryExpression2_es5(target=es2015).ts	C	conformance/async/es5/awaitBinaryExpression/awaitBinaryExpression2_es5.ts	pass	silent		
+awaitBinaryExpression2_es6.ts	C	conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression2_es6.ts	pass	silent		
+awaitBinaryExpression3_es2017.ts	C	conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression3_es2017.ts	pass	silent		
+awaitBinaryExpression3_es5(target=es2015).ts	C	conformance/async/es5/awaitBinaryExpression/awaitBinaryExpression3_es5.ts	pass	silent		
+awaitBinaryExpression3_es6.ts	C	conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression3_es6.ts	pass	silent		
+awaitBinaryExpression4_es2017.ts	C	conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression4_es2017.ts	pass	silent		
+awaitBinaryExpression4_es5(target=es2015).ts	C	conformance/async/es5/awaitBinaryExpression/awaitBinaryExpression4_es5.ts	pass	silent		
+awaitBinaryExpression4_es6.ts	C	conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression4_es6.ts	pass	silent		
+awaitBinaryExpression5_es2017.ts	E	conformance/async/es2017/awaitBinaryExpression/awaitBinaryExpression5_es2017.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitBinaryExpression5_es5(target=es2015).ts	E	conformance/async/es5/awaitBinaryExpression/awaitBinaryExpression5_es5.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitBinaryExpression5_es6.ts	E	conformance/async/es6/awaitBinaryExpression/awaitBinaryExpression5_es6.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitCallExpression1_es2017.ts	C	conformance/async/es2017/awaitCallExpression/awaitCallExpression1_es2017.ts	pass	silent		
+awaitCallExpression1_es5(target=es2015).ts	C	conformance/async/es5/awaitCallExpression/awaitCallExpression1_es5.ts	pass	silent		
+awaitCallExpression1_es6.ts	C	conformance/async/es6/awaitCallExpression/awaitCallExpression1_es6.ts	pass	silent		
+awaitCallExpression2_es2017.ts	C	conformance/async/es2017/awaitCallExpression/awaitCallExpression2_es2017.ts	pass	silent		
+awaitCallExpression2_es5(target=es2015).ts	C	conformance/async/es5/awaitCallExpression/awaitCallExpression2_es5.ts	pass	silent		
+awaitCallExpression2_es6.ts	C	conformance/async/es6/awaitCallExpression/awaitCallExpression2_es6.ts	pass	silent		
+awaitCallExpression3_es2017.ts	C	conformance/async/es2017/awaitCallExpression/awaitCallExpression3_es2017.ts	pass	silent		
+awaitCallExpression3_es5(target=es2015).ts	C	conformance/async/es5/awaitCallExpression/awaitCallExpression3_es5.ts	pass	silent		
+awaitCallExpression3_es6.ts	C	conformance/async/es6/awaitCallExpression/awaitCallExpression3_es6.ts	pass	silent		
+awaitCallExpression4_es2017.ts	C	conformance/async/es2017/awaitCallExpression/awaitCallExpression4_es2017.ts	pass	silent		
+awaitCallExpression4_es5(target=es2015).ts	C	conformance/async/es5/awaitCallExpression/awaitCallExpression4_es5.ts	pass	silent		
+awaitCallExpression4_es6.ts	C	conformance/async/es6/awaitCallExpression/awaitCallExpression4_es6.ts	pass	silent		
+awaitCallExpression5_es2017.ts	C	conformance/async/es2017/awaitCallExpression/awaitCallExpression5_es2017.ts	pass	silent		
+awaitCallExpression5_es5(target=es2015).ts	C	conformance/async/es5/awaitCallExpression/awaitCallExpression5_es5.ts	pass	silent		
+awaitCallExpression5_es6.ts	C	conformance/async/es6/awaitCallExpression/awaitCallExpression5_es6.ts	pass	silent		
+awaitCallExpression6_es2017.ts	C	conformance/async/es2017/awaitCallExpression/awaitCallExpression6_es2017.ts	pass	silent		
+awaitCallExpression6_es5(target=es2015).ts	C	conformance/async/es5/awaitCallExpression/awaitCallExpression6_es5.ts	pass	silent		
+awaitCallExpression6_es6.ts	C	conformance/async/es6/awaitCallExpression/awaitCallExpression6_es6.ts	pass	silent		
+awaitCallExpression7_es2017.ts	C	conformance/async/es2017/awaitCallExpression/awaitCallExpression7_es2017.ts	pass	silent		
+awaitCallExpression7_es5(target=es2015).ts	C	conformance/async/es5/awaitCallExpression/awaitCallExpression7_es5.ts	pass	silent		
+awaitCallExpression7_es6.ts	C	conformance/async/es6/awaitCallExpression/awaitCallExpression7_es6.ts	pass	silent		
+awaitCallExpression8_es2017.ts	C	conformance/async/es2017/awaitCallExpression/awaitCallExpression8_es2017.ts	pass	silent		
+awaitCallExpression8_es5(target=es2015).ts	C	conformance/async/es5/awaitCallExpression/awaitCallExpression8_es5.ts	pass	silent		
+awaitCallExpression8_es6.ts	C	conformance/async/es6/awaitCallExpression/awaitCallExpression8_es6.ts	pass	silent		
+awaitCallExpressionInSyncFunction.ts	E	compiler/awaitCallExpressionInSyncFunction.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitClassExpression_es2017.ts	C	conformance/async/es2017/awaitClassExpression_es2017.ts	pass	silent		
+awaitClassExpression_es5(target=es2015).ts	C	conformance/async/es5/awaitClassExpression_es5.ts	pass	silent		
+awaitClassExpression_es6.ts	C	conformance/async/es6/awaitClassExpression_es6.ts	pass	silent		
+awaitExpressionInnerCommentEmit.ts	C	compiler/awaitExpressionInnerCommentEmit.ts	pass	silent		
+awaitInClassInAsyncFunction.ts	E	compiler/awaitInClassInAsyncFunction.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitInNonAsyncFunction.ts	E	compiler/awaitInNonAsyncFunction.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitInheritedPromise_es2017.ts	C	conformance/async/es2017/awaitInheritedPromise_es2017.ts	pass	silent		
+awaitLiteralValues.ts	E	compiler/awaitLiteralValues.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUnionPromise.ts	E	compiler/awaitUnionPromise.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUnion_es5(target=es2015).ts	C	conformance/async/es5/awaitUnion_es5.ts	pass	silent		
+awaitUnion_es6.ts	C	conformance/async/es6/awaitUnion_es6.ts	pass	silent		
+awaitUsingDeclarations.1(target=es2015).ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.1.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUsingDeclarations.1(target=es2017).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.1.ts	pass	silent		
+awaitUsingDeclarations.1(target=es2022).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.1.ts	pass	silent		
+awaitUsingDeclarations.1(target=esnext).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.1.ts	pass	silent		
+awaitUsingDeclarations.10.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.10.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarations.11.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.11.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarations.12.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.12.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUsingDeclarations.13.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.13.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarations.14.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.14.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarations.15.ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.15.ts	pass	silent		
+awaitUsingDeclarations.16.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.16.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarations.17.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.17.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUsingDeclarations.2(target=es2015).ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.2.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUsingDeclarations.2(target=es2017).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.2.ts	pass	silent		
+awaitUsingDeclarations.2(target=es2022).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.2.ts	pass	silent		
+awaitUsingDeclarations.2(target=esnext).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.2.ts	pass	silent		
+awaitUsingDeclarations.3(target=es2015).ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.3.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUsingDeclarations.3(target=es2017).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.3.ts	pass	silent		
+awaitUsingDeclarations.3(target=es2022).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.3.ts	pass	silent		
+awaitUsingDeclarations.3(target=esnext).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.3.ts	pass	silent		
+awaitUsingDeclarations.4.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.4.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarations.5.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarations.6.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarations.7.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.7.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarations.8.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.8.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarations.9.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.9.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUsingDeclarationsInFor(target=es2015).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInFor.ts	pass	silent		
+awaitUsingDeclarationsInFor(target=es2017).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInFor.ts	pass	silent		
+awaitUsingDeclarationsInFor(target=es2022).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInFor.ts	pass	silent		
+awaitUsingDeclarationsInFor(target=esnext).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInFor.ts	pass	silent		
+awaitUsingDeclarationsInForAwaitOf(target=es2015).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForAwaitOf.ts	pass	silent		
+awaitUsingDeclarationsInForAwaitOf(target=es2017).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForAwaitOf.ts	pass	silent		
+awaitUsingDeclarationsInForAwaitOf(target=es2022).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForAwaitOf.ts	pass	silent		
+awaitUsingDeclarationsInForAwaitOf(target=esnext).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForAwaitOf.ts	pass	silent		
+awaitUsingDeclarationsInForAwaitOf.2.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForAwaitOf.2.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUsingDeclarationsInForAwaitOf.3(target=esnext).ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForAwaitOf.3.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarationsInForIn.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForIn.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUsingDeclarationsInForOf.1(target=es2015).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.1.ts	pass	silent		
+awaitUsingDeclarationsInForOf.1(target=es2017).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.1.ts	pass	silent		
+awaitUsingDeclarationsInForOf.1(target=es2022).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.1.ts	pass	silent		
+awaitUsingDeclarationsInForOf.1(target=esnext).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.1.ts	pass	silent		
+awaitUsingDeclarationsInForOf.2.ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.2.ts	pass	silent		
+awaitUsingDeclarationsInForOf.3.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.3.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarationsInForOf.4.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.4.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUsingDeclarationsInForOf.5(target=esnext).ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitUsingDeclarationsTopLevelOfModule.1(module=esnext).ts	C	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsTopLevelOfModule.1.ts	pass	silent		
+awaitUsingDeclarationsWithAsyncIteratorObject.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsWithAsyncIteratorObject.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUsingDeclarationsWithImportHelpers.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsWithImportHelpers.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitUsingDeclarationsWithIteratorObject.ts	E	conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsWithIteratorObject.ts	fail	silent		no diagnostic where the oracle has a baseline
+await_incorrectThisType.ts	E	conformance/async/es2017/await_incorrectThisType.ts	fail	silent		no diagnostic where the oracle has a baseline
+await_unaryExpression_es2017.ts	C	conformance/async/es2017/await_unaryExpression_es2017.ts	pass	silent		
+await_unaryExpression_es2017_1.ts	E	conformance/async/es2017/await_unaryExpression_es2017_1.ts	fail	silent		no diagnostic where the oracle has a baseline
+await_unaryExpression_es2017_2.ts	E	conformance/async/es2017/await_unaryExpression_es2017_2.ts	fail	silent		no diagnostic where the oracle has a baseline
+await_unaryExpression_es2017_3.ts	E	conformance/async/es2017/await_unaryExpression_es2017_3.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+await_unaryExpression_es6.ts	C	conformance/async/es6/await_unaryExpression_es6.ts	pass	silent		
+await_unaryExpression_es6_1.ts	E	conformance/async/es6/await_unaryExpression_es6_1.ts	fail	silent		no diagnostic where the oracle has a baseline
+await_unaryExpression_es6_2.ts	E	conformance/async/es6/await_unaryExpression_es6_2.ts	fail	silent		no diagnostic where the oracle has a baseline
+await_unaryExpression_es6_3.ts	E	conformance/async/es6/await_unaryExpression_es6_3.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+awaitedType.ts	E	compiler/awaitedType.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitedTypeCrash.ts	C	compiler/awaitedTypeCrash.ts	pass	silent		
+awaitedTypeJQuery.ts	C	compiler/awaitedTypeJQuery.ts	pass	silent		
+awaitedTypeNoLib.ts	E	compiler/awaitedTypeNoLib.ts	fail	silent		no diagnostic where the oracle has a baseline
+awaitedTypeStrictNull.ts	E	compiler/awaitedTypeStrictNull.ts	fail	silent		no diagnostic where the oracle has a baseline
+badArrayIndex.ts	E	compiler/badArrayIndex.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+badArraySyntax.ts	E	compiler/badArraySyntax.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+badExternalModuleReference.ts	E	compiler/badExternalModuleReference.ts	fail	silent		no diagnostic where the oracle has a baseline
+badInferenceLowerPriorityThanGoodInference.ts	C	compiler/badInferenceLowerPriorityThanGoodInference.ts	pass	silent		
+badOverloadError.ts	C	compiler/badOverloadError.ts	pass	silent		
+badThisBinding.ts	C	compiler/badThisBinding.ts	pass	silent		
+baseCheck.ts	E	compiler/baseCheck.ts	fail	silent		no diagnostic where the oracle has a baseline
+baseClassImprovedMismatchErrors.ts	E	compiler/baseClassImprovedMismatchErrors.ts	fail	silent		no diagnostic where the oracle has a baseline
+baseConstraintOfDecorator.ts	E	compiler/baseConstraintOfDecorator.ts	fail	silent		no diagnostic where the oracle has a baseline
+baseExpressionTypeParameters.ts	E	compiler/baseExpressionTypeParameters.ts	fail	silent		no diagnostic where the oracle has a baseline
+baseIndexSignatureResolution.ts	E	compiler/baseIndexSignatureResolution.ts	fail	silent		no diagnostic where the oracle has a baseline
+baseTypeAfterDerivedType.ts	C	compiler/baseTypeAfterDerivedType.ts	pass	silent		
+baseTypeOrderChecking.ts	E	compiler/baseTypeOrderChecking.ts	fail	silent		no diagnostic where the oracle has a baseline
+baseTypePrivateMemberClash.ts	E	compiler/baseTypePrivateMemberClash.ts	fail	silent		no diagnostic where the oracle has a baseline
+baseTypeWrappingInstantiationChain.ts	E	compiler/baseTypeWrappingInstantiationChain.ts	fail	silent		no diagnostic where the oracle has a baseline
+bases.ts	E	compiler/bases.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+bestChoiceType.ts	C	compiler/bestChoiceType.ts	pass	silent		
+bestCommonTypeOfConditionalExpressions.ts	E	conformance/types/typeRelationships/bestCommonType/bestCommonTypeOfConditionalExpressions.ts	fail	silent		no diagnostic where the oracle has a baseline
+bestCommonTypeOfConditionalExpressions2.ts	E	conformance/types/typeRelationships/bestCommonType/bestCommonTypeOfConditionalExpressions2.ts	fail	silent		no diagnostic where the oracle has a baseline
+bestCommonTypeOfTuple.ts	E	conformance/types/typeRelationships/bestCommonType/bestCommonTypeOfTuple.ts	fail	silent		no diagnostic where the oracle has a baseline
+bestCommonTypeOfTuple2.ts	E	conformance/types/typeRelationships/bestCommonType/bestCommonTypeOfTuple2.ts	fail	silent		no diagnostic where the oracle has a baseline
+bestCommonTypeReturnStatement.ts	E	compiler/bestCommonTypeReturnStatement.ts	fail	silent		no diagnostic where the oracle has a baseline
+bestCommonTypeWithContextualTyping.ts	E	compiler/bestCommonTypeWithContextualTyping.ts	fail	silent		no diagnostic where the oracle has a baseline
+bestCommonTypeWithOptionalProperties.ts	E	compiler/bestCommonTypeWithOptionalProperties.ts	fail	silent		no diagnostic where the oracle has a baseline
+betterErrorForAccidentalCall.ts	E	compiler/betterErrorForAccidentalCall.ts	fail	silent		no diagnostic where the oracle has a baseline
+betterErrorForUnionCall.ts	E	compiler/betterErrorForUnionCall.ts	fail	silent		no diagnostic where the oracle has a baseline
+bigIntWithTargetES2016.ts	C	compiler/bigIntWithTargetES2016.ts	pass	silent		
+bigIntWithTargetLessThanES2016.ts	E	compiler/bigIntWithTargetLessThanES2016.ts	fail	silent		no diagnostic where the oracle has a baseline
+bigint64ArraySubarray.ts	C	compiler/bigint64ArraySubarray.ts	pass	silent		
+bigintAmbientMinimal(target=es2015).ts	E	compiler/bigintAmbientMinimal.ts	fail	silent		no diagnostic where the oracle has a baseline
+bigintArbirtraryIdentifier.ts	E	compiler/bigintArbirtraryIdentifier.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+bigintIndex.ts	E	compiler/bigintIndex.ts	fail	silent		no diagnostic where the oracle has a baseline
+bigintMissingES2019.ts	C	conformance/es2020/bigintMissingES2019.ts	pass	silent		
+bigintMissingES2020.ts	C	conformance/es2020/bigintMissingES2020.ts	pass	silent		
+bigintMissingESNext.ts	C	conformance/es2020/bigintMissingESNext.ts	pass	silent		
+bigintPropertyName.ts	E	compiler/bigintPropertyName.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+bigintWithLib.ts	E	compiler/bigintWithLib.ts	fail	silent		no diagnostic where the oracle has a baseline
+bigintWithoutLib(target=es2015).ts	E	compiler/bigintWithoutLib.ts	fail	silent		no diagnostic where the oracle has a baseline
+binaryArithmatic1.ts	E	compiler/binaryArithmatic1.ts	fail	silent		no diagnostic where the oracle has a baseline
+binaryArithmatic2.ts	E	compiler/binaryArithmatic2.ts	fail	silent		no diagnostic where the oracle has a baseline
+binaryArithmatic3.ts	E	compiler/binaryArithmatic3.ts	fail	silent		no diagnostic where the oracle has a baseline
+binaryArithmatic4.ts	E	compiler/binaryArithmatic4.ts	fail	silent		no diagnostic where the oracle has a baseline
+binaryArithmeticControlFlowGraphNotTooLarge.ts	C	compiler/binaryArithmeticControlFlowGraphNotTooLarge.ts	pass	silent		
+binaryIntegerLiteral(target=es2015).ts	E	conformance/es6/binaryAndOctalIntegerLiteral/binaryIntegerLiteral.ts	fail	silent		no diagnostic where the oracle has a baseline
+binaryIntegerLiteralES6.ts	E	conformance/es6/binaryAndOctalIntegerLiteral/binaryIntegerLiteralES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+binaryIntegerLiteralError.ts	E	conformance/es6/binaryAndOctalIntegerLiteral/binaryIntegerLiteralError.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+bind1.ts	E	compiler/bind1.ts	fail	silent		no diagnostic where the oracle has a baseline
+bind2.ts	C	compiler/bind2.ts	pass	silent		
+binderBinaryExpressionStress.ts	C	compiler/binderBinaryExpressionStress.ts	pass	silent		
+binderBinaryExpressionStressJs.ts	C	compiler/binderBinaryExpressionStressJs.ts	pass	silent		
+binderUninitializedModuleExportsAssignment.ts	C	conformance/salsa/binderUninitializedModuleExportsAssignment.ts	pass	silent		
+bindingPatternCannotBeOnlyInferenceSource.ts	E	compiler/bindingPatternCannotBeOnlyInferenceSource.ts	fail	silent		no diagnostic where the oracle has a baseline
+bindingPatternContextualTypeDoesNotCauseWidening.ts	C	compiler/bindingPatternContextualTypeDoesNotCauseWidening.ts	pass	silent		
+bindingPatternInParameter01.ts	C	compiler/bindingPatternInParameter01.ts	pass	silent		
+bindingPatternOmittedExpressionNesting.ts	C	compiler/bindingPatternOmittedExpressionNesting.ts	pass	silent		
+binopAssignmentShouldHaveType.ts	C	compiler/binopAssignmentShouldHaveType.ts	pass	silent		
+bitwiseCompoundAssignmentOperators.ts	E	compiler/bitwiseCompoundAssignmentOperators.ts	fail	silent		no diagnostic where the oracle has a baseline
+bitwiseNotOperatorInvalidOperations.ts	E	conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorInvalidOperations.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+bitwiseNotOperatorWithAnyOtherType.ts	E	conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithAnyOtherType.ts	fail	silent		no diagnostic where the oracle has a baseline
+bitwiseNotOperatorWithBooleanType.ts	E	conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithBooleanType.ts	fail	silent		no diagnostic where the oracle has a baseline
+bitwiseNotOperatorWithEnumType.ts	C	conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithEnumType.ts	pass	silent		
+bitwiseNotOperatorWithNumberType.ts	E	conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithNumberType.ts	fail	silent		no diagnostic where the oracle has a baseline
+bitwiseNotOperatorWithStringType.ts	E	conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithStringType.ts	fail	silent		no diagnostic where the oracle has a baseline
+bivariantInferences.ts	C	conformance/types/typeRelationships/typeInference/bivariantInferences.ts	pass	silent		
+blockScopedBindingCaptureThisInFunction.ts	C	compiler/blockScopedBindingCaptureThisInFunction.ts	pass	silent		
+blockScopedBindingUsedBeforeDef.ts	E	compiler/blockScopedBindingUsedBeforeDef.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedBindingsInDownlevelGenerator(target=es2015).ts	E	compiler/blockScopedBindingsInDownlevelGenerator.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedBindingsReassignedInLoop1.ts	C	compiler/blockScopedBindingsReassignedInLoop1.ts	pass	silent		
+blockScopedBindingsReassignedInLoop2.ts	C	compiler/blockScopedBindingsReassignedInLoop2.ts	pass	silent		
+blockScopedBindingsReassignedInLoop3.ts	C	compiler/blockScopedBindingsReassignedInLoop3.ts	pass	silent		
+blockScopedBindingsReassignedInLoop4.ts	C	compiler/blockScopedBindingsReassignedInLoop4.ts	pass	silent		
+blockScopedBindingsReassignedInLoop5.ts	C	compiler/blockScopedBindingsReassignedInLoop5.ts	pass	silent		
+blockScopedBindingsReassignedInLoop6.ts	C	compiler/blockScopedBindingsReassignedInLoop6.ts	pass	silent		
+blockScopedEnumVariablesUseBeforeDef(target=es2015).ts	E	compiler/blockScopedEnumVariablesUseBeforeDef.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedEnumVariablesUseBeforeDef_isolatedModules(target=es2015).ts	E	compiler/blockScopedEnumVariablesUseBeforeDef_isolatedModules.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedEnumVariablesUseBeforeDef_preserve(target=es2015).ts	E	compiler/blockScopedEnumVariablesUseBeforeDef_preserve.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedEnumVariablesUseBeforeDef_verbatimModuleSyntax(target=es2015).ts	E	compiler/blockScopedEnumVariablesUseBeforeDef_verbatimModuleSyntax.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedFunctionDeclarationES5(target=es2015).ts	E	compiler/blockScopedFunctionDeclarationES5.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedFunctionDeclarationES6.ts	E	compiler/blockScopedFunctionDeclarationES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedFunctionDeclarationInStrictClass(target=es2015).ts	E	compiler/blockScopedFunctionDeclarationInStrictClass.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedFunctionDeclarationInStrictModule.ts	E	compiler/blockScopedFunctionDeclarationInStrictModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedFunctionDeclarationStrictES5(target=es2015).ts	E	compiler/blockScopedFunctionDeclarationStrictES5.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedFunctionDeclarationStrictES6.ts	E	compiler/blockScopedFunctionDeclarationStrictES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedSameNameFunctionDeclarationES5(target=es2015).ts	E	compiler/blockScopedSameNameFunctionDeclarationES5.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedSameNameFunctionDeclarationES6.ts	E	compiler/blockScopedSameNameFunctionDeclarationES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedSameNameFunctionDeclarationStrictES5(target=es2015).ts	E	compiler/blockScopedSameNameFunctionDeclarationStrictES5.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedSameNameFunctionDeclarationStrictES6.ts	E	compiler/blockScopedSameNameFunctionDeclarationStrictES6.ts	fail	silent		no diagnostic where the oracle has a baseline
+blockScopedVariablesUseBeforeDef(target=es2015).ts	E	compiler/blockScopedVariablesUseBeforeDef.ts	fail	silent		no diagnostic where the oracle has a baseline
+bluebirdStaticThis.ts	E	compiler/bluebirdStaticThis.ts	fail	silent		no diagnostic where the oracle has a baseline
+bom-utf16be.ts	C	compiler/bom-utf16be.ts	pass	silent		
+bom-utf16le.ts	C	compiler/bom-utf16le.ts	pass	silent		
+bom-utf8.ts	C	compiler/bom-utf8.ts	pass	silent		
+boolInsteadOfBoolean.ts	E	conformance/types/primitives/boolean/boolInsteadOfBoolean.ts	fail	silent		no diagnostic where the oracle has a baseline
+booleanAssignment.ts	E	compiler/booleanAssignment.ts	fail	silent		no diagnostic where the oracle has a baseline
+booleanFilterAnyArray.ts	C	compiler/booleanFilterAnyArray.ts	pass	silent		
+booleanLiteralTypes1.ts	C	conformance/types/literal/booleanLiteralTypes1.ts	pass	silent		
+booleanLiteralTypes2.ts	C	conformance/types/literal/booleanLiteralTypes2.ts	pass	silent		
+booleanLiteralsContextuallyTypedFromUnion.tsx	C	compiler/booleanLiteralsContextuallyTypedFromUnion.tsx	unsupported	not-laid-out		absolute-path-in-text: /.src/booleanLiteralsContextuallyTypedFromUnion.tsx: /.lib/react.d.ts
+booleanPropertyAccess.ts	C	conformance/types/primitives/boolean/booleanPropertyAccess.ts	pass	silent		
+breakInIterationOrSwitchStatement1.ts	C	compiler/breakInIterationOrSwitchStatement1.ts	pass	silent		
+breakInIterationOrSwitchStatement2.ts	C	compiler/breakInIterationOrSwitchStatement2.ts	pass	silent		
+breakInIterationOrSwitchStatement3.ts	C	compiler/breakInIterationOrSwitchStatement3.ts	pass	silent		
+breakInIterationOrSwitchStatement4.ts	E	compiler/breakInIterationOrSwitchStatement4.ts	fail	silent		no diagnostic where the oracle has a baseline
+breakNotInIterationOrSwitchStatement1.ts	E	compiler/breakNotInIterationOrSwitchStatement1.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+breakNotInIterationOrSwitchStatement2.ts	E	compiler/breakNotInIterationOrSwitchStatement2.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+breakTarget1.ts	C	compiler/breakTarget1.ts	pass	silent		
+breakTarget2.ts	C	compiler/breakTarget2.ts	pass	silent		
+breakTarget3.ts	C	compiler/breakTarget3.ts	pass	silent		
+breakTarget4.ts	C	compiler/breakTarget4.ts	pass	silent		
+breakTarget5.ts	E	compiler/breakTarget5.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+breakTarget6.ts	E	compiler/breakTarget6.ts	crash	diagnostic	syntax	the check threw: Error: stderr line 1 has the code syntax, which is no code of TypeScript
+builtinIterator.ts	E	compiler/builtinIterator.ts	fail	silent		no diagnostic where the oracle has a baseline
+builtinIteratorReturn(strictbuiltiniteratorreturn=false).ts	C	conformance/types/typeAliases/builtinIteratorReturn.ts	pass	silent		
+builtinIteratorReturn(strictbuiltiniteratorreturn=true).ts	C	conformance/types/typeAliases/builtinIteratorReturn.ts	pass	silent		
+bundlerCommonJS.ts	E	conformance/moduleResolution/bundler/bundlerCommonJS.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerConditionsExcludesNode(module=esnext).ts	E	conformance/moduleResolution/bundler/bundlerConditionsExcludesNode.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerConditionsExcludesNode(module=preserve).ts	E	conformance/moduleResolution/bundler/bundlerConditionsExcludesNode.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerDirectoryModule(module=node18,moduleresolution=bundler).ts	E	conformance/moduleResolution/bundler/bundlerDirectoryModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerDirectoryModule(module=node18,moduleresolution=nodenext).ts	C	conformance/moduleResolution/bundler/bundlerDirectoryModule.ts	pass	silent		
+bundlerDirectoryModule(module=node20,moduleresolution=bundler).ts	E	conformance/moduleResolution/bundler/bundlerDirectoryModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerDirectoryModule(module=node20,moduleresolution=nodenext).ts	C	conformance/moduleResolution/bundler/bundlerDirectoryModule.ts	pass	silent		
+bundlerDirectoryModule(module=nodenext,moduleresolution=bundler).ts	E	conformance/moduleResolution/bundler/bundlerDirectoryModule.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerDirectoryModule(module=nodenext,moduleresolution=nodenext).ts	C	conformance/moduleResolution/bundler/bundlerDirectoryModule.ts	pass	silent		
+bundlerImportESM(module=esnext).ts	C	conformance/moduleResolution/bundler/bundlerImportESM.ts	pass	silent		
+bundlerImportESM(module=preserve).ts	C	conformance/moduleResolution/bundler/bundlerImportESM.ts	pass	silent		
+bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=false).ts	E	conformance/moduleResolution/bundler/bundlerImportTsExtensions.ts	crash	diagnostic	unsupported-extension	the check threw: Error: stderr line 1 has the code unsupported-extension, which is no code of TypeScript
+bundlerImportTsExtensions(allowimportingtsextensions=false,noemit=true).ts	E	conformance/moduleResolution/bundler/bundlerImportTsExtensions.ts	crash	diagnostic	unsupported-extension	the check threw: Error: stderr line 1 has the code unsupported-extension, which is no code of TypeScript
+bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=false).ts	E	conformance/moduleResolution/bundler/bundlerImportTsExtensions.ts	crash	diagnostic	unsupported-extension	the check threw: Error: stderr line 1 has the code unsupported-extension, which is no code of TypeScript
+bundlerImportTsExtensions(allowimportingtsextensions=true,noemit=true).ts	E	conformance/moduleResolution/bundler/bundlerImportTsExtensions.ts	crash	diagnostic	unsupported-extension	the check threw: Error: stderr line 1 has the code unsupported-extension, which is no code of TypeScript
+bundlerNodeModules1(module=esnext).ts	E	conformance/moduleResolution/bundler/bundlerNodeModules1.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerNodeModules1(module=preserve).ts	E	conformance/moduleResolution/bundler/bundlerNodeModules1.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerOptionsCompat.ts	E	conformance/moduleResolution/bundler/bundlerOptionsCompat.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerRelative1(module=esnext).ts	E	conformance/moduleResolution/bundler/bundlerRelative1.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerRelative1(module=preserve).ts	E	conformance/moduleResolution/bundler/bundlerRelative1.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerSyntaxRestrictions(module=esnext).ts	E	conformance/moduleResolution/bundler/bundlerSyntaxRestrictions.ts	fail	silent		no diagnostic where the oracle has a baseline
+bundlerSyntaxRestrictions(module=preserve).ts	C	conformance/moduleResolution/bundler/bundlerSyntaxRestrictions.ts	pass	silent		

@@ -154,6 +154,8 @@ pub struct Program {
     failure_sigs: ShardedMap<(FileId, ExprId), SigId>,
     /// The contextual type of an argument that has to wait for the others, once the call knows it.
     arg_contexts: ShardedMap<(FileId, ExprId), TypeId>,
+    /// Calls with a `const` type parameter in some overload that are resolved to an overload before it, or that it does not apply to.
+    calls_outside_const_context: ShardedMap<(FileId, ExprId), ()>,
     relations: ShardedMap<(TypeId, TypeId, u8), u8>,
     variances: ShardedMap<Sym, Arc<[u8]>>,
     member_types: ShardedMap<(FileId, MemberId), TypeId>,
@@ -214,6 +216,7 @@ impl Program {
             calls: ShardedMap::default(),
             failure_sigs: ShardedMap::default(),
             arg_contexts: ShardedMap::default(),
+            calls_outside_const_context: ShardedMap::default(),
             relations: ShardedMap::default(),
             variances: ShardedMap::default(),
             member_types: ShardedMap::default(),
@@ -312,6 +315,8 @@ impl Program {
             provisional: 0,
             provisional_floor: 0,
             provisional_arg_contexts: FxHashMap::default(),
+            forces_provisional_contexts: false,
+            outside_const_context: Vec::new(),
             stack_base: {
                 let probe = 0u8;
                 (&raw const probe).addr()
@@ -529,6 +534,10 @@ pub struct Checker<'p> {
     /// How many questions were open when the outermost trial began.
     provisional_floor: usize,
     provisional_arg_contexts: FxHashMap<(FileId, ExprId), TypeId>,
+    /// Every contextual type recorded now belongs to a trial.
+    forces_provisional_contexts: bool,
+    /// The calls whose overloads without a `const` type parameter are being tried.
+    outside_const_context: Vec<(FileId, ExprId)>,
     /// Where the stack was when the checker was made, and how far below that it may go.
     stack_base: usize,
     stack_limit: usize,

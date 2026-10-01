@@ -1860,6 +1860,17 @@ impl<'p> Checker<'p> {
                     self.sig_params(first),
                     self.sig_this_type(first),
                 );
+                // The return type of a composite signature is resolved on demand, and nobody asks while that of a member is being
+                // resolved (`isResolvingReturnTypeOfSignature`).
+                if found.iter().any(|&s| self.is_resolving_return_type(s)) {
+                    return Some(self.p.types.intern_sig(SigData::Synth {
+                        type_params: type_params.into(),
+                        params: params.into(),
+                        ret: TypeId::UNRESOLVED,
+                        this,
+                        of: found.into(),
+                    }));
+                }
                 let returns: Vec<TypeId> = found.iter().map(|&s| self.sig_return(s)).collect();
                 let ret = self.union_reduced(&returns);
                 Some(self.p.types.intern_sig(SigData::Synth {
@@ -2287,6 +2298,7 @@ impl<'p> Checker<'p> {
                 self.p.fn_return_types.get(file, func.idx()).is_none()
                     && self.stack.contains(&Query::Return(file, func))
             }
+            SigData::Synth { ref of, .. } => of.iter().any(|&s| self.is_resolving_return_type(s)),
             _ => false,
         }
     }

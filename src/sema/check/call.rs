@@ -749,6 +749,14 @@ impl<'p> Checker<'p> {
                 ret,
             };
         }
+        // No overload with a `const` type parameter takes this many arguments.
+        if sigs.len() > candidates.len()
+            && self.provisional == 0
+            && !candidates.iter().any(|&c| self.has_const_type_parameter(c))
+            && sigs.iter().any(|&c| self.has_const_type_parameter(c))
+        {
+            self.p.calls_outside_const_context.insert((file, call), ());
+        }
         // Where one is left there is nothing to choose, and nothing has been held against it.
         let chosen = match candidates[..] {
             [only] => Some(only),
@@ -1955,6 +1963,7 @@ impl<'p> Checker<'p> {
         args: &[Arg],
         this_arg: Option<ExprId>,
     ) -> Option<SigId> {
+        self.try_candidates_before_const(file, call, candidates, type_args, args, this_arg);
         // What the arguments are expected to be mentions the type parameters of all the candidates. To a call among the
         // arguments those say nothing.
         let mut pairs = Vec::new();
@@ -2103,6 +2112,69 @@ impl<'p> Checker<'p> {
             }
         }
         false
+    }
+
+    /// `chooseOverload` checks the arguments again for each candidate, so only a candidate with a `const` type parameter sees them in
+    /// a const context. Here an argument is checked once. If a candidate before the first such one applies, the call has no const context.
+    fn try_candidates_before_const(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        candidates: &[SigId],
+        type_args: &[TypeId],
+        args: &[Arg],
+        this_arg: Option<ExprId>,
+    ) {
+        let Some(first_const) = candidates
+            .iter()
+            .position(|&c| self.has_const_type_parameter(c))
+        else {
+            return;
+        };
+        if first_const == 0
+            || self.outside_const_context.contains(&(file, call))
+            || self
+                .p
+                .calls_outside_const_context
+                .get(&(file, call))
+                .is_some()
+        {
+            return;
+        }
+        if self.provisional == 0 {
+            self.provisional_floor = self.stack.len();
+        }
+        self.provisional += 1;
+        self.outside_const_context.push((file, call));
+        let forced = std::mem::replace(&mut self.forces_provisional_contexts, true);
+        let chosen = self.choose_overload(
+            file,
+            call,
+            &candidates[..first_const],
+            type_args,
+            args,
+            this_arg,
+        );
+        self.forces_provisional_contexts = forced;
+        self.outside_const_context.pop();
+        self.provisional -= 1;
+        if self.provisional == 0 {
+            self.provisional_arg_contexts.clear();
+        }
+        for &arg in args {
+            if let Arg::Expr(e) = arg {
+                self.set_context_checked(file, e, ContextChecked::No);
+            }
+        }
+        if chosen.is_some() && self.provisional == 0 {
+            self.p.calls_outside_const_context.insert((file, call), ());
+        }
+    }
+
+    pub(super) fn has_const_type_parameter(&mut self, sig: SigId) -> bool {
+        self.sig_type_params(sig)
+            .iter()
+            .any(|&p| self.is_const_type_variable(p, 0))
     }
 
     fn choose_overload_among(
@@ -4911,7 +4983,7 @@ impl<'p> Checker<'p> {
             return;
         }
         let context = self.without_no_infer(context);
-        if !self.is_provisional_here() {
+        if !self.is_provisional_here() && !self.forces_provisional_contexts {
             self.p.arg_contexts.insert((file, e), context);
         } else {
             self.provisional_arg_contexts.insert((file, e), context);

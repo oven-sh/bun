@@ -555,12 +555,33 @@ impl<'p> Checker<'p> {
         let Some(index) = hir.ids(hir[c].args).position(|a| a == arg) else {
             return false;
         };
+        if self.outside_const_context.contains(&(file, call)) {
+            self.note_provisional_read();
+            return false;
+        }
         let callee = self.type_of_expr(file, hir[c].callee);
         let callee = self.non_nullable(callee);
         if self.is_any(callee) {
             return false;
         }
-        for sig in self.signatures(callee, matches!(hir[call].kind, ExprKind::New(_))) {
+        let sigs = self.signatures(callee, matches!(hir[call].kind, ExprKind::New(_)));
+        // Which overload the call resolves to decides.
+        if sigs.len() > 1 && sigs.iter().any(|&sig| self.has_const_type_parameter(sig)) {
+            if self.p.calls.get(&(file, call)).is_none()
+                && !self.stack.contains(&Query::Call(file, call))
+            {
+                self.resolve_call(file, call);
+            }
+            if self
+                .p
+                .calls_outside_const_context
+                .get(&(file, call))
+                .is_some()
+            {
+                return false;
+            }
+        }
+        for sig in sigs {
             let type_params = self.sig_type_params(sig);
             if !type_params
                 .iter()

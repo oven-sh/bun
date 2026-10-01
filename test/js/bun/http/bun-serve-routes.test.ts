@@ -1303,6 +1303,54 @@ describe("uWS::HttpRouter", () => {
     });
   });
 
+  // The router reads the first 100 segments of a pattern and of a URL, and it
+  // steps over the first byte of a URL without a look at it.
+  describe("URL limits", () => {
+    const segments = (count: number, name = "s") => Buffer.alloc(count * (name.length + 1), "/" + name).toString();
+
+    test("a URL matches on its first 100 segments", () => {
+      expect(
+        run(
+          `add M GET ${segments(100)} 0`,
+          `route GET ${segments(99)}`,
+          `route GET ${segments(100)}`,
+          `route GET ${segments(101)}`,
+          `route GET ${segments(99)}/other`,
+        ),
+      ).toEqual(["0", "1 0()", "1 0()", "0"]);
+    });
+
+    test("a pattern is its first 100 segments", () => {
+      expect(
+        run(
+          `add M GET ${segments(100)} 0`,
+          `add M GET ${segments(100)}/more 0`, // replaces the route above
+          `route GET ${segments(100)}`,
+          `remove M GET ${segments(100)}/other`,
+          `route GET ${segments(100)}`,
+        ),
+      ).toEqual(["1 1()", "r1", "0"]);
+    });
+
+    test("a request has at most 100 parameters", () => {
+      expect(run(`add M GET ${segments(100, ":p")} 0`, `route GET ${segments(101, "v")}`)).toEqual([
+        `1 0(${Array(100).fill("v").join(",")})`,
+      ]);
+    });
+
+    test("the first byte of a URL is not read", () => {
+      expect(
+        run(
+          "add M GET / 0",
+          "add M GET /bc 0",
+          "route GET *", // the URL of `OPTIONS *`
+          "route GET abc",
+          "route GET a/bc",
+        ),
+      ).toEqual(["1 0()", "1 1()", "0"]);
+    });
+  });
+
   // Fixed pseudo-random sequences of router calls. The digests are the output
   // of the router on main at bf42a525d5, so a router change that sends any of
   // these requests to other handlers, in another order or with other

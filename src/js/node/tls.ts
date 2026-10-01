@@ -305,6 +305,7 @@ const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSplice = Array.prototype.splice;
 const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeReduce = Array.prototype.reduce;
 const ArrayPrototypeFilter = Array.prototype.filter;
@@ -727,7 +728,7 @@ const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
 
 const buntls = Symbol.for("::buntls::");
-const kSharedCreds = Symbol.for("::buntlssharedcreds::");
+const kSharedCreds = Symbol("kSharedCreds");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
 // (Node's `context.context || context` unwrap accepts both the wrapper and
 // the unwrapped native context).
@@ -1195,6 +1196,67 @@ function buildSharedCreds(server) {
   ));
 }
 
+// A tls.Server's addContext() entries in call order, each [matcher, SecureContext, hostname] (node's `_contexts`).
+// listen() loads them into the native listener, which matches the connections it accepts.
+// defaultSNICallback matches a connection that was injected with emit('connection').
+const kContexts = Symbol("kContexts");
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1576-L1580
+function contextMatcher(hostname: string): RegExp {
+  const escaped = RegExpPrototypeSymbolReplace.$call(/([.^$+?\-\\[\]{}])/g, hostname, "\\$1");
+  return new RegExp(`^${RegExpPrototypeSymbolReplace.$call(/\*/g, escaped, "[^.]*")}$`);
+}
+
+// The resolver of an injected connection when the server has entries and no SNICallback. `this` is the TLSSocket.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1587-L1611
+function defaultSNICallback(servername, callback) {
+  const contexts = this.server?.[kContexts];
+  if (contexts) {
+    for (let i = contexts.length - 1; i >= 0; --i) {
+      const entry = contexts[i];
+      if (RegExpPrototypeExec.$call(entry[0], servername) !== null) {
+        callback(null, entry[1]);
+        return;
+      }
+    }
+  }
+  callback(null, undefined);
+}
+
+// The one place that starts a server-side TLS handshake on a stream that no listener of the server accepted:
+// server.emit('connection', socket) on a tls.Server or on a server that extends it (http2's secure server).
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1259-L1285
+function tlsConnectionListener(socket) {
+  // Skip only sockets this server's own native accept path already wrapped
+  // (those arrive as an encrypted TLSSocket with .server preassigned).
+  // Anything else - plain or TLS from another server - gets a server-side
+  // TLS layer, like Node's tls.Server wraps any injected duplex.
+  if (!socket || (socket.encrypted && socket.server === this)) return;
+  let secureContext;
+  try {
+    secureContext = this[kSharedCreds]();
+  } catch (err) {
+    socket.destroy();
+    this.emit("error", err);
+    return;
+  }
+  const wrapped = new TLSSocket(socket, {
+    secureContext,
+    isServer: true,
+    requestCert: this._requestCert,
+    rejectUnauthorized: this._rejectUnauthorized,
+    // Node decides when it wraps the connection: a server with no SNICallback and no entry has nothing to ask.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L929-L935
+    SNICallback: this._SNICallback || (this[kContexts].length !== 0 ? defaultSNICallback : undefined),
+    ALPNProtocols: this.ALPNProtocols,
+    ALPNCallback: this._ALPNCallback,
+  });
+  wrapped.server = this;
+  wrapped._requestCert = this._requestCert;
+  wrapped._rejectUnauthorized = this._rejectUnauthorized;
+  this[kArmHandshakeTimeout](wrapped);
+}
+
 function Server(options, secureConnectionListener): void {
   if (!(this instanceof Server)) {
     return new Server(options, secureConnectionListener);
@@ -1256,9 +1318,13 @@ function Server(options, secureConnectionListener): void {
   if (serverOptions?.ALPNProtocols) convertALPNProtocols(serverOptions.ALPNProtocols, this);
   this._sharedCreds = undefined;
 
-  let contexts: Map<string, typeof InternalSecureContext> | null = null;
+  const contexts: [RegExp, InstanceType<typeof InternalSecureContext>, string][] = (this[kContexts] = []);
 
   this.addContext = function (hostname, context) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1574
+    if (!hostname) {
+      throw $ERR_TLS_REQUIRED_SERVER_NAME();
+    }
     if (typeof hostname !== "string") {
       throw new TypeError("hostname must be a string");
     }
@@ -1270,10 +1336,15 @@ function Server(options, secureConnectionListener): void {
       // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
       // the native side detects it via SecureContext.fromJS and up_refs.
       addServerName(handle, hostname, context.context);
-    } else {
-      if (!contexts) contexts = new Map();
-      contexts.set(hostname, context);
     }
+    // Recorded once the live listener took it. A name that is added again replaces its entry and becomes the newest.
+    for (let i = 0; i < contexts.length; i++) {
+      if (contexts[i][2] === hostname) {
+        ArrayPrototypeSplice.$call(contexts, i, 1);
+        break;
+      }
+    }
+    ArrayPrototypePush.$call(contexts, [contextMatcher(hostname), context, hostname]);
   };
 
   this.setSecureContext = function (options) {
@@ -1522,35 +1593,7 @@ function Server(options, secureConnectionListener): void {
   validateNumber(handshakeTimeout, "options.handshakeTimeout");
   this._handshakeTimeout = handshakeTimeout;
 
-  this.on("connection", socket => {
-    // Skip only sockets this server's own native accept path already wrapped
-    // (those arrive as an encrypted TLSSocket with .server preassigned).
-    // Anything else - plain or TLS from another server - gets a server-side
-    // TLS layer, like Node's tls.Server wraps any injected duplex
-    // (node v26.3.0 lib/_tls_wrap.js, Server's connection listener).
-    if (!socket || (socket.encrypted && socket.server === this)) return;
-    let secureContext;
-    try {
-      secureContext = this[kSharedCreds]();
-    } catch (err) {
-      socket.destroy();
-      this.emit("error", err);
-      return;
-    }
-    const wrapped = new TLSSocket(socket, {
-      secureContext,
-      isServer: true,
-      requestCert: this._requestCert,
-      rejectUnauthorized: this._rejectUnauthorized,
-      SNICallback: this._SNICallback,
-      ALPNProtocols: this.ALPNProtocols,
-      ALPNCallback: this._ALPNCallback,
-    });
-    wrapped.server = this;
-    wrapped._requestCert = this._requestCert;
-    wrapped._rejectUnauthorized = this._rejectUnauthorized;
-    this[kArmHandshakeTimeout](wrapped);
-  });
+  this.on("connection", tlsConnectionListener);
 
   // Node registers the createServer callback as a plain "secureConnection"
   // listener, so a manual emit("secureConnection", socket) reaches it.

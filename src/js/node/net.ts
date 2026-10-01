@@ -2572,10 +2572,16 @@ Socket.prototype.pause = function pause() {
 // state carried via `data` (mirrors tls.createServer's one-handler-for-all model).
 Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, tls) {
   const socket = connection._handle;
-  if (!socket || connection.encrypted || hasUnflushedWrites(connection)) {
-    // No adoptable fd (generic Duplex / not yet connected), TLS over TLS (the
-    // fd belongs to the outer SSL layer), or pending plain writes that must
-    // flush first: run the TLS engine over the stream itself.
+  if (
+    !socket ||
+    connection.encrypted ||
+    hasUnflushedWrites(connection) ||
+    (process.platform === "win32" && isNamedPipeSocket(socket))
+  ) {
+    // No adoptable fd (generic Duplex / not yet connected / a Windows named
+    // pipe), TLS over TLS (the fd belongs to the outer SSL layer), or pending
+    // plain writes that must flush first: run the TLS engine over the stream
+    // itself.
     const [result, events] = upgradeDuplexToTLS(connection, {
       data: this,
       tls,
@@ -4191,10 +4197,11 @@ Server.prototype[kRealListen] = function (
   }
 
   if (contexts) {
-    for (const [name, context] of contexts) {
-      // tls.ts stores the InternalSecureContext wrapper; the native side wants
-      // the native SSL_CTX wrapper at `.context`.
-      addServerName(this._handle, name, context.context ?? context);
+    // tls.ts's addContext() entries, [matcher, SecureContext, hostname]: the
+    // native side wants the native SSL_CTX wrapper at `.context`.
+    for (let i = 0; i < contexts.length; i++) {
+      const entry = contexts[i];
+      addServerName(this._handle, entry[2], entry[1].context);
     }
   }
 

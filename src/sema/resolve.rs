@@ -209,6 +209,8 @@ pub struct Options {
     pub out_dir: String,
     pub root_dir: String,
     pub declaration_dir: String,
+    /// For each referenced project that emits into a directory of its own: where its declaration files go, and its `rootDir`.
+    pub referenced_outputs: Vec<(String, String)>,
     /// `ConfigFilePath`. Empty if there is none.
     pub config_path: String,
     /// The configuration file has `references`.
@@ -901,6 +903,10 @@ pub struct Resolver<'h> {
     ambiguous_roots: std::sync::Mutex<Vec<(bool, String, String)>>,
     /// `OriginalPath` and `ResolvedFileName`, of what was found by way of a link. Only where declaration files are emitted.
     links: std::sync::Mutex<Vec<(String, String)>>,
+    /// `knownSymlinks.Directories`: what a package directory in `node_modules` links to. `None`: it is not a link.
+    linked_packages: RwLock<FxHashMap<String, Option<String>>>,
+    /// By the key of `resolved`.
+    project_reference_redirects: RwLock<FxHashMap<String, ()>>,
 }
 
 /// `guessDirectorySymlink`: the directory that is linked and the link, going by a file at `real` that was found at `link`.
@@ -1009,6 +1015,8 @@ impl<'h> Resolver<'h> {
             resolved: ShardedMap::default(),
             ambiguous_roots: Default::default(),
             links: Default::default(),
+            linked_packages: RwLock::default(),
+            project_reference_redirects: RwLock::default(),
         }
     }
 
@@ -1092,7 +1100,13 @@ impl<'h> Resolver<'h> {
         if let Some(&known) = self.dirs.read().unwrap().get(path) {
             return known;
         }
-        let result = self.host.is_dir(path);
+        // `projectReferenceDtsFakingVfs.DirectoryExists`
+        let result = self.host.is_dir(path)
+            || (!self.options.referenced_outputs.is_empty()
+                && (self.directory_exists_if_project_reference_decl_dir(path)
+                    || self.path_through_linked_package(path).is_some_and(|real| {
+                        self.directory_exists_if_project_reference_decl_dir(&real)
+                    })));
         self.dirs.write().unwrap().insert(path.to_owned(), result);
         result
     }
@@ -1217,7 +1231,36 @@ impl<'h> Resolver<'h> {
                 self.alternates.write().unwrap().insert(key.clone(), types);
             }
         }
+        // `getSourceOfProjectReferenceRedirect`. Also where the output exists: a build would bring it up to date with the source first.
+        let found = found.map(|(path, using_ts_extension, arbitrary_extension)| {
+            match self.source_of_project_reference_redirect(&path) {
+                Some(source) => {
+                    self.project_reference_redirects
+                        .write()
+                        .unwrap()
+                        .insert(key.clone(), ());
+                    (source, using_ts_extension, arbitrary_extension)
+                }
+                None => (path, using_ts_extension, arbitrary_extension),
+            }
+        });
         self.resolved.insert_ref(key, found).clone()
+    }
+
+    /// Whether what `resolve_module_and_extension` found is the source of a declaration file of a referenced project. The
+    /// resolution's own extension is then that of the declaration file.
+    pub fn is_project_reference_redirect(
+        &self,
+        spec: &str,
+        from: &str,
+        mode: ResolutionMode,
+    ) -> bool {
+        !self.options.referenced_outputs.is_empty()
+            && self
+                .project_reference_redirects
+                .read()
+                .unwrap()
+                .contains_key(&resolution_key(spec, from, mode))
     }
 
     /// `AlternateResult` of what `resolve_module_and_extension` found: the file with the types of a package whose `exports` only lead
@@ -1461,6 +1504,9 @@ impl<'h> Resolver<'h> {
         {
             return None;
         }
+        if let Some(source) = self.source_of_project_reference_redirect(&found) {
+            return Some(source);
+        }
         Some(if self.options.preserve_symlinks {
             found
         } else {
@@ -1639,7 +1685,9 @@ impl<'h> Resolver<'h> {
     /// `tryFile`: `path`, if it is a file. With `moduleSuffixes`, the first that is one of `path` with each of them before its extension.
     fn try_file(&self, path: &str) -> Option<String> {
         if self.options.module_suffixes.is_empty() {
-            return self.is_file(path).then(|| path.to_owned());
+            return (self.is_file(path)
+                || self.source_of_project_reference_redirect(path).is_some())
+            .then(|| path.to_owned());
         }
         let extension = known_extension(path);
         let stem = &path[..path.len() - extension.len()];
@@ -1648,6 +1696,94 @@ impl<'h> Resolver<'h> {
             .iter()
             .map(|suffix| format!("{stem}{suffix}{extension}"))
             .find(|c| self.is_file(c))
+    }
+
+    /// `projectReferenceDtsFakingVfs.FileExists`: the source file from which a referenced project would emit the declaration file
+    /// `path`. Lets a package whose `exports` point at build output be imported without building it.
+    fn source_of_project_reference_redirect(&self, path: &str) -> Option<String> {
+        if self.options.referenced_outputs.is_empty()
+            || !matches!(known_extension(path), ".d.ts" | ".d.mts" | ".d.cts")
+        {
+            return None;
+        }
+        self.file_exists_if_project_reference_dts(path).or_else(|| {
+            // `fileOrDirectoryExistsUsingSource`
+            let real = self.path_through_linked_package(path)?;
+            self.file_exists_if_project_reference_dts(&real)
+        })
+    }
+
+    /// `fileExistsIfProjectReferenceDts`
+    fn file_exists_if_project_reference_dts(&self, path: &str) -> Option<String> {
+        for (output_dir, root_dir) in &self.options.referenced_outputs {
+            let Some(relative) = path
+                .strip_prefix(output_dir.as_str())
+                .and_then(|rest| rest.strip_prefix('/'))
+            else {
+                continue;
+            };
+            let extension = known_extension(relative);
+            let sources: &[&str] = match extension {
+                ".d.ts" => &[".ts", ".tsx"],
+                ".d.mts" => &[".mts"],
+                ".d.cts" => &[".cts"],
+                _ => continue,
+            };
+            let stem = join(root_dir, &relative[..relative.len() - extension.len()]);
+            if let Some(source) = sources
+                .iter()
+                .map(|source| [stem.as_str(), *source].concat())
+                .find(|candidate| self.is_file(candidate))
+            {
+                return Some(source);
+            }
+        }
+        None
+    }
+
+    /// `directoryExistsIfProjectReferenceDeclDir`: the output directory of a referenced project, one above it or one inside it.
+    fn directory_exists_if_project_reference_decl_dir(&self, path: &str) -> bool {
+        let is_inside = |inner: &str, outer: &str| {
+            inner
+                .strip_prefix(outer)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        };
+        self.options
+            .referenced_outputs
+            .iter()
+            .any(|(output_dir, _)| is_inside(output_dir, path) || is_inside(path, output_dir))
+    }
+
+    /// `handleDirectoryCouldBeSymlink` of `ParseNodeModuleFromPath`: `path` with the package directory it is in replaced by the
+    /// directory that links to. `None` if it is in no package, or in one that is not a link.
+    fn path_through_linked_package(&self, path: &str) -> Option<String> {
+        const NODE_MODULES: &str = "/node_modules/";
+        let name = bun_core::strings::last_index_of(path.as_bytes(), NODE_MODULES.as_bytes())?
+            + NODE_MODULES.len();
+        let next_separator = |from: usize| {
+            bun_core::strings::index_of_char_usize(&path.as_bytes()[from..], b'/')
+                .map_or(path.len(), |at| from + at)
+        };
+        let mut end = next_separator(name);
+        if path[name..].starts_with('@') && end < path.len() {
+            end = next_separator(end + 1);
+        }
+        let package_root = &path[..end];
+        let known = self
+            .linked_packages
+            .read()
+            .unwrap()
+            .get(package_root)
+            .cloned();
+        let real = known.unwrap_or_else(|| {
+            let real = Some(self.host.realpath(package_root)).filter(|real| real != package_root);
+            self.linked_packages
+                .write()
+                .unwrap()
+                .insert(package_root.to_owned(), real.clone());
+            real
+        })?;
+        Some([real.as_str(), &path[end..]].concat())
     }
 
     /// The first of `stem` with each of `extensions` that is a file.

@@ -80,6 +80,8 @@ pub struct Module {
     pub extensionless_imports: Few<(Atom, bool)>,
     /// `ResolvedFileName`, of those of `imports` that resolve to a copy of a file of a package that is in the program under another path.
     pub redirected_imports: Few<(Atom, ResolutionMode, Atom)>,
+    /// Those of `imports` that resolve to a declaration file of a referenced project, for which its source is loaded.
+    pub project_reference_imports: Few<(Atom, ResolutionMode)>,
     /// The files it refers to, in the order it does: `/// <reference>`s, then imports.
     pub edges: Vec<FileId>,
     /// Nothing refers to it, and it adds nothing to what all files see. So `hir` and `bound` are only there while a thread has it at hand:
@@ -2017,6 +2019,7 @@ impl Files {
         let mut untyped_import_files = Vec::new();
         let mut untyped_import_alternates = Vec::new();
         let mut ts_extension_imports = Vec::new();
+        let mut project_reference_imports = Vec::new();
         let mut arbitrary_extension_imports = Vec::new();
         let mut arbitrary_extension_files = Vec::new();
         let mut extensionless_imports = Vec::new();
@@ -2200,6 +2203,9 @@ impl Files {
                         if using_ts_extension {
                             ts_extension_imports.push((spec, mode));
                         }
+                        if resolver.is_project_reference_redirect(&text, path, mode) {
+                            project_reference_imports.push((spec, mode));
+                        }
                         imports.push((spec, mode, found, i < imported || !is_module_name));
                     }
                     None => {}
@@ -2279,6 +2285,7 @@ impl Files {
             package_json_without_type,
             edges: Vec::new(),
             redirected_imports: Few::default(),
+            project_reference_imports: project_reference_imports.into(),
             is_transient: false,
             adds_nothing: false,
             is_dropped: false,

@@ -539,6 +539,25 @@ fn check_with_references(
     );
     // A file that belongs to a referenced project is checked there, with that project's options.
     let roots: Vec<Vec<String>> = projects.iter().map(|p| p.project.files.clone()).collect();
+    // Where each project's declaration files would go, and the directory they mirror. `None`: next to the sources.
+    let outputs: Vec<Option<(String, String)>> = projects
+        .iter()
+        .map(|p| {
+            let options = &p.project.options;
+            let output_dir = [&options.declaration_dir, &options.out_dir]
+                .into_iter()
+                .find(|dir| !dir.is_empty())?;
+            let root_dir = if options.root_dir.is_empty() {
+                parent_dir(&p.project.config_path)
+            } else {
+                options.root_dir.as_str()
+            };
+            Some((
+                output_dir.trim_end_matches('/').to_owned(),
+                root_dir.trim_end_matches('/').to_owned(),
+            ))
+        })
+        .collect();
     let references: Vec<Vec<usize>> = projects.iter().map(|p| p.references.clone()).collect();
     let last = projects.len() - 1;
     for (index, referenced) in projects.into_iter().enumerate() {
@@ -559,6 +578,10 @@ fn check_with_references(
                 pending.extend(&references[i]);
             }
         }
+        project.options.referenced_outputs = (0..roots.len())
+            .filter(|&i| is_referenced[i])
+            .filter_map(|i| outputs[i].clone())
+            .collect();
         let own: std::collections::HashSet<&str> =
             roots[index].iter().map(String::as_str).collect();
         let owned_elsewhere: std::collections::HashSet<&str> = (0..roots.len())

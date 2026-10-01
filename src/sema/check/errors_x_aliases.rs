@@ -2282,7 +2282,12 @@ impl Checker<'_> {
         };
         let target = files.module(target);
         // `GetResolutionDiagnostic`. A file that is refused is not loaded for the sake of the import.
-        if target.path.ends_with(".tsx") && options.jsx == JsxEmit::None {
+        if target.path.ends_with(".tsx")
+            && options.jsx == JsxEmit::None
+            && !importing
+                .project_reference_imports
+                .contains(&(spec, site.mode))
+        {
             out.push(Diagnostic { start, code: 6142 });
             self.note(start, 0, 6142, vec![text.to_string(), target.path.clone()]);
             if !options.files.contains(&target.path) {

@@ -1352,7 +1352,9 @@ impl Checker<'_> {
             // program.
             let path = &self.files().module(target).path;
             let is_jsx_file = path.ends_with(".jsx");
-            let is_refused = !is_jsx_set && (is_jsx_file || path.ends_with(".tsx"));
+            let is_refused = !is_jsx_set
+                && (is_jsx_file || path.ends_with(".tsx"))
+                && !module.project_reference_imports.contains(&(spec, mode));
             if is_refused {
                 out.push(Diagnostic { start, code: 6142 });
                 self.explain(start, 6142, |c| vec![c.atom_text(spec), path.clone()]);

@@ -570,6 +570,60 @@ describe.concurrent("bun check", () => {
       );
     });
 
+    test("a package that exports its build output is imported from source", async () => {
+      // Nothing was built: no `dist` directory exists.
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "packages/app" }] }),
+        "console.d.ts": "",
+        "packages/lib/package.json": JSON.stringify({ name: "lib", exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" } } }),
+        "packages/lib/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, rootDir: "src", outDir: "dist" }, include: ["src"] }),
+        "packages/lib/src/index.ts": `export const double = (n: number) => n * 2;\n`,
+        // A scoped package, found through `main` and a directory, with `declarationDir`.
+        "packages/scoped/package.json": JSON.stringify({ name: "@scope/pkg", main: "./build/js", types: "./build/types" }),
+        "packages/scoped/tsconfig.json": JSON.stringify({
+          compilerOptions: { ...options, jsx: "preserve", rootDir: "src", outDir: "build/js", declarationDir: "build/types" },
+          include: ["src"],
+        }),
+        "packages/scoped/src/index.tsx": `export const triple = (n: number) => n * 3;\n`,
+        "packages/app/tsconfig.json": JSON.stringify({
+          compilerOptions: options,
+          include: ["src"],
+          references: [{ path: "../lib" }, { path: "../scoped" }],
+        }),
+        "packages/app/src/index.ts": [
+          `import { double } from "lib";`,
+          `import { triple } from "@scope/pkg";`,
+          `export const a: string = double(2);`,
+          `export const b: string = triple(2);`,
+          ``,
+        ].join("\n"),
+      });
+      const modules = join(String(dir), "packages/app/node_modules");
+      mkdirSync(join(modules, "@scope"), { recursive: true });
+      symlinkSync(join(String(dir), "packages/lib"), join(modules, "lib"), "junction");
+      symlinkSync(join(String(dir), "packages/scoped"), join(modules, "@scope/pkg"), "junction");
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "packages/app/src/index.ts(3,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        packages/app/src/index.ts(4,14): error TS2322: Type 'number' is not assignable to type 'string'."
+      `);
+    });
+
+    test("build output is only imported from source for a referenced project", async () => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ compilerOptions: { ...options, composite: false }, include: ["app"] }),
+        "console.d.ts": "",
+        "lib/package.json": JSON.stringify({ name: "lib", types: "./dist/index.d.ts" }),
+        "lib/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, rootDir: "src", outDir: "dist" }, include: ["src"] }),
+        "lib/src/index.ts": `export const double = (n: number) => n * 2;\n`,
+        "app/index.ts": `import { double } from "lib";\nexport const a = double(2);\n`,
+      });
+      mkdirSync(join(String(dir), "node_modules"), { recursive: true });
+      symlinkSync(join(String(dir), "lib"), join(String(dir), "node_modules/lib"), "junction");
+      const { stdout } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`"app/index.ts(1,24): error TS2307: Cannot find module 'lib' or its corresponding type declarations."`);
+    });
+
     test("a reference that does not exist", async () => {
       using dir = monorepo({
         "tsconfig.json": JSON.stringify({

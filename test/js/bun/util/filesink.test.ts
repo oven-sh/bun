@@ -1376,17 +1376,22 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
         const rest = await parked(proc.stderr);
         const buffer = Buffer.alloc(64 * 1024);
         let taken = 0;
+        let progressAt = performance.now();
         while (taken < 4 * buffer.length) {
           let n: number;
           try {
             n = fs.readSync(readFd, buffer);
           } catch (e: any) {
             if (e.code !== "EAGAIN") throw e;
+            if (performance.now() - progressAt > 10_000) {
+              throw new Error(`the child holds the FIFO open and wrote nothing for 10 s, after ${taken} bytes`);
+            }
             await Bun.sleep(10);
             continue;
           }
           if (n === 0) break;
           taken += n;
+          progressAt = performance.now();
         }
         fs.closeSync(readFd);
         readFdOpen = false;

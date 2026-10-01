@@ -40,15 +40,17 @@ pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     Ok(option_loader.to_api())
 }
 
-fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
+fn resolve_jsx_runtime(s: &[u8]) -> api::JsxRuntime {
     if s == b"automatic" {
-        Ok(api::JsxRuntime::Automatic)
+        api::JsxRuntime::Automatic
     } else if s == b"fallback" || s == b"classic" {
-        Ok(api::JsxRuntime::Classic)
-    } else if s == b"solid" {
-        Ok(api::JsxRuntime::Solid)
+        api::JsxRuntime::Classic
     } else {
-        Err(crate::Error::InvalidJSXRuntime)
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: Invalid --jsx-runtime: \"{}\", expected \"automatic\" or \"classic\"",
+            BStr::new(s)
+        );
+        Global::exit(1);
     }
 }
 
@@ -282,6 +284,8 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-ffi-cc                       Throw an error if bun:ffi cc() is called (disables the C compiler)"
     ),
+    // No help text, which hides it: the name is wider than the column `bun --help` prints names in.
+    parse_param!("--disallow-code-generation-from-strings <STR>?"),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
     ),
@@ -400,6 +404,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv"
         ),
         parse_param!(
+            "--bytecode-order <STR>...        With --compile --bytecode: lay the bytecode out by order file(s) a run of the executable wrote (BUN_BYTECODE_ORDER_OUT); comma-separated or repeated, most important first"
+        ),
+        parse_param!(
+            "--compile-jit-policy <NUMBER>    JIT tier-up threshold scale the executable starts with (default 1 = normal; see Bun.unsafe.setJITPolicy)"
+        ),
+        parse_param!(
             "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"
         ),
         parse_param!(
@@ -432,6 +442,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
             "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"
+        ),
+        parse_param!(
+            "--no-optimize-bytecode           With --bytecode: skip the build-time bytecode optimization passes"
         ),
         parse_param!(
             "--watch                          Automatically restart the process on file change"
@@ -765,12 +778,42 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
+pub(crate) use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 
 /// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
-pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
+pub(crate) const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
+
+/// `--disallow-code-generation-from-strings[=<value>]`. Raises the process's level; never lowers it.
+fn disallow_code_generation_from_strings(value: &[u8]) {
+    match bun_core::CodeGenerationFromStrings::from_flag_value(value) {
+        Some(level) => bun_core::disallow_code_generation_from_strings(level),
+        None => {
+            Output::err_generic(
+                "Invalid value for --disallow-code-generation-from-strings: \"{}\". Must be \"strict\", or no value\n",
+                format_args!("{}", BStr::new(value)),
+            );
+            Global::exit(1);
+        }
+    }
+}
+
+/// The level a compiled executable was built with (`--compile-exec-argv`) is a floor. The parser
+/// keeps an option's last value and reads `BUN_OPTIONS` after the embedded flags, so on its own it
+/// would let the environment lower it. `embedded` is the embedded flags as the parser is given them.
+pub(crate) fn disallow_code_generation_from_strings_as_compiled(embedded: &[&bun_core::ZStr]) {
+    for token in embedded {
+        match token
+            .as_bytes()
+            .strip_prefix(b"--disallow-code-generation-from-strings".as_slice())
+        {
+            Some(b"") => disallow_code_generation_from_strings(b""),
+            Some([b'=', value @ ..]) => disallow_code_generation_from_strings(value),
+            _ => {}
+        }
+    }
+}
 
 /// How `Command::which()` treats a flag in front of the subcommand keyword.
 /// The arity comes from `AUTO_PARAMS` so the sniffer and clap agree.
@@ -1149,9 +1192,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // accepted and ignored. Matching is case-insensitive (node uppercases).
             if ctx.debug.hot_reload == HotReload::Watch {
                 let upper = kill_signal.to_ascii_uppercase();
-                match bun_core::SignalCode::from_name(&upper)
-                    .filter(|s| s.platform_number().is_some())
-                {
+                match bun_core::SignalCode::from_name(&upper) {
                     Some(sig) => ctx.debug.watch_kill_signal = sig,
                     None => {
                         Output::print_errorln(format_args!(
@@ -1185,6 +1226,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
         if args.flag(b"--no-ffi-cc") {
             opts.allow_ffi_cc = Some(false);
+        }
+
+        if let Some(value) = args.option(b"--disallow-code-generation-from-strings") {
+            disallow_code_generation_from_strings(value);
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
@@ -1301,8 +1346,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // sets (VirtualMachine::configure_from_env): allows resolving
             // `bun:internal-for-testing` / `internal/test/binding` in release
             // builds. Debug builds always allow them.
-            bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
-                .store(true, core::sync::atomic::Ordering::Relaxed);
+            bun_jsc::module_loader::set_is_allowed_to_use_internal_testing_apis(true);
             bun_resolve_builtins::set_expose_internals_enabled(true);
         }
 
@@ -1684,7 +1728,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 fragment: jsx_fragment.unwrap_or(default_fragment).into(),
                 import_source: jsx_import_source.unwrap_or(default_import_source).into(),
                 runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)?
+                    resolve_jsx_runtime(runtime)
                 } else {
                     api::JsxRuntime::Automatic
                 },
@@ -1700,7 +1744,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     .map(Box::<[u8]>::from)
                     .unwrap_or(prev.import_source),
                 runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)?
+                    resolve_jsx_runtime(runtime)
                 } else {
                     prev.runtime
                 },
@@ -2147,6 +2191,8 @@ fn parse_build_command_options(
             FeatureFlags::BAKE_DEBUGGING_FEATURES && args.flag(b"--debug-no-minify");
     }
 
+    ctx.bundler_options.optimize_bytecode = !args.flag(b"--no-optimize-bytecode");
+
     if ctx.bundler_options.bytecode {
         ctx.bundler_options.output_format = options::Format::Cjs;
         ctx.args.target = Some(api::Target::Bun);
@@ -2321,6 +2367,37 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
+    }
+
+    for order_files in args.options(b"--bytecode-order") {
+        if !ctx.bundler_options.compile || !ctx.bundler_options.bytecode {
+            Output::err_generic("--bytecode-order requires --compile --bytecode", ());
+            Global::crash();
+        }
+        ctx.bundler_options.bytecode_order.extend(
+            strings::split(order_files, b",")
+                .filter(|path| !path.is_empty())
+                .map(Box::<[u8]>::from),
+        );
+    }
+
+    if let Some(jit_policy) = args.option(b"--compile-jit-policy") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--compile-jit-policy requires --compile", ());
+            Global::crash();
+        }
+        match strings::str_utf8(jit_policy).and_then(|s| s.parse::<f32>().ok()) {
+            Some(scale) if scale.is_finite() && scale >= 1.0 => {
+                ctx.bundler_options.compile_jit_policy = scale;
+            }
+            _ => {
+                Output::err_generic(
+                    "Invalid value for --compile-jit-policy: \"{}\". Must be a number \\>= 1",
+                    format_args!("{}", BStr::new(jit_policy)),
+                );
+                Global::exit(1);
+            }
+        }
     }
 
     {

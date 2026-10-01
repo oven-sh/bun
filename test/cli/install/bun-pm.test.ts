@@ -140,6 +140,60 @@ it("should list all dependencies", async () => {
   expect(requested).toBe(2);
 });
 
+// A tarball package's label is the URL it was installed from, which has no length
+// limit. `--all` prints a label in two places: the header of a package that has its own
+// nested node_modules (moo, whose bar/baz conflict with the root's), and the line of a
+// package that has none (bar).
+it("should list all dependencies when a resolution is longer than 512 bytes", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.2": {}, "0.0.3": {}, "0.0.5": {}, latest: "0.0.3" }));
+  const barUrl = `${root_url}/${Buffer.alloc(600, "a").toString()}/bar-0.0.2.tgz`;
+  const mooUrl = `${root_url}/${Buffer.alloc(600, "b").toString()}/moo-0.1.0.tgz`;
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: barUrl,
+        baz: "0.0.5",
+        // moo-0.1.0.tgz depends on bar@0.0.2 and baz@latest
+        moo: mooUrl,
+      },
+    }),
+  );
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+  }
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "ls", "--all"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`${package_dir} node_modules
+├── bar@${barUrl}
+├── baz@0.0.5
+└── moo@${mooUrl}
+    ├── bar@0.0.2
+    └── baz@0.0.3
+`);
+  expect(exitCode).toBe(0);
+});
+
 it("should list top-level aliased dependency", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

@@ -145,8 +145,20 @@ impl JSMySQLQuery {
         if !target.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
+        // A connection that failed or closed answers nothing: a query queued on it would hold the
+        // event loop for ever. The pool hears of a close through `onclose` and stops handing the
+        // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.
+        if !connection.is_active() {
+            return Err(global_object.throw_value(mysql_error_to_js(
+                global_object,
+                "Connection closed",
+                AnyMySQLError::Error::ConnectionClosed,
+            )));
+        }
         this.set_target(target);
         if let Err(err) = this.run(connection) {
+            // Nothing else completes this request: it never reaches the queue.
+            this.mark_as_failed();
             if !global_object.has_exception() {
                 return Err(global_object.throw_value(mysql_error_to_js(
                     global_object,
@@ -265,6 +277,7 @@ impl JSMySQLQuery {
         let event_loop = self.event_loop();
 
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
             this_value,
@@ -356,6 +369,7 @@ impl JSMySQLQuery {
             return;
         };
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
             this_value,
@@ -379,7 +393,6 @@ impl JSMySQLQuery {
         // success path below.
         let errguard = scopeguard::guard(self, |s| {
             s.this_value.with_mut(|v| v.downgrade());
-            let _ = s.query.with_mut(|q| q.fail());
         });
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);

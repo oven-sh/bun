@@ -20,10 +20,7 @@ function getHeapStats() {
   }
 }
 const gc = globalThis.gc || globalThis.Bun?.gc || (() => {});
-const rss =
-  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+const rss = process.memoryUsage.rss;
 const sleep = dur => new Promise(resolve => setTimeout(resolve, dur));
 const ASAN_MULTIPLIER = process.env.ASAN_OPTIONS ? 1 / 10 : 1;
 

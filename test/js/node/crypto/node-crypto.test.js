@@ -1447,7 +1447,10 @@ describe("Certificate spkac argument validation", () => {
 // limit on a loaded machine, so this one test carries its own ceiling. `repeat` and not
 // `Buffer.alloc(n, fill).toString()`: for one character at this size it is twice as fast
 // in a debug build and it does not hold a second 1 GiB.
-it.skipIf(totalmem() < 10 * 1024 ** 3)(
+//
+// Inside a container totalmem() reports the host's RAM. process.constrainedMemory() reports
+// the cgroup limit there. This is the gate blob-oom.test.ts uses.
+it.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
   "a digest, cipher, curve or address string too long to convert to UTF-8 is rejected like a shorter one",
   async () => {
     const cert = readFileSync(path.join(import.meta.dir, "..", "test", "fixtures", "keys", "agent1-cert.pem"), "utf8");

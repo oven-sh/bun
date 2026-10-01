@@ -1346,15 +1346,16 @@ impl RewriterPipe {
         this.resume();
     }
 
-    /// Hold a ref on the pipe across an externally-entered call whose work
-    /// (user handlers, body resolution) can drop the last GC path to the
-    /// Transform cell and sweep it, releasing the cell's ref mid-call. If the
+    /// Hold the pipe, and the cell that roots its wired input, across an external call. If the
     /// pin ends up holding the last ref, the free is deferred past the
     /// caller's frame: a source delivering a chunk follows a `Done` answer
     /// from `write` with `end`, on the same sink snapshot.
     fn pin(&self) -> PipePin {
         self.ref_();
-        PipePin(BackRef::new(self))
+        PipePin {
+            pipe: BackRef::new(self),
+            _cell: jsc::EnsureStillAlive(self.cell.get()),
+        }
     }
 
     /// Nothing is draining the output, so nothing will signal `resume()`:
@@ -1959,11 +1960,15 @@ impl RewriterPipe {
 
 /// Guard returned by [`RewriterPipe::pin`].
 #[must_use = "dropping immediately releases the ref"]
-struct PipePin(BackRef<RewriterPipe>);
+struct PipePin {
+    pipe: BackRef<RewriterPipe>,
+    // The call can cut the last GC path to the cell, then reach the input through a raw handle.
+    _cell: jsc::EnsureStillAlive,
+}
 
 impl Drop for PipePin {
     fn drop(&mut self) {
-        self.0.deref_outside_caller();
+        self.pipe.deref_outside_caller();
     }
 }
 

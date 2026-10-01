@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
@@ -1540,6 +1540,54 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+// Cancelling the output cuts the stream's edge to the transform cell before the
+// pipe tells its input. A collection that finished in between swept the input
+// stream, its pump and its sink controller: the input's cancel() never ran, and
+// the pipe went on to use them (a release ASAN build stops with a SEGV, or with
+// "ASSERTION FAILED: status() == Status::Pending" when a promise took a dead
+// one's place).
+test.concurrent("cancelling the output cancels a JS stream input while a collection is in flight", async () => {
+  // A collector thread that never stops puts a collection inside that window.
+  // It is too slow for Windows and for debug builds, whose unoptimized frames
+  // keep the cell reachable in any case.
+  const stress = !isWindows && !isDebug;
+  const N = stress ? 100 : 50;
+  const code = /* js */ `
+    const N = ${N};
+    const encoder = new TextEncoder();
+    let cancelled = 0;
+    for (let i = 0; i < N; i++) {
+      let controller;
+      const input = new ReadableStream({
+        start: c => void (controller = c),
+        cancel: () => void cancelled++,
+      });
+      // The output Response is a temporary: only its reader is kept.
+      const reader = new HTMLRewriter()
+        .on("div", { element() {} })
+        .transform(new Response(input))
+        .body.getReader();
+      controller.enqueue(encoder.encode("<div>x"));
+      controller = undefined;
+      if ((await reader.read()).done) throw new Error("the output ended early");
+      Bun.gc(false);
+      await reader.cancel();
+    }
+    process.stdout.write(JSON.stringify({ rewrites: N, cancelled }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: stress ? { ...bunEnv, BUN_JSC_collectContinuously: "1" } : bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(withoutAsanWarning(stderr)).toBe("");
+  expect(stdout).toBe(JSON.stringify({ rewrites: N, cancelled: N }));
+  expect(exitCode).toBe(0);
+});
 
 // The same for the array of pending onEndTag() callbacks, whose slots are also
 // read back, cleared and reused. (Passes before the change too.)

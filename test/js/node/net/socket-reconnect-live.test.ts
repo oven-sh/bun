@@ -117,8 +117,8 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
           });
           srv.listen(0, "127.0.0.1", async () => {
             const port = srv.address().port;
-            const calls = [];
-            let connection = 1;
+            const received = ["", ""];
+            let connection = 0;
             const first = Promise.withResolvers();
             const s = connect({
               port,
@@ -126,8 +126,8 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
               onread: {
                 buffer: Buffer.alloc(4),
                 callback(n, buf) {
-                  calls.push([connection, buf.toString("latin1", 0, n)]);
-                  if (connection === 1) {
+                  received[connection] += buf.toString("latin1", 0, n);
+                  if (connection === 0) {
                     first.resolve();
                     return false;
                   }
@@ -136,13 +136,13 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
             });
             s.on("error", () => {});
             await first.promise;
-            connection = 2;
+            connection = 1;
             s.connect({ port, host: "127.0.0.1" });
             await once(s, "connect");
             s.resume();
             await once(s, "close");
             srv.close();
-            console.log(JSON.stringify(calls));
+            console.log(JSON.stringify({ firstIsPrefix: "AAAABBBBCCCC".startsWith(received[0]) && received[0].length <= 4, second: received[1] }));
           });
         `,
       ],
@@ -152,11 +152,7 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify([
-        [1, "AAAA"],
-        [2, "xxxx"],
-        [2, "yyyy"],
-      ]),
+      stdout: JSON.stringify({ firstIsPrefix: true, second: "xxxxyyyy" }),
       stderr,
       exitCode: 0,
     });

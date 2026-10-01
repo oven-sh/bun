@@ -2094,6 +2094,7 @@ Socket.prototype[kCloseRawConnection] = function () {
 
 Socket.prototype.connect = function connect(...args) {
   $debug("Socket.prototype.connect");
+  dropOnreadTail(this);
   {
     const [options, connectListener] =
       $isArray(args[0]) && args[0][normalizedArgsSymbol] ? args[0] : normalizeArgs(args);
@@ -2332,9 +2333,6 @@ Socket.prototype.connect = function connect(...args) {
   }
 
   this.connecting = true;
-  // A live reconnect replaces the native socket, so the undelivered bytes of the old
-  // connection go away with it, as they do in node.
-  dropOnreadTail(this);
 
   const { path } = options;
   const pipe = !!path;
@@ -2514,13 +2512,11 @@ function hasUnflushedWrites(connection) {
   return connection.writableLength > 0 || connection[kwriteCallback] != null;
 }
 
-// Node keeps the bytes a paused onread socket has not taken in the kernel, so they go away
-// with the fd. Bun holds them in kOnreadTail, which must not outlive the connection.
+// The undelivered bytes of a read belong to the connection, as kernel-buffered bytes do in node.
 function dropOnreadTail(self) {
   if (self[kOnreadBuffer] === undefined) return;
   self[kOnreadTail] = undefined;
   self[kOnreadPendingEnd] = false;
-  self[kOnreadReadRequested] = false;
 }
 
 function drainOnreadTail(self, fromRead?) {

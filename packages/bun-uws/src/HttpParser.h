@@ -1226,8 +1226,8 @@ struct HttpResponseData;
              * listener's socket, never a pipelined HTTP request. */
             if (IsNodeHttp && isConnectRequest) [[unlikely]] {
                 void *returnedUser = dataHandler(user, std::string_view(data, length), false);
-                consumedTotal += length;
-                return HttpParserResult::success(consumedTotal, returnedUser);
+                /* An 'upgrade' listener that made the socket a WebSocket left these bytes to the caller. */
+                return HttpParserResult::success(returnedUser != user ? consumedTotal : consumedTotal + length, returnedUser);
             }
             /* RFC 9112 2.2: ignore empty lines (CRLF) received prior to the
              * request-line, like Node/llhttp - e.g. a stray "\r\n" sent on an

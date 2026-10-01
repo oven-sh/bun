@@ -144,10 +144,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketUpgradeToTunnel, (JSC::JS
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    // upgradeToTunnel(afterBody, response): with a truthy afterBody the switch happens only
-    // once the request body has been fully parsed (Upgrade requests with a body).
-    thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject), dynamicDowncast<WebCore::JSNodeHTTPResponse>(callFrame->argument(1)));
-    return JSValue::encode(JSC::jsUndefined());
+    // upgradeToTunnel(afterBody, response, emitWhenReadParsed): with a truthy afterBody the switch happens only
+    // once the request body has been fully parsed (Upgrade requests with a body). Returns whether ondata
+    // gets a call when the read that carried the request is parsed (see Bun__NodeHTTP__onReadParsed).
+    return JSValue::encode(jsBoolean(thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject), dynamicDowncast<WebCore::JSNodeHTTPResponse>(callFrame->argument(1)), callFrame->argument(2).toBoolean(globalObject))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStop, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

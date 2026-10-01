@@ -17,7 +17,6 @@
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_grantConnection(void* zigResponse);
-extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
@@ -128,7 +127,7 @@ template<bool SSL>
 static void onNodeHttpReadsResumable(us_socket_t* socket);
 
 template<bool SSL>
-static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
+static bool upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody, bool emitWhenReadParsed)
 {
     auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
     if (afterBody) {
@@ -136,17 +135,23 @@ static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
          * switch into tunnel mode once the message completes (Node 26 delivers
          * the body through the request before raw data starts flowing). */
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY;
-        return;
+        /* A socket that shut down leaves the parser at the end of this dispatch: the rest of its read is not parsed. */
+        if (emitWhenReadParsed && !us_socket_is_shut_down(socket) && uWS::HttpContext<SSL>::getSocketContextDataS(socket)->isParsing(socket)) {
+            httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
+            return true;
+        }
+        return false;
     }
     httpResponseData->isConnectRequest = true;
     /* resume() on a response does nothing in tunnel mode: lift what paused reads before it (req.pause(), flood prevention). */
     onNodeHttpReadsResumable<SSL>(socket);
+    return false;
 }
 
-void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response)
+bool JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response, bool emitWhenReadParsed)
 {
     if (!socket || us_socket_is_closed(socket)) {
-        return;
+        return false;
     }
     /* Like Node's http server connections (allowHalfOpen: true): the peer
      * finishing its writable side ends the tunnel's readable side without
@@ -155,16 +160,15 @@ void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody, WebCore::JSNode
     socket->flags.allow_half_open = 1;
     /* Reuse the CONNECT plumbing so the parser stops interpreting subsequent
      * bytes as HTTP and routes them to the ondata callback as opaque data. */
-    if (is_ssl) {
-        upgradeToTunnelModeImpl<true>(socket, afterBody);
-    } else {
-        upgradeToTunnelModeImpl<false>(socket, afterBody);
-    }
+    const bool emitsWhenReadParsed = is_ssl
+        ? upgradeToTunnelModeImpl<true>(socket, afterBody, emitWhenReadParsed)
+        : upgradeToTunnelModeImpl<false>(socket, afterBody, emitWhenReadParsed);
     /* The exchange leaves HTTP here: let the response release the server's
      * pending-request accounting (see Flags::TUNNELED in NodeHTTPResponse.rs). */
     if (response != nullptr && response->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_markTunneled(response->m_ctx);
     }
+    return emitsWhenReadParsed;
 }
 
 template<bool SSL>
@@ -621,26 +625,6 @@ extern "C" void Bun__NodeHTTP__onReadsPaused(int ssl, us_socket_t* socket)
     }
 }
 
-template<bool SSL>
-static bool notifyWhenNodeHttpReadParsed(us_socket_t* socket)
-{
-    if (!uWS::HttpContext<SSL>::getSocketContextDataS(socket)->isParsing(socket)) {
-        return false;
-    }
-    auto* d = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
-    d->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
-    return true;
-}
-
-// False when no read of this socket is being parsed: its body state is already exact.
-extern "C" bool Bun__NodeHTTP__notifyWhenReadParsed(int ssl, us_socket_t* socket)
-{
-    if (!socket || us_socket_is_closed(socket)) {
-        return false;
-    }
-    return ssl ? notifyWhenNodeHttpReadParsed<true>(socket) : notifyWhenNodeHttpReadParsed<false>(socket);
-}
-
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, us_socket_t* socket)
 {
     if (ssl) {
@@ -1078,7 +1062,10 @@ extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl
     return JSValue::encode(getNodeHTTPServerSocket<false>(socket));
 }
 
-extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)
+// uWS has parsed the read that carried the head of an Upgrade request with a body, and `head` is what follows the
+// body in it. ondata holds the 'upgrade' emit that waited for this. Not a task: the listener runs before anything
+// of a later read.
+extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket, const char* head, int length)
 {
     if (us_socket_is_closed(socket)) {
         return;
@@ -1087,9 +1074,20 @@ extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)
     if (!serverSocket) {
         return;
     }
-    if (auto* res = serverSocket->currentResponse(); res != nullptr && res->m_ctx != nullptr) {
-        Bun__NodeHTTPResponse_onReadParsed(res->m_ctx);
+    auto* callback = serverSocket->functionToCallOnData.get();
+    if (!callback) {
+        return;
     }
+    auto* globalObject = defaultGlobalObject(serverSocket->globalObject());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    JSValue chunk = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(head), static_cast<size_t>(length)));
+    if (auto* exception = scope.exception()) {
+        (void)scope.tryClearException();
+        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return;
+    }
+    EnsureStillAliveScope keepSocket(serverSocket);
+    Bun__EventLoop__runCallback2(globalObject, JSValue::encode(callback), JSValue::encode(serverSocket), JSValue::encode(chunk), JSValue::encode(jsBoolean(false)));
 }
 
 // Returns the JSNodeHTTPServerSocket already attached to this raw socket, or

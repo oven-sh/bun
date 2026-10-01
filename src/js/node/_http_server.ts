@@ -34,7 +34,6 @@ const {
   kInternalSocketData,
   serverSymbol,
   kHandle,
-  kOnReadParsed,
   kHandoffResponse,
   kRealListen,
   tlsSymbol,
@@ -1040,9 +1039,15 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // switches into CONNECT-style tunnel mode immediately. With a body
           // (Node 26 semantics) the body keeps being parsed and delivered
           // through req; the connection only switches to tunnel mode once the
-          // message completes, so the upgradeHead is empty and everything after
-          // the end of the message reaches the socket as raw data.
-          socketHandle.upgradeToTunnel(hasBody, handle);
+          // message completes. Node.js emits 'upgrade' when it has parsed the
+          // read that carried the request. So when bytes follow the head in
+          // that read, the emit waits until uWS has parsed them, and the
+          // upgradeHead is what follows the body in it.
+          const emitWhenReadParsed = socketHandle.upgradeToTunnel(
+            hasBody,
+            handle,
+            connectHead !== undefined && !socket.destroyed,
+          );
           socket[kHandoffResponse] = handle;
           socket[kEnableStreaming](true);
           detachSocketListenersForHandoff(socket);
@@ -1054,18 +1059,20 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           } else {
             http_req.complete = true;
           }
-          const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
-          let upgradeHandled;
-          try {
-            upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
-          } catch (err) {
-            // A throwing 'upgrade' listener surfaces as an uncaught
-            // exception, like Node.js (the emit happens outside any JS try
-            // frame there).
-            process.nextTick(rethrowUncaught, err);
-            upgradeHandled = true;
+          if (emitWhenReadParsed) {
+            const upgradePromise = $newPromise();
+            socket[kPendingUpgrade] = socketHandle.ondata = emitPendingUpgrade.bind(
+              undefined,
+              server,
+              http_req,
+              socket,
+              upgradePromise,
+              socketHandle.ondata,
+              $getInternalField($asyncContext, 0),
+            );
+            return upgradePromise;
           }
-          if (!upgradeHandled) {
+          if (!emitUpgrade(server, http_req, socket, !hasBody && connectHead ? connectHead : kEmptyBuffer)) {
             // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
             // listener is installed: Node.js destroys the socket.
             socket.destroy();
@@ -1342,6 +1349,8 @@ function onServerClientError(
     nodeSocket.parser = createServerParserShim(nodeSocket);
     self.emit("connection", nodeSocket);
   }
+  // The error is in the read an 'upgrade' emit waited for: its listener comes first.
+  nodeSocket[kPendingUpgrade]?.();
 
   if (errorCode === HttpParserError.HTTP_PARSER_ERROR_MISSING_HOST_HEADER) {
     replyMissingHostHeader(nodeSocket);
@@ -1424,6 +1433,47 @@ const kEnableStreaming = Symbol("kEnableStreaming");
 // resumes this request, like Node.js's UpgradeStream._read, so an unread body
 // can never stall the upgrade data behind it.
 const kUpgradeIncoming = Symbol("kUpgradeIncoming");
+// The 'upgrade' emit of a request with a body, while it waits for uWS to parse the read that carried the request.
+const kPendingUpgrade = Symbol("kPendingUpgrade");
+
+// True when a listener took the socket.
+function emitUpgrade(server, req, socket, head) {
+  try {
+    return server.emit("upgrade", req, socket, head);
+  } catch (err) {
+    // A throwing 'upgrade' listener surfaces as an uncaught
+    // exception, like Node.js (the emit happens outside any JS try
+    // frame there).
+    process.nextTick(rethrowUncaught, err);
+    return true;
+  }
+}
+
+// Node.js emits 'upgrade' from onParserExecuteCommon, when it has parsed the read that carried the request. This
+// is that emit for a read that holds more than the head. It sits in the socket's ondata until native calls it, once
+// and outside a task, with what follows the body in that read. A socket that closes before that, or whose read does
+// not parse, runs it with no head.
+function emitPendingUpgrade(server, req, socket, promise, ondata, asyncContextFrame, head?: Buffer, last?: boolean) {
+  if (socket[kPendingUpgrade] === undefined) return ondata(head, last);
+  socket[kPendingUpgrade] = undefined;
+  const handle = socket[kHandle];
+  // destroy() took ondata away: the socket reads no more.
+  if (handle?.ondata !== undefined) handle.ondata = ondata;
+  // The body is complete: a read of the socket has no request to resume.
+  if (req.complete) socket[kUpgradeIncoming] = undefined;
+  // The listener runs in the async context of the dispatch, as it does when the emit does not wait.
+  const restore = $getInternalField($asyncContext, 0);
+  $putInternalField($asyncContext, 0, asyncContextFrame);
+  let handled;
+  try {
+    handled = emitUpgrade(server, req, socket, head ?? kEmptyBuffer);
+  } finally {
+    $putInternalField($asyncContext, 0, restore);
+  }
+  socket.once("close", resolveHandoffPromise.bind(undefined, promise));
+  if (!handled) socket.destroy();
+  if (last) ondata(undefined, true);
+}
 
 // Like Node.js's net.Socket onReadableStreamEnd: every socket carries one 'end'
 // listener. http server connections have allowHalfOpen: true, so it is a no-op,
@@ -1634,7 +1684,7 @@ function getNodeHTTPServerSocket() {
     [kBytesWritten] = 0;
     [kHandle];
     [kUpgradeIncoming]: import("node:http").IncomingMessage | undefined = undefined;
-    [kOnReadParsed] = undefined;
+    [kPendingUpgrade] = undefined;
     [kHandoffResponse] = undefined;
     [kDestroySoon] = false;
     [kHandedOff] = false;
@@ -1883,6 +1933,8 @@ function getNodeHTTPServerSocket() {
         this.#pendingCallback = null;
         (pendingCallback as Function)(writeFailure);
       }
+      // The socket closed inside the read its 'upgrade' emit waited for.
+      this[kPendingUpgrade]?.();
     }
     #onCloseForDestroy(closeCallback, err: Error | undefined, handle) {
       this.#onClose(handle);
@@ -2001,8 +2053,6 @@ function getNodeHTTPServerSocket() {
         response?.resume();
         // Not paused: req.complete is false in the listener, so it can wait for 'end' with no reader.
         if (upgradeIncoming.readableFlowing !== false) upgradeIncoming.resume();
-        // The 'upgrade' listener runs before the rest of its read is parsed; that rest can complete the body.
-        else if (response?.notifyWhenReadParsed()) this[kOnReadParsed] = resumePausedUpgradeIncoming;
         else resumePausedUpgradeIncoming(this);
         return;
       }

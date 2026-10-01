@@ -37,7 +37,7 @@
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
-extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
+extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s, const char *head, int length);
 
 namespace uWS {
 
@@ -649,6 +649,18 @@ private:
             }
 
             if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
+                if constexpr (IsNodeHttp) {
+                    /* The bytes behind the body of an Upgrade request, in the read that carried its head: the head of its 'upgrade' event, not data of the tunnel. */
+                    if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED) [[unlikely]] {
+                        httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
+                        Bun__NodeHTTP__onReadParsed(SSL, (struct us_socket_t *) user, data.data(), (int) data.length());
+                        /* That ran JavaScript: a closed or upgraded socket no longer has an HttpResponseData. */
+                        if (httpContextData->upgradedWebSocket || us_socket_is_closed((struct us_socket_t *) user)) {
+                            return nullptr;
+                        }
+                        return user;
+                    }
+                }
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
             }
 
@@ -790,7 +802,7 @@ private:
             if constexpr (IsNodeHttp) {
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED) {
                     httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
-                    Bun__NodeHTTP__onReadParsed(SSL, (us_socket_t *) returnedData);
+                    Bun__NodeHTTP__onReadParsed(SSL, (us_socket_t *) returnedData, nullptr, 0);
                     /* That ran JavaScript: a closed or upgraded socket no longer has an HttpResponseData. */
                     if (us_socket_is_closed((us_socket_t *) returnedData) || us_socket_kind((us_socket_t *) returnedData) != socketKind()) {
                         ((AsyncSocket<SSL> *) returnedData)->uncork();

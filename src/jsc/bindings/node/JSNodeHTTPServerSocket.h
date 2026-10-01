@@ -139,8 +139,10 @@ public:
      * Upgrade: subsequent bytes bypass the HTTP parser and stream to the
      * ondata callback as opaque data. With afterBody, the switch is deferred
      * until the request body has been fully parsed (Upgrade requests with a
-     * body deliver it through the request first, like Node 26). */
-    void upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response);
+     * body deliver it through the request first, like Node 26). With
+     * emitWhenReadParsed as well, true means that Bun__NodeHTTP__onReadParsed
+     * calls ondata once uWS has parsed the read that carried the request. */
+    bool upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response, bool emitWhenReadParsed);
 
     /* Tunnel read backpressure, like net.Socket's handle. Both do nothing outside tunnel mode. */
     void readStop();

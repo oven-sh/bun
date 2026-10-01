@@ -12,3 +12,6 @@ left out (Bun rejects): /workspace/wt/cli/test/js/node/test/fixtures/es-modules/
 corpus-ts.json: cases 895, same 895, differ 0
 all: cases 895, same 895, differ 0 {}; reports of ESLint 9
 # node oracle/native.cjs /tmp/rx/random3.json   (node oracle/gen-random.cjs 7000 777)
+all: cases 5923, same 5923, differ 0 {}; reports of ESLint 10830
+# node oracle/native.cjs <the eleven fixtures of test/cli/lint/rules>
+all: cases 3341, same 3307, differ 34 {"missing":34}; reports of ESLint 166

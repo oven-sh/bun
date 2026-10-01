@@ -1,0 +1,47 @@
+RESEARCH OF D3, "rules-expressions": six rules on expression shape. Nothing here is in the tree.
+no-cond-assign, no-constant-binary-expression, no-constant-condition, no-dupe-else-if, no-extra-boolean-cast, no-unsafe-optional-chaining.
+
+The oracle is ESLint at the pin of src/lint/UPSTREAM_PORTED (/workspace/ref/eslint) and, for a case with `ext`, the parser of
+typescript-eslint (/workspace/ref/tseslint); sh ../tools/eslint-oracle-setup.sh restores both.
+
+probe/               A NATIVE BINARY: the six rules as they are to be written, on the tree and the wrapper records of
+                     Parser::parse_for_lint and on the scanner of src/lint/tokens.rs. It links the rlibs of the debug build of
+                     /workspace/wt/cli (built at be1ebe5295), as c3-rule-support-unification/probe does.
+  build.py           /workspace/tools/lk python3 probe/build.py /tmp/rx/probe        (a few seconds; needs build/debug of the worktree)
+  src/main.rs        probe <file>...        every statement and expression of the walk with the wrapper records that name it,
+                                            the records that name no node of the walk (UNMATCHED), the symbols of the parse pass
+                     probe six <file>...    `path(line,col): rule: message` of the six rules
+                     probe dupe <file>...   no-dupe-else-if alone
+  src/dupe.rs        the support every rule uses (the index of the records by operand, plain, parens, start_of_node with its two
+                     shortcuts, start_of_place), operand_key on tokens.rs, and no-dupe-else-if
+  src/six.rs         ES_GLOBALS, is_global from ParsedForLint::symbols, isConstant and isLogicalIdentity folded over a chain,
+                     the other five rules, and the walk with every call site
+  src/shims.rs       the native symbols a parse reaches (copy of c3-rule-support-unification/probe/src/shims.rs)
+  Not the final text: String, index syntax, println and comments of more than one line, which the workspace refuses; an array
+  that is a pattern is not told from a literal (linter.rs knows it).
+
+oracle/native.cjs    node native.cjs [--show] <list.json>...   the probe against ESLint, case by case: rule, line:column, message.
+                     A list: codes, or { code, jsx?, ext?, file? }, or { valid, invalid } of extract.cjs. No comment configures ESLint.
+oracle/proto.cjs     node proto.cjs <list.json | --code <code>...> [--ts] [--show]   the same rules in JavaScript, on ESLint's tree
+                     turned into what Bun's parse pass keeps; it was written first and the probe follows it.
+oracle/extract.cjs   node extract.cjs <rule>   ESLint's own cases of the rule that run with its default options and ESLint's parser.
+oracle/cross.cjs     node cross.cjs existing|upstream [--json]   which cases make which other rule report (ESLint): the cases of the
+                     eleven fixtures of the tree for the six rules, and ESLint's cases of the six for the other sixteen.
+oracle/cross-own.cjs node cross-own.cjs [--json]   the same for cases/edge-*.json and cases/ts-*.json.
+oracle/gen-random.cjs, fuzz.cjs   random expressions: node gen-random.cjs 7000 777 > list.json; node fuzz.cjs 4000 7 (prototype).
+oracle/run.cjs, ts.cjs   ESLint over snippets: node run.cjs <rule[,rule]> <code>...; node ts.cjs <rule[,rule]> <code>... (typescript-eslint).
+oracle/bun-parse.cjs, probe-parse.cjs   which cases the debug build (bun --lint) and Parser::parse_for_lint (the probe) reject.
+oracle/native-dupe.cjs   the first comparison, of `probe dupe` alone.
+
+cases/upstream-<rule>.json   extract.cjs: ESLint's cases with the default options. Without those that set globals:
+                             no-cond-assign 18+7, no-constant-binary-expression 50+233, no-constant-condition 145+135,
+                             no-dupe-else-if 34+55, no-extra-boolean-cast 28+218, no-unsafe-optional-chaining 58+64 (valid+invalid).
+cases/edge-<rule>.json       JavaScript cases written for this research (65, 185, 155, 91, 97, 107).
+cases/ts-<rule>.json         TypeScript cases, `ext` ts or tsx (37, 63, 64, 43, 51, 65).
+cases/ts-globals.json        26 TypeScript cases about which names a file declares and about syntax that leaves no node.
+answers/native-lists.txt     native.cjs over all of cases/: 2064 cases of the six rules, 2052 the same; ts-globals 26, 12 the same.
+answers/native-corpora.txt   native.cjs over 3593 real JavaScript files, 895 real TypeScript files, 5923 random cases: all the same;
+                             over the eleven fixtures of the tree: 3341 cases, 34 missing (a name declared elsewhere in the file).
+answers/upstream-<rule>.jsonl   ../rules-statements/oracle/oracle.cjs over ESLint's cases.
+answers/cross-existing-fixtures.jsonl   cross.cjs existing --json: 159 cases of the eleven fixtures on which one of the six reports.
+answers/cross-upstream.jsonl, cross-own-lists.jsonl   144 and 60 cases of the lists on which another rule reports.

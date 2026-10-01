@@ -11,6 +11,8 @@ mkdir -p "$SCRATCH/src" "$SCRATCH/out"
 cp -r "$ROOT/src/js_parser" "$SCRATCH/src/js_parser"
 python3 "$HERE/apply.py" "$SCRATCH/src/js_parser"
 python3 "$HERE/apply_tests.py" "$SCRATCH/src/js_parser"
+cp "$HERE/zz_probe.rs" "$SCRATCH/src/js_parser/zz_probe.rs"
+printf '\n#[cfg(test)]\nmod zz_probe;\n' >> "$SCRATCH/src/js_parser/lib.rs"
 BUILD="$ROOT/target/debug/build"
 EXTERNS=""
 for name in thiserror bitflags bun_collections strum smallvec bun_react_compiler enumset bun_options_types bun_wyhash bun_core bun_ast bun_base64 bstr bun_url bun_ptr bun_alloc bytemuck scopeguard bun_crash_handler bun_paths bun_highway; do

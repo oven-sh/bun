@@ -11,7 +11,7 @@ use bun_jsc::exception_list::{JsException, StackTrace};
 
 const HTML_TEMPLATE: &[u8] = include_bytes!("dev-error-page.html");
 
-pub struct DevErrorPage<'a> {
+pub(crate) struct DevErrorPage<'a> {
     /// One-line summary, e.g. `GET /foo failed`.
     pub message: &'a [u8],
     pub cwd: &'a [u8],
@@ -21,7 +21,7 @@ pub struct DevErrorPage<'a> {
 }
 
 impl DevErrorPage<'_> {
-    pub fn render(&self) -> Vec<u8> {
+    pub(crate) fn render(&self) -> Vec<u8> {
         let mut json = Vec::new();
         self.write_json(&mut json);
         substitute_named(
@@ -30,11 +30,11 @@ impl DevErrorPage<'_> {
                 (b"error_json", &escape_for_script_element(&json)),
                 (
                     b"bun_error_css",
-                    bun_core::runtime_embed_file!(Codegen, "bun-error/bun-error.css").as_bytes(),
+                    bun_zstd::embed_compressed!(codegen "bun-error/bun-error.css"),
                 ),
                 (
                     b"bun_error_js",
-                    bun_core::runtime_embed_file!(Codegen, "bun-error/index.js").as_bytes(),
+                    bun_zstd::embed_compressed!(codegen "bun-error/index.js"),
                 ),
             ],
         )
@@ -169,7 +169,7 @@ fn write_message_data(w: &mut Vec<u8>, text: &[u8], location: Option<&Location>)
         w.extend_from_slice(b",\"location\":{\"file\":");
         write_string(w, &location.file);
         w.extend_from_slice(b",\"namespace\":");
-        write_string(w, location.namespace);
+        write_string(w, &location.namespace);
         w.extend_from_slice(b",\"line_text\":");
         write_string(w, location.line_text.as_deref().unwrap_or(b""));
         write!(

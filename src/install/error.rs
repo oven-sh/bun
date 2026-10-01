@@ -14,8 +14,6 @@ pub enum Error {
     SystemFdQuotaExceeded,
     #[error("SystemResources")]
     SystemResources,
-    #[error("DeviceBusy")]
-    DeviceBusy,
     #[error("TarballHTTP400")]
     TarballHTTP400,
     #[error("TarballHTTP401")]
@@ -156,8 +154,6 @@ pub enum Error {
     DebugTextLockfileRoundTrip,
     #[error("NoPackage")]
     NoPackage,
-    #[error("BrokenPipe")]
-    BrokenPipe,
     #[error("WriteFailed")]
     WriteFailed,
     #[error("InvalidCharacter")]
@@ -180,8 +176,6 @@ pub enum Error {
     MissingPackageName,
     #[error("GlobError")]
     GlobError,
-    #[error("Invalid")]
-    Invalid,
     #[error("Lockfile validation failed: list is impossibly long")]
     LockfileValidationFailedListIsImpossiblyLong,
     #[error("Lockfile validation failed: alignment mismatch")]
@@ -254,7 +248,6 @@ impl Error {
             Self::SymLinkLoop => "SymLinkLoop",
             Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
             Self::SystemResources => "SystemResources",
-            Self::DeviceBusy => "DeviceBusy",
             Self::TarballHTTP400 => "TarballHTTP400",
             Self::TarballHTTP401 => "TarballHTTP401",
             Self::TarballHTTP402 => "TarballHTTP402",
@@ -329,7 +322,6 @@ impl Error {
             Self::RepositoryNotFound => "RepositoryNotFound",
             Self::DebugTextLockfileRoundTrip => "DebugTextLockfileRoundTrip",
             Self::NoPackage => "NoPackage",
-            Self::BrokenPipe => "BrokenPipe",
             Self::WriteFailed => "WriteFailed",
             Self::InvalidCharacter => "InvalidCharacter",
             Self::InvalidLockfile => "InvalidLockfile",
@@ -343,7 +335,6 @@ impl Error {
             Self::LockfileIsMissingResolutionData => "Lockfile is missing resolution data",
             Self::MissingPackageName => "MissingPackageName",
             Self::GlobError => "GlobError",
-            Self::Invalid => "Invalid",
             Self::LockfileValidationFailedListIsImpossiblyLong => {
                 "Lockfile validation failed: list is impossibly long"
             }

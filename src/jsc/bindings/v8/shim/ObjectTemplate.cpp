@@ -66,11 +66,7 @@ DEFINE_VISIT_CHILDREN(ObjectTemplate);
 
 Structure* ObjectTemplate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return Structure::create(
-        vm,
-        globalObject,
-        prototype,
-        JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags),
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags),
         info());
 }
 

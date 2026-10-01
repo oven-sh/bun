@@ -4,7 +4,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_core::{StringPointer, ZigString};
+use bun_core::{EncodedSlice, StringPointer};
 use bun_http::Headers;
 use bun_http::headers::{EntryList, api};
 use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
@@ -123,7 +123,6 @@ pub fn to_fetch_headers(
     global: &JSGlobalObject,
 ) -> JsResult<NonNull<FetchHeaders>> {
     use bun_http_types::ETag::HeaderEntryColumns;
-    use bun_jsc::JsError;
     if this.entries.len() == 0 {
         return Ok(FetchHeaders::create_empty());
     }
@@ -139,10 +138,9 @@ pub fn to_fetch_headers(
         // `from_bytes` scans for
         // non-ASCII and tags UTF-8; `init` would leave the buffer Latin-1
         // and mojibake any UTF-8 header value bytes ≥0x80.
-        &ZigString::from_bytes(this.buf.as_slice()),
+        &EncodedSlice::from_bytes(this.buf.as_slice()),
         this.entries.len() as u32,
     )
-    .ok_or(JsError::Thrown)
 }
 
 struct H2TestingAPIs;

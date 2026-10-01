@@ -9,6 +9,7 @@
       "harness": ["./harness.ts"],
       "mkfifo": ["./mkfifo.ts"],
       "node-harness": ["./js/node/harness.ts"],
+      "s3-server": ["./packages/s3-server/index.ts"],
       "deno:harness": ["./js/deno/harness.ts"],
       "bun:internal-for-testing": ["../src/js/internal-for-testing.ts"],
       "foo/bar": ["./js/bun/resolve/baz.js"],
@@ -41,6 +42,7 @@
     "./snapshots",
     "./js/deno",
     "./node.js", // entire node.js upstream repository
-    "regression/issue/14477/*-mismatch.tsx" // deliberately-mismatched JSX, the test asserts the parse error
+    "regression/issue/14477/*-mismatch.tsx", // deliberately-mismatched JSX, the test asserts the parse error
+    "integration/bun-types/fixture/ts7.1" // only types with TypeScript >= 7.1, see bun-types.test.ts
   ]
 }

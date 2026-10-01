@@ -29,7 +29,7 @@ namespace WebCore {
 
 template<> JsonWebKey convertDictionary<JsonWebKey>(JSC::JSGlobalObject&, JSC::JSValue);
 
-JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const JsonWebKey&, bool ignoreExtAndKeyOps = false);
+JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const JsonWebKey&);
 
 } // namespace WebCore
 

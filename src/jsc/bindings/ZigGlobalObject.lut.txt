@@ -17,9 +17,9 @@
   queueMicrotask                  functionQueueMicrotask                               Function 1
   removeEventListener             jsFunctionRemoveEventListener                        Function 2
   reportError                     functionReportError                                  Function 1
-  setImmediate                    functionSetImmediate                                 Function 1
-  setInterval                     functionSetInterval                                  Function 1
-  setTimeout                      functionSetTimeout                                   Function 1
+  setImmediate                    createSetImmediateFunction                           PropertyCallback
+  setInterval                     createSetIntervalFunction                            PropertyCallback
+  setTimeout                      createSetTimeoutFunction                             PropertyCallback
   structuredClone                 WebCore::jsFunctionStructuredClone                    Function 2
 
   global                          GlobalObject_getGlobalThis                           PropertyCallback
@@ -31,17 +31,17 @@
   performance                     GlobalObject::m_performanceObject                    CellProperty
   process                         GlobalObject::m_processObject                        CellProperty
 
-  Blob                            GlobalObject::m_JSBlob                               ClassStructure
+  Blob                            GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBlob]                               ClassStructure
   Buffer                          GlobalObject::m_JSBufferClassStructure               ClassStructure
-  BuildError                      GlobalObject::m_JSBuildMessage                       ClassStructure
-  BuildMessage                    GlobalObject::m_JSBuildMessage                       ClassStructure
-  Crypto                          GlobalObject::m_JSCrypto                             ClassStructure
-  HTMLRewriter                    GlobalObject::m_JSHTMLRewriter                       ClassStructure
-  Request                         GlobalObject::m_JSRequest                            ClassStructure
-  ResolveError                    GlobalObject::m_JSResolveMessage                     ClassStructure
-  ResolveMessage                  GlobalObject::m_JSResolveMessage                     ClassStructure
-  Response                        GlobalObject::m_JSResponse                           ClassStructure
-  TextDecoder                     GlobalObject::m_JSTextDecoder                        ClassStructure
+  BuildError                      GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
+  BuildMessage                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
+  Crypto                          GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSCrypto]                             ClassStructure
+  HTMLRewriter                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSHTMLRewriter]                       ClassStructure
+  Request                         GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSRequest]                            ClassStructure
+  ResolveError                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResolveMessage]                     ClassStructure
+  ResolveMessage                  GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResolveMessage]                     ClassStructure
+  Response                        GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResponse]                           ClassStructure
+  TextDecoder                     GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSTextDecoder]                        ClassStructure
 
   AbortController                 AbortControllerConstructorCallback                   PropertyCallback
   AbortSignal                     AbortSignalConstructorCallback                       PropertyCallback

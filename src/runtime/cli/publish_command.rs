@@ -15,8 +15,8 @@ use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
+use bun_paths as path;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
-use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_sha_hmac as sha;
 use bun_simdutf_sys::simdutf;
@@ -30,8 +30,6 @@ use bun_install::Access;
 use bun_install::dependency;
 use bun_install::{AuthType, LogLevel};
 use bun_sys::FdExt as _;
-
-use crate::api::bun_process::sync as spawn_sync;
 
 // `json_mod::parse_utf8` returns `bun_ast::Expr` (the value-shaped
 // JSON-only `Expr`), not `bun_ast::Expr`, so `Expr::get_string_cloned`
@@ -90,10 +88,10 @@ type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
 pub(crate) struct PublishCommand;
 
-// Const generics cannot vary field types; the script fields and script_env are
-// kept as Option<> in both instantiations and we rely on
-// invariants (always None / never used when DIRECTORY_PUBLISH == false).
-pub(crate) struct Context<'a, const DIRECTORY_PUBLISH: bool> {
+/// What `bun publish` sends, built by [`Context::from_tarball_path`] or
+/// [`Context::from_workspace`]. The script fields and `script_env` are `None`
+/// for a tarball publish, which runs no lifecycle scripts.
+pub(crate) struct Context<'a> {
     pub(crate) manager: &'a mut PackageManager,
     pub(crate) command_ctx: Command::Context<'a>,
 
@@ -135,14 +133,14 @@ bun_core::oom_from_alloc!(FromTarballError);
 
 pub(crate) type FromWorkspaceError = pack::PackError<true>;
 
-impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
+impl<'a> Context<'a> {
     /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
     pub(crate) fn from_tarball_path(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
         tarball_path: &[u8],
-    ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {
-        let mut abs_buf = PathBuffer::uninit();
+    ) -> Result<Context<'a>, FromTarballError> {
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
         let abs_tarball_path = join_abs_string_buf_z::<path::platform::Auto>(
             FileSystem::instance().top_level_dir,
             &mut abs_buf,
@@ -452,14 +450,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
     /// `bun publish` without a tarball path. Automatically pack the current workspace and get
     /// information required for publishing
-    // Note: the return type is pinned to `Context<'static, true>`, the only
-    // valid shape. `'static` matches `pack::pack`'s return —
-    // the embedded `&mut PackageManager` / `Command::Context` are process-
-    // lifetime singletons reborrowed through raw pointers there.
+    // Note: `'static` matches `pack::pack`'s return. The embedded
+    // `&mut PackageManager` / `Command::Context` are process-lifetime
+    // singletons reborrowed through raw pointers there.
     pub(crate) fn from_workspace(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
-    ) -> Result<Context<'static, true>, FromWorkspaceError> {
+    ) -> Result<Context<'static>, FromWorkspaceError> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
@@ -522,7 +519,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             stats: pack::Stats::default(),
         };
 
-        // `pack::<true>` returns `Some(Context<true>)` on success.
+        // `pack::<true>` returns `Some(Context)` on success.
         Ok(pack::pack::<true>(&mut pack_ctx, &abs_pkg_json)?
             .expect("pack::<true> always yields a publish context"))
     }
@@ -555,11 +552,7 @@ impl PublishCommand {
         let manager_ptr: *mut PackageManager = manager;
 
         if cli.positionals.len() > 1 {
-            let context = match Context::<false>::from_tarball_path(
-                ctx,
-                manager,
-                cli.positionals[1],
-            ) {
+            let context = match Context::from_tarball_path(ctx, manager, cli.positionals[1]) {
                 Ok(c) => c,
                 Err(err) => {
                     match err {
@@ -603,17 +596,8 @@ impl PublishCommand {
                 }
             };
 
-            if let Err(err) = Self::publish::<false>(&context) {
-                match err {
-                    PublishError::OutOfMemory => bun_core::out_of_memory(),
-                    PublishError::NeedAuth => {
-                        Output::err_generic(
-                            "missing authentication (run <cyan>`bunx npm login`<r>)",
-                            (),
-                        );
-                        Global::crash();
-                    }
-                }
+            if let Err(err) = Self::publish(&context) {
+                err.report_and_crash();
             }
 
             bun_core::prettyln!(
@@ -630,7 +614,7 @@ impl PublishCommand {
             return Ok(());
         }
 
-        let context = match Context::<true>::from_workspace(ctx, manager) {
+        let context = match Context::from_workspace(ctx, manager) {
             Ok(c) => c,
             Err(err) => {
                 use pack::PackError;
@@ -648,12 +632,6 @@ impl PublishCommand {
                             (),
                         );
                     }
-                    PackError::MissingPackageJSON => {
-                        Output::err_generic(
-                            "failed to find package.json from: '{}'",
-                            (bstr::BStr::new(FileSystem::instance().top_level_dir),),
-                        );
-                    }
                     PackError::RestrictedUnscopedPackage => {
                         Output::err_generic("unable to restrict access to unscoped package", ());
                     }
@@ -668,17 +646,8 @@ impl PublishCommand {
         // TODO: read this into memory
         let _ = bun_sys::unlink(&context.abs_tarball_path);
 
-        if let Err(err) = Self::publish::<true>(&context) {
-            match err {
-                PublishError::OutOfMemory => bun_core::out_of_memory(),
-                PublishError::NeedAuth => {
-                    Output::err_generic(
-                        "missing authentication (run <cyan>`bunx npm login`<r>)",
-                        (),
-                    );
-                    Global::crash();
-                }
-            }
+        if let Err(err) = Self::publish(&context) {
+            err.report_and_crash();
         }
 
         bun_core::prettyln!(
@@ -703,9 +672,7 @@ impl PublishCommand {
                     b"package.json",
                 ))
                 .into();
-            let script_env = context
-                .script_env
-                .expect("DIRECTORY_PUBLISH=true sets script_env");
+            let script_env = context.script_env.expect("from_workspace sets script_env");
             script_env
                 .map
                 .put(b"npm_command", b"publish")
@@ -840,7 +807,6 @@ impl PublishCommand {
             headers.content.written_slice(),
             b"",
             None,
-            None,
             http::FetchRedirect::Follow,
         );
 
@@ -869,13 +835,12 @@ impl PublishCommand {
         false
     }
 
-    fn publish<const DIRECTORY_PUBLISH: bool>(
-        ctx: &Context<'_, DIRECTORY_PUBLISH>,
-    ) -> Result<(), PublishError> {
+    fn publish(ctx: &Context<'_>) -> Result<(), PublishError> {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
 
         if registry.token.is_empty()
+            && registry.auth.is_empty()
             && (registry_url.password.is_empty() || registry_url.username.is_empty())
         {
             return Err(PublishError::NeedAuth);
@@ -925,9 +890,8 @@ impl PublishCommand {
         // request body. Single-shot CLI path — adopt the
         // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
         // into the process-lifetime side-table. Zero-copy.
-        let publish_req_body: &'static [u8] = crate::cli::cli_adopt(
-            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?,
-        );
+        let publish_req_body: &'static [u8] =
+            crate::cli::cli_adopt(Self::construct_publish_request_body(ctx)?);
 
         let mut print_buf: Vec<u8> = Vec::new();
 
@@ -964,7 +928,6 @@ impl PublishCommand {
             publish_headers.entries,
             publish_headers.content.written_slice(),
             publish_req_body,
-            None,
             None,
             http::FetchRedirect::Follow,
         );
@@ -1034,12 +997,7 @@ impl PublishCommand {
                     Output::flush();
                 }
 
-                let otp = Self::get_otp::<DIRECTORY_PUBLISH>(
-                    ctx,
-                    registry,
-                    &mut response_buf,
-                    &mut print_buf,
-                )?;
+                let otp = Self::get_otp(ctx, registry, &mut response_buf, &mut print_buf)?;
 
                 let otp_headers = Self::construct_publish_headers(
                     &mut print_buf,
@@ -1058,7 +1016,6 @@ impl PublishCommand {
                     otp_headers.entries,
                     otp_headers.content.written_slice(),
                     publish_req_body,
-                    None,
                     None,
                     http::FetchRedirect::Follow,
                 );
@@ -1122,18 +1079,11 @@ impl PublishCommand {
             }
         }
 
-        let _ = spawn_sync::spawn(&spawn_sync::Options {
-            argv: vec![Box::from(open::OPENER), Box::from(auth_url.as_bytes())],
-            envp: None,
-            stdin: spawn_sync::SyncStdio::Inherit,
-            stdout: spawn_sync::SyncStdio::Inherit,
-            stderr: spawn_sync::SyncStdio::Inherit,
-            ..Default::default()
-        });
+        let _ = bun_core::spawn_sync_inherit(&[open::OPENER, auth_url.as_bytes()]);
     }
 
-    fn get_otp<const DIRECTORY_PUBLISH: bool>(
-        ctx: &Context<'_, DIRECTORY_PUBLISH>,
+    fn get_otp(
+        ctx: &Context<'_>,
         registry: &Npm::Registry::Scope,
         response_buf: &mut MutableString,
         print_buf: &mut Vec<u8>,
@@ -1295,7 +1245,6 @@ impl PublishCommand {
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),
                         b"",
-                        None,
                         None,
                         http::FetchRedirect::Follow,
                     );
@@ -1639,7 +1588,7 @@ impl PublishCommand {
                 crate::cli::cli_dupe($v) as &'static [u8]
             };
         }
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         if let Some(bin_query) = json.as_property(b"bin") {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
@@ -1929,11 +1878,11 @@ impl PublishCommand {
             headers.count(b"accept-encoding", b"gzip,deflate");
 
             if !registry.token.is_empty() {
-                write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
+                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
                 headers.count(b"authorization", &**print_buf);
                 print_buf.clear();
             } else if !registry.auth.is_empty() {
-                write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
+                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
                 headers.count(b"authorization", &**print_buf);
                 print_buf.clear();
             }
@@ -1949,7 +1898,7 @@ impl PublishCommand {
             }
             headers.count(b"npm-command", b"publish");
 
-            write!(
+            let _ = write!(
                 print_buf,
                 "{} {} {} workspaces/{}{}{}",
                 Global::user_agent,
@@ -1958,8 +1907,7 @@ impl PublishCommand {
                 uses_workspaces,
                 if ci_name.is_some() { " ci/" } else { "" },
                 bstr::BStr::new(ci_name.unwrap_or(b"")),
-            )
-            .ok();
+            );
             // headers.count("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.count(b"user-agent", &**print_buf);
             print_buf.clear();
@@ -1968,7 +1916,7 @@ impl PublishCommand {
             headers.count(b"Host", registry.url.url().host);
 
             if let Some(json_len) = maybe_json_len {
-                write!(print_buf, "{}", json_len).ok();
+                let _ = write!(print_buf, "{}", json_len);
                 headers.count(b"Content-Length", &**print_buf);
                 print_buf.clear();
             }
@@ -1981,11 +1929,11 @@ impl PublishCommand {
             headers.append(b"accept-encoding", b"gzip,deflate");
 
             if !registry.token.is_empty() {
-                write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
+                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
                 headers.append(b"authorization", &**print_buf);
                 print_buf.clear();
             } else if !registry.auth.is_empty() {
-                write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
+                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
                 headers.append(b"authorization", &**print_buf);
                 print_buf.clear();
             }
@@ -2001,7 +1949,7 @@ impl PublishCommand {
             }
             headers.append(b"npm-command", b"publish");
 
-            write!(
+            let _ = write!(
                 print_buf,
                 "{} {} {} workspaces/{}{}{}",
                 Global::user_agent,
@@ -2010,8 +1958,7 @@ impl PublishCommand {
                 uses_workspaces,
                 if ci_name.is_some() { " ci/" } else { "" },
                 bstr::BStr::new(ci_name.unwrap_or(b"")),
-            )
-            .ok();
+            );
             // headers.append("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.append(b"user-agent", &**print_buf);
             print_buf.clear();
@@ -2020,7 +1967,7 @@ impl PublishCommand {
             headers.append(b"Host", registry.url.url().host);
 
             if let Some(json_len) = maybe_json_len {
-                write!(print_buf, "{}", json_len).ok();
+                let _ = write!(print_buf, "{}", json_len);
                 headers.append(b"Content-Length", &**print_buf);
                 print_buf.clear();
             }
@@ -2029,9 +1976,7 @@ impl PublishCommand {
         Ok(headers)
     }
 
-    fn construct_publish_request_body<const DIRECTORY_PUBLISH: bool>(
-        ctx: &Context<'_, DIRECTORY_PUBLISH>,
-    ) -> Result<Box<[u8]>, AllocError> {
+    fn construct_publish_request_body(ctx: &Context<'_>) -> Result<Box<[u8]>, AllocError> {
         let tag: &[u8] = if !ctx.manager.options.publish_config.tag.is_empty() {
             ctx.manager.options.publish_config.tag
         } else {
@@ -2050,42 +1995,39 @@ impl PublishCommand {
                 + encoded_tarball_len,
         );
 
-        write!(
+        let _ = write!(
             &mut buf,
             "{{\"_id\":\"{}\",\"name\":\"{}\"",
             bstr::BStr::new(&ctx.package_name),
             bstr::BStr::new(&ctx.package_name),
-        )
-        .ok();
+        );
 
-        write!(
+        let _ = write!(
             &mut buf,
             ",\"dist-tags\":{{{}:\"{}\"}}",
             bun_fmt::format_json_string_utf8(tag, Default::default()),
             bstr::BStr::new(version_without_build_tag),
-        )
-        .ok();
+        );
 
         // "versions"
         {
-            write!(
+            let _ = write!(
                 &mut buf,
                 ",\"versions\":{{\"{}\":{}}}",
                 bstr::BStr::new(version_without_build_tag),
                 bstr::BStr::new(&ctx.normalized_pkg_info),
-            )
-            .ok();
+            );
         }
 
         if let Some(access) = ctx.manager.options.publish_config.access {
-            write!(&mut buf, ",\"access\":\"{}\"", access.as_str()).ok();
+            let _ = write!(&mut buf, ",\"access\":\"{}\"", access.as_str());
         } else {
             buf.extend_from_slice(b",\"access\":null");
         }
 
         // "_attachments"
         {
-            write!(
+            let _ = write!(
                 &mut buf,
                 ",\"_attachments\":{{\"{}\":{{\"content_type\":\"application/octet-stream\",\"data\":\"",
                 pack::fmt_tarball_filename(
@@ -2093,8 +2035,7 @@ impl PublishCommand {
                     &ctx.package_version,
                     pack::TarballNameStyle::Raw
                 ),
-            )
-            .ok();
+            );
 
             // SAFETY: `encode_raw` writes exactly `encoded_tarball_len`
             // (= `base64::encode_len(tarball_bytes.len(), false)`) bytes into the
@@ -2108,7 +2049,7 @@ impl PublishCommand {
             };
             debug_assert!(count == encoded_tarball_len);
 
-            write!(&mut buf, "\",\"length\":{}}}}}}}", ctx.tarball_bytes.len(),).ok();
+            let _ = write!(&mut buf, "\",\"length\":{}}}}}}}", ctx.tarball_bytes.len());
         }
 
         Ok(buf.into_boxed_slice())
@@ -2123,6 +2064,18 @@ pub(crate) enum PublishError {
     NeedAuth,
 }
 bun_core::oom_from_alloc!(PublishError);
+
+impl PublishError {
+    fn report_and_crash(self) -> ! {
+        match self {
+            PublishError::OutOfMemory => bun_core::out_of_memory(),
+            PublishError::NeedAuth => {
+                Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                Global::crash();
+            }
+        }
+    }
+}
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub(crate) enum GetOTPError {

@@ -649,3 +649,118 @@ describe("color-mix() percentage range", () => {
     expect(color(input, "css")).toBe(expected);
   });
 });
+
+describe("rgb() channel order and legacy syntax", () => {
+  // Distinct channel values, so any two channels ending up in each other's
+  // place shows in the output. The legacy comma syntax gives the channels on a
+  // 0-255 scale and takes its alpha after another comma; the modern syntax
+  // takes its alpha after a slash and is the only one that allows `none`.
+  test.each([
+    ["rgb(12 34 56)", "#0c2238"],
+    ["rgb(12, 34, 56)", "#0c2238"],
+    ["rgb(4.7% 13.3% 22%)", "#0c2238"],
+    ["rgb(4.7%, 13.3%, 22%)", "#0c2238"],
+    ["rgb(12 13.3% 56)", "#0c2238"],
+    ["rgb(12 34 56 / 0.5)", "#0c223880"],
+    ["rgb(12, 34, 56, 0.5)", "#0c223880"],
+    ["rgba(12, 34, 56, 0.5)", "#0c223880"],
+    ["rgb(12 none 56)", "#0c0038"],
+    ["rgb(none 34 56)", "#002238"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test.each([
+    "rgb(12, 34, 56 / 0.5)",
+    "rgb(12 34 56, 0.5)",
+    "rgb(12, 13.3%, 56)",
+    "rgb(12, none, 56)",
+    "rgb(none, 34, 56)",
+  ])("%s mixes the two syntaxes and is rejected", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+});
+
+describe("conversions between color spaces", () => {
+  // Each case converts a color whose channels all differ, so a channel landing
+  // in another channel's place shows up in the output. Mixing a color with
+  // itself is how a color is converted into a space Bun.color has no output
+  // format for: color-mix() converts both operands into the interpolation
+  // space and prints the result in it.
+  const same = (space: string, value: string) => color(`color-mix(in ${space}, ${value}, ${value})`, "css") as string;
+  const channels = (css: string) =>
+    css
+      .slice(css.indexOf("(") + 1)
+      .match(/-?\d*\.?\d+(?:e[+-]?\d+)?/g)!
+      .map(Number);
+  const expectChannels = (css: string, expected: number[], digits: number) => {
+    const actual = channels(css);
+    expect(actual).toHaveLength(expected.length);
+    for (let i = 0; i < expected.length; i++) {
+      expect(actual[i]).toBeCloseTo(expected[i], digits);
+    }
+  };
+
+  // Transcendental functions differ in the last f32 digit between platforms,
+  // so the polar conversions are compared numerically.
+  test.each([
+    ["lch(50% 30 0)", [50, 30, 0]],
+    ["lch(50% 30 90)", [50, 0, 30]],
+    ["lch(50% 30 180)", [50, -30, 0]],
+    ["lch(50% 30 270)", [50, 0, -30]],
+  ])("%s has the lab channels %p", (input, expected) => {
+    expectChannels(color(input, "lab") as string, expected as number[], 4);
+  });
+
+  test.each([
+    ["oklch(60% 0.1 0)", "oklab(60% 0.1 0)"],
+    ["oklch(60% 0.1 90)", "oklab(60% 0 0.1)"],
+  ])("%s is the same color as %s", (polar, rectangular) => {
+    expectChannels(color(polar, "lab") as string, channels(color(rectangular, "lab") as string), 3);
+  });
+
+  test.each([
+    ["lch", "lab(50% 30 40)", [50, 50, 53.1301]],
+    ["lch", "lab(50% 0 30)", [50, 30, 90]],
+    ["lch", "lab(50% -30 0)", [50, 30, 180]],
+    ["lch", "lab(50% 0 -30)", [50, 30, 270]],
+    ["oklch", "oklab(60% 0.03 0.04)", [60, 0.05, 53.1301]],
+  ])("converted to %s, %s has the channels %p", (space, input, expected) => {
+    const out = same(space as string, input as string);
+    expect(out).toStartWith(`${space}(`);
+    expectChannels(out, expected as number[], 3);
+  });
+
+  // https://www.w3.org/TR/css-color-4/#color-conversion-code
+  const linear = (v: number) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+
+  test("srgb to srgb-linear applies the transfer function to each channel", () => {
+    const out = same("srgb-linear", "#ff8005");
+    expect(out).toStartWith("color(srgb-linear ");
+    expectChannels(out, [1, linear(128 / 255), linear(5 / 255)], 5);
+  });
+
+  test("srgb-linear to srgb applies the inverse to each channel", () => {
+    // 1 -> 255, 0.2 -> 1.055 * 0.2^(1/2.4) - 0.055 = 0.4845 -> 124, and 0.001
+    // is on the linear segment: 12.92 * 0.001 -> 3.
+    expect(same("srgb", "color(srgb-linear 1 0.2 0.001)")).toBe("#ff7c03");
+  });
+
+  test("display-p3 to xyz linearizes each channel before the matrix", () => {
+    // XYZ of the display-p3 primaries, i.e. the columns of the matrix in
+    // https://www.w3.org/TR/css-color-4/#color-conversion-code. The matrix is
+    // linear, so a color is the sum of its linearized channels times these.
+    const red = [0.486571, 0.228975, 0];
+    const green = [0.265668, 0.691739, 0.045113];
+    const blue = [0.198217, 0.079287, 1.043944];
+    const g = linear(0.5);
+    const b = linear(0.002);
+    const out = same("xyz", "color(display-p3 1 0.5 0.002)");
+    expect(out).toStartWith("color(xyz ");
+    expectChannels(
+      out,
+      [0, 1, 2].map(i => red[i] + g * green[i] + b * blue[i]),
+      4,
+    );
+  });
+});

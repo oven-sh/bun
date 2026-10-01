@@ -5,6 +5,7 @@ use bun_core;
 
 use crate::lexer as js_lexer;
 use crate::p::P;
+use crate::parse::erased;
 use crate::parser::{
     AwaitOrYield, DeferredErrors, FnOrArrowDataParse, ParseStatementOptions, PropertyOpts,
     SkipTypeParameterResult, TypeParameterFlag,
@@ -105,6 +106,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_super_property: true,
                 allow_ts_decorators: opts.allow_ts_decorators,
                 is_constructor,
+                // A signature of an ambient class may end its arguments with a rest argument and a comma.
+                is_typescript_declare: p.fn_or_arrow_data_parse.is_typescript_declare,
                 has_decorators: opts.ts_decorators.len() > 0
                     || (opts.has_class_decorators && is_constructor),
 
@@ -122,6 +125,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if func.flags.contains(flags::Function::IsForwardDeclaration) {
             // Skip this property entirely
             p.pop_and_discard_scope(scope_index);
+            if let Some(starts) = &mut p.starts_for_parse_only {
+                let mut prop_flags = flags::PropertySet::empty();
+                if is_computed {
+                    prop_flags.insert(flags::Property::IsComputed);
+                }
+                prop_flags.insert(flags::Property::IsMethod);
+                if opts.is_static {
+                    prop_flags.insert(flags::Property::IsStatic);
+                }
+                starts.erased.member_property(
+                    p.arena,
+                    G::Property {
+                        ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators),
+                        kind,
+                        flags: prop_flags,
+                        key: Some(*key),
+                        value: Some(Expr::init(E::Function { func }, loc)),
+                        ts_metadata: TsMetadata::MFunction,
+                        ..Default::default()
+                    },
+                    erased::ErasedFlags::NO_BODY,
+                );
+            }
             return Ok(None);
         }
 
@@ -238,6 +264,105 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }))
     }
 
+    /// isIndexSignature of a class element, after "[". No modifier is read: "[async x => x]" is a computed name.
+    fn is_class_index_signature(&mut self) -> bool {
+        let p = self;
+        match p.lexer.token {
+            T::TDotDotDot | T::TCloseBracket => return true,
+            T::TIdentifier if p.is_class_index_signature_name() => {}
+            _ => return false,
+        }
+
+        let old_lexer = p.lexer.snapshot();
+        p.lexer.is_log_disabled = true;
+        let is_index_signature = p.scan_class_index_signature().unwrap_or(false);
+        p.lexer.restore(&old_lexer);
+        is_index_signature
+    }
+
+    /// nextIsUnambiguouslyIndexSignature, from the name after "[".
+    fn scan_class_index_signature(&mut self) -> crate::CrateResult<bool> {
+        let p = self;
+        p.lexer.next()?;
+        // "[id:" is an index signature, and "[id," is one that is not well formed
+        if p.lexer.token == T::TColon || p.lexer.token == T::TComma {
+            return Ok(true);
+        }
+        if p.lexer.token != T::TQuestion {
+            return Ok(false);
+        }
+        // After "?" these tokens cannot continue a conditional expression
+        p.lexer.next()?;
+        Ok(matches!(
+            p.lexer.token,
+            T::TColon | T::TComma | T::TCloseBracket
+        ))
+    }
+
+    /// isIdentifier for a word: "await" and "yield" are names where they are no operators.
+    fn is_class_index_signature_name(&self) -> bool {
+        let data = &self.fn_or_arrow_data_parse;
+        let name = self.lexer.identifier;
+        if name == b"await" {
+            data.allow_await == AwaitOrYield::AllowIdent
+                || (data.allow_await == AwaitOrYield::AllowExpr && data.is_top_level)
+        } else if name == b"yield" {
+            data.allow_yield == AwaitOrYield::AllowIdent
+        } else {
+            true
+        }
+    }
+
+    /// parseIndexSignatureDeclaration of a class element, after "[". Nothing of it is kept.
+    fn skip_class_index_signature(&mut self) -> crate::CrateResult<()> {
+        let p = self;
+        while p.lexer.token != T::TCloseBracket {
+            // parseParameter without modifiers: "...", a name, "?", a type and an initializer
+            if p.lexer.token == T::TDotDotDot {
+                p.lexer.next()?;
+            }
+            if p.lexer.token == T::TIdentifier {
+                // Storing the name marks an import of that name as used, as the expression that read it did.
+                let _ = p.store_name_in_ref(p.lexer.identifier);
+            }
+            p.skip_type_script_binding()?;
+            if p.lexer.token == T::TQuestion {
+                p.lexer.next()?;
+            }
+            if p.lexer.token == T::TColon {
+                p.lexer.next()?;
+                p.skip_type_script_type(Level::Lowest)?;
+            }
+            // Inside an attempt the "=" ends the attempt, as before.
+            if p.lexer.token == T::TEquals && !p.lexer.is_log_disabled {
+                let at_equals = p.lexer.snapshot();
+                p.lexer.next()?;
+                match p.parse_and_drop_in_class(Level::Comma) {
+                    Ok(()) => {}
+                    // Where no expression follows, the "=" is what the "]" below reports.
+                    Err(crate::Error::Backtrack) => p.lexer.restore(&at_equals),
+                    Err(err) => return Err(err),
+                }
+            }
+            if p.lexer.token != T::TComma {
+                break;
+            }
+            p.lexer.next()?;
+        }
+        p.lexer.expect(T::TCloseBracket)?;
+        if p.lexer.token == T::TColon {
+            p.lexer.next()?;
+            p.skip_type_script_type(Level::Lowest)?;
+        }
+        // parseTypeMemberSemicolon
+        if p.lexer.token == T::TComma {
+            p.lexer.next()?;
+        } else {
+            p.lexer.expect_or_insert_semicolon()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn parse_property(
         &mut self,
         kind_: PropertyKind,
@@ -293,6 +418,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     is_computed = true;
                     // p.markSyntaxFeature(compat.objectExtensions, p.lexer.range())
                     p.lexer.next()?;
+
+                    if Self::IS_TYPESCRIPT_ENABLED && opts.is_class && p.is_class_index_signature()
+                    {
+                        p.skip_class_index_signature()?;
+
+                        // Skip this property entirely
+                        return Ok(None);
+                    }
+
                     let was_identifier = p.lexer.token == T::TIdentifier;
                     let expr = p.parse_expr(Level::Comma)?;
 
@@ -430,8 +564,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                     prop.kind = PropertyKind::Declare;
                                                     return Ok(Some(prop));
                                                 }
+                                                if let Some(starts) = &mut p.starts_for_parse_only {
+                                                    starts.erased.member_property(
+                                                        p.arena,
+                                                        prop,
+                                                        erased::ErasedFlags::empty(),
+                                                    );
+                                                }
                                             }
 
+                                            if let Some(starts) = &mut p.starts_for_parse_only {
+                                                starts
+                                                    .erased
+                                                    .member_modifier(erased::ErasedFlags::DECLARE);
+                                            }
                                             p.discard_scopes_up_to(scope_index);
                                             return Ok(None);
                                         }
@@ -456,16 +602,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                     prop_.kind = PropertyKind::Abstract;
                                                     return Ok(Some(prop_));
                                                 }
+                                                if let Some(starts) = &mut p.starts_for_parse_only {
+                                                    starts.erased.member_property(
+                                                        p.arena,
+                                                        prop,
+                                                        erased::ErasedFlags::empty(),
+                                                    );
+                                                }
+                                            }
+                                            if let Some(starts) = &mut p.starts_for_parse_only {
+                                                starts
+                                                    .erased
+                                                    .member_modifier(erased::ErasedFlags::ABSTRACT);
                                             }
                                             p.discard_scopes_up_to(scope_index);
                                             return Ok(None);
                                         }
                                     }
                                     PropertyModifierKeyword::PAccessor => {
-                                        // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
+                                        // "accessor" keyword for auto-accessor fields, with either kind of decorators
                                         if opts.is_class
                                             && !p.lexer.has_newline_before
-                                            && p.options.features.standard_decorators
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)
                                         {
@@ -622,10 +779,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // "class X { foo?<T>(): T }"
                 // "const x = { foo<T>(): T {} }"
-                if !has_definite_assignment_assertion_operator {
-                    has_type_parameters = p.skip_type_script_type_parameters(
-                        TypeParameterFlag::ALLOW_CONST_MODIFIER,
-                    )? != SkipTypeParameterResult::DidNotSkipAnything;
+                if !has_definite_assignment_assertion_operator && p.lexer.token == T::TLessThan {
+                    has_type_parameters = if p.starts_for_parse_only.is_some() {
+                        p.lint_type_parameters(None)?
+                    } else {
+                        p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?
+                            != SkipTypeParameterResult::DidNotSkipAnything
+                    };
                 }
             }
 
@@ -668,7 +828,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && opts.is_class
                             && opts.ts_decorators.len() > 0
                         {
-                            ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
+                            if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                                ts_metadata = p.lint_type_metadata(false)?;
+                                p.lint_type_annotation(key.loc)?;
+                            } else {
+                                ts_metadata =
+                                    p.skip_type_script_type_with_metadata(Level::Lowest)?;
+                            }
+                        } else if !SCAN_ONLY && p.starts_for_parse_only.is_some() {
+                            p.lint_type_annotation(key.loc)?;
                         } else {
                             p.skip_type_script_type(Level::Lowest)?;
                         }

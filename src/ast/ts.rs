@@ -6,6 +6,10 @@ use bun_collections::array_hash_map::StringContext;
 use crate::base::Ref;
 use crate::e::String as EString;
 
+#[path = "ts_nodes.rs"]
+mod type_nodes;
+pub use type_nodes::*;
+
 /// This is for TypeScript "enum" and "namespace" blocks. Each block can
 /// potentially be instantiated multiple times. The exported members of each
 /// block are merged into a single namespace while the non-exported code is
@@ -171,9 +175,8 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    // A heap `Vec` is used here because `Metadata` is lifetime-free.
-    // Decorator metadata is rare and the lists are tiny.
-    MDot(Vec<Ref>),
+    /// The names of `a.b.c`, in the arena of the parse: a node that an arena holds is never dropped.
+    MDot(crate::StoreSlice<Ref>),
 }
 
 impl Metadata {
@@ -218,16 +221,8 @@ impl Metadata {
 
                     _ => Metadata::MObject,
                 };
-            } else {
-                // Reshaped for borrowck — copy Ref out before reassigning *result
-                if let Metadata::MIdentifier(r) = result {
-                    let r = *r;
-                    if let Metadata::MIdentifier(l) = left {
-                        if !r.eql(l) {
-                            *result = Metadata::MObject;
-                        }
-                    }
-                }
+            } else if !result.is_same_name(&left) {
+                *result = Metadata::MObject;
             }
         } else {
             // always take the next value if left is MNone
@@ -277,16 +272,8 @@ impl Metadata {
 
                     _ => Metadata::MObject,
                 };
-            } else {
-                // Reshaped for borrowck — copy Ref out before reassigning *result
-                if let Metadata::MIdentifier(r) = result {
-                    let r = *r;
-                    if let Metadata::MIdentifier(l) = left {
-                        if !r.eql(l) {
-                            *result = Metadata::MObject;
-                        }
-                    }
-                }
+            } else if !result.is_same_name(&left) {
+                *result = Metadata::MObject;
             }
         } else {
             // make sure intersection of only MUnknown serializes to "undefined"
@@ -294,6 +281,41 @@ impl Metadata {
             if matches!(result, Metadata::MUnknown) {
                 *result = Metadata::MUndefined;
             }
+        }
+    }
+
+    /// Whether `self` and `other`, which are of one kind, serialize to one value: two names do where they are the same names.
+    fn is_same_name(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Metadata::MIdentifier(name), Metadata::MIdentifier(other)) => name.eql(*other),
+            (Metadata::MDot(names), Metadata::MDot(others)) => {
+                let (names, others) = (names.slice(), others.slice());
+                names.len() == others.len()
+                    && names
+                        .iter()
+                        .zip(others)
+                        .all(|(name, other)| name.eql(*other))
+            }
+            _ => true,
+        }
+    }
+
+    /// A union, an intersection or a conditional type that is read to its end is a keyword no longer: tsc compares what it serializes to.
+    pub fn finish_combined(&mut self) {
+        if matches!(
+            self,
+            Metadata::MNever | Metadata::MNull | Metadata::MUndefined
+        ) {
+            *self = Metadata::MVoid;
+        } else if matches!(self, Metadata::MAny | Metadata::MUnknown) {
+            *self = Metadata::MObject;
+        }
+    }
+
+    /// A type reference in a branch of a conditional type: tsc serializes one that it cannot resolve as `Object`, and none is resolved here.
+    pub fn finish_reference_in_branch(&mut self) {
+        if matches!(self, Metadata::MIdentifier(_) | Metadata::MDot(_)) {
+            *self = Metadata::MObject;
         }
     }
 }

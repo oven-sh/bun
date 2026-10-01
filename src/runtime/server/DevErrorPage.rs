@@ -156,7 +156,7 @@ fn write_message(w: &mut Vec<u8>, msg: &Msg) {
     w.extend_from_slice(b"],\"on\":{\"resolve\":");
     let specifier: &[u8] = match &msg.metadata {
         Metadata::Resolve(resolve) => resolve.specifier.slice(&msg.data.text),
-        Metadata::Build => b"",
+        Metadata::Build | Metadata::Code(_) => b"",
     };
     write_string(w, specifier);
     write!(w, ",\"build\":{}}}}}", specifier.is_empty()).unwrap();

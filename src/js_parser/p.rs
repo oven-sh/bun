@@ -190,6 +190,7 @@ pub(crate) struct ParserSnapshot<'a> {
     symbols_len: usize,
     allocated_names_len: usize,
     import_records_len: usize,
+    sidecar: Option<SidecarMark>,
 }
 
 pub(crate) type NeedsJSXType = bool;
@@ -220,6 +221,58 @@ pub struct StartsForParseOnly {
     pub(crate) async_arrow_parameters: bun_collections::HashMap<i32, i32>,
     pub(crate) arrow_expression_bodies: bun_collections::HashMap<i32, i32>,
     pub(crate) class_elements: bun_collections::HashMap<i32, i32>,
+    /// What a lint parse keeps of the statements and class members that leave no node.
+    pub erased: crate::parse::erased::ErasedTables,
+    /// What a lint parse keeps of the syntax around an expression that leaves no node.
+    pub wrappers: crate::parse::wrappers::Wrappers,
+    /// What a lint parse keeps of the TypeScript syntax of the nodes that stay.
+    pub attached: crate::parse::attached::Attached,
+    /// What a lint parse keeps of the type arguments after an expression and of the type parameters of an interface or of a type alias.
+    pub generics: crate::parse::generics::Generics,
+    /// What the reference reports for the syntax errors of a lint parse, while the parse runs.
+    pub(crate) syntax_errors: crate::parse::syntax_errors::SyntaxErrors,
+    /// `Parser::parse_for_lint` made it: `Parser::parse_only` keeps no parentheses.
+    pub(crate) is_lint: bool,
+}
+
+/// Where the lists of the side table end at one point of the parse: `StartsForParseOnly::rewind` cuts them back to there.
+#[derive(Clone, Copy)]
+pub(crate) struct SidecarMark {
+    erased: crate::parse::erased::ErasedMark,
+    attached: crate::parse::attached::AttachedMark,
+    /// Offset of the token that the lexer is on: `wrappers` and `generics` tell what was read from there on by where it is.
+    position: usize,
+}
+
+impl StartsForParseOnly {
+    /// The side table of `Parser::parse_for_lint`.
+    pub(crate) fn for_lint() -> Box<StartsForParseOnly> {
+        Box::new(StartsForParseOnly {
+            is_lint: true,
+            ..Default::default()
+        })
+    }
+
+    /// Where the lists end now, with the lexer on the token at `position`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn mark(&self, position: usize) -> SidecarMark {
+        SidecarMark {
+            erased: self.erased.mark(),
+            attached: self.attached.mark(),
+            position,
+        }
+    }
+
+    /// Drops every record made since `mark`: the parser goes back to where it was then.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn rewind(&mut self, mark: SidecarMark) {
+        self.erased.rewind(mark.erased);
+        self.attached.rewind(mark.attached);
+        self.wrappers.rewind_to(mark.position);
+        self.generics.rewind_to(mark.position);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -5466,6 +5519,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Whether `Parser::parse_for_lint` runs this parse.
+    #[inline]
+    pub(crate) fn is_lint_parse(&self) -> bool {
+        matches!(&self.starts_for_parse_only, Some(starts) if starts.is_lint)
+    }
+
     #[cold]
     pub(crate) fn panic(&mut self, fmt: &'static str, args: core::fmt::Arguments) -> ! {
         self.panic_loc(fmt, args, None)
@@ -7949,8 +8008,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return self.maybe_defined_helper(e);
             }
             M::MDot(refs) => {
+                let refs = refs.slice();
                 debug_assert!(refs.len() >= 2);
-                // (refs.deinit(p.arena) — arena-backed; nothing to free in Rust)
 
                 macro_rules! ref_name {
                     ($r:expr) => {
@@ -8294,6 +8353,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Where the lists of the side table end now, for `rewind_sidecar`. `None`: the parse has no side table.
+    #[inline]
+    pub(crate) fn sidecar_mark(&self) -> Option<SidecarMark> {
+        let starts = self.starts_for_parse_only.as_deref()?;
+        Some(starts.mark(self.lexer.start))
+    }
+
+    /// Drops every record that the side table got since `mark`: what the parser read since then does not stay.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn rewind_sidecar(&mut self, mark: SidecarMark) {
+        if let Some(starts) = &mut self.starts_for_parse_only {
+            starts.rewind(mark);
+        }
+    }
+
     /// Everything the parse pass mutates, so that a speculative parse of an
     /// expression can be undone with [`Self::restore_parser_snapshot`]. The
     /// lexer-only backtracking in `parse_skip_typescript.rs` only covers
@@ -8335,6 +8410,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbols_len: self.symbols.len(),
             allocated_names_len: self.allocated_names.len(),
             import_records_len: self.import_records.len(),
+            sidecar: self.sidecar_mark(),
         }
     }
 
@@ -8392,6 +8468,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.allocated_names.truncate(snapshot.allocated_names_len);
         self.import_records.truncate(snapshot.import_records_len);
+        if let Some(mark) = snapshot.sidecar {
+            self.rewind_sidecar(mark);
+        }
     }
 
     /// When not transpiling we dont use the renamer, so our solution is to generate really

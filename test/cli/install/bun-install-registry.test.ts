@@ -5348,6 +5348,102 @@ describe("hoisting", async () => {
   });
 });
 
+// A package that needs its own version of a dependency gets it in `node_modules/<package>/node_modules`.
+// Once the lockfile no longer places it there, the copy would hide the hoisted version from the package.
+describe("a nested copy the lockfile no longer places", () => {
+  const nm = (...path: string[]) => join(packageDir, "node_modules", ...path);
+  const versionIn = async (...path: string[]) => (await file(join(nm(...path), "package.json")).json()).version;
+  const writeRoot = (manifest: object) => write(packageJson, JSON.stringify({ name: "foo", ...manifest }));
+
+  test("is removed by the install that hoists its version", async () => {
+    // one-dep needs no-deps@1.0.1. The root has 2.0.0, so 1.0.1 is nested.
+    await writeRoot({ dependencies: { "no-deps": "2.0.0", "one-dep": "1.0.0" } });
+    await runBunInstall(env, packageDir);
+    expect(await versionIn("one-dep", "node_modules", "no-deps")).toBe("1.0.1");
+
+    await writeRoot({ dependencies: { "one-dep": "1.0.0" } });
+    await runBunInstall(env, packageDir);
+    expect(await versionIn("no-deps")).toBe("1.0.1");
+    expect(await exists(nm("one-dep", "node_modules", "no-deps"))).toBeFalse();
+  });
+
+  test("is removed by the install that adds an override", async () => {
+    const dependencies = { "no-deps": "2.0.0", "one-dep": "1.0.0" };
+    await writeRoot({ dependencies });
+    await runBunInstall(env, packageDir);
+    expect(await versionIn("one-dep", "node_modules", "no-deps")).toBe("1.0.1");
+
+    await writeRoot({ dependencies, overrides: { "no-deps": "2.0.0" } });
+    const { out } = await runBunInstall(env, packageDir);
+    expect(out).toContain("1 package removed");
+    expect(await exists(nm("one-dep", "node_modules", "no-deps"))).toBeFalse();
+    expect(await versionIn("no-deps")).toBe("2.0.0");
+  });
+
+  test("takes the link to its bin with it", async () => {
+    await writeRoot({ dependencies: { "what-bin": "1.5.0", "uses-what-bin": "1.0.0" } });
+    await runBunInstall(env, packageDir);
+    const nested = nm("uses-what-bin", "node_modules");
+    expect(await versionIn("uses-what-bin", "node_modules", "what-bin")).toBe("1.0.0");
+    expect(await readdirSorted(join(nested, ".bin"))).toHaveBins(["what-bin"]);
+
+    await writeRoot({ dependencies: { "what-bin": "1.0.0", "uses-what-bin": "1.0.0" } });
+    await runBunInstall(env, packageDir);
+    expect(await versionIn("what-bin")).toBe("1.0.0");
+    expect(await readdirSorted(nested)).toEqual([".bin"]);
+    expect(await readdirSorted(join(nested, ".bin"))).toEqual([]);
+  });
+
+  // No lockfile in memory names the copy: an install without this pass left it. It is found when the
+  // version it hides is installed again.
+  test("left by an earlier install is removed when the version it hides is installed again", async () => {
+    // two-range-deps takes any @types/is-number from 1.0.0 up, so it uses the root's.
+    await writeRoot({ dependencies: { "@types/is-number": "1.0.0", "two-range-deps": "1.0.0" } });
+    await runBunInstall(env, packageDir);
+    const leftover = nm("two-range-deps", "node_modules", "@types", "is-number");
+    expect(await exists(leftover)).toBeFalse();
+    await cp(nm("@types", "is-number"), leftover, { recursive: true });
+
+    await writeRoot({ dependencies: { "@types/is-number": "2.0.0", "two-range-deps": "1.0.0" } });
+    await runBunInstall(env, packageDir);
+    expect(await versionIn("@types", "is-number")).toBe("2.0.0");
+    expect(await exists(nm("two-range-deps", "node_modules", "@types"))).toBeFalse();
+  });
+
+  test("is removed by a --frozen-lockfile install over the node_modules of another branch", async () => {
+    // Branch X: the root has no-deps@2.0.0, so one-range-dep nests 1.1.0.
+    await writeRoot({ dependencies: { "no-deps": "2.0.0", "one-range-dep": "1.0.0" } });
+    await runBunInstall(env, packageDir);
+    expect(await versionIn("one-range-dep", "node_modules", "no-deps")).toBe("1.1.0");
+    const branchX = join(packageDir, "node_modules-x");
+    await rename(nm(), branchX);
+
+    // Branch Y: one-range-dep uses the root's no-deps@1.1.0. Its lockfile comes from a clean install.
+    await rm(join(packageDir, "bun.lockb"));
+    await writeRoot({ dependencies: { "no-deps": "1.1.0", "one-range-dep": "1.0.0" } });
+    await runBunInstall(env, packageDir);
+    expect(await exists(nm("one-range-dep", "node_modules", "no-deps"))).toBeFalse();
+    await rm(nm(), { recursive: true, force: true });
+    await rename(branchX, nm());
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+    expect(await versionIn("no-deps")).toBe("1.1.0");
+    expect(await exists(nm("one-range-dep", "node_modules", "no-deps"))).toBeFalse();
+  });
+
+  test("a package with bundled dependencies keeps what it ships", async () => {
+    await writeRoot({ dependencies: { "bundled-1": "1.0.0" } });
+    await runBunInstall(env, packageDir);
+    expect(await versionIn("bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
+
+    // The root installs the name that bundled-1 depends on and ships.
+    await writeRoot({ dependencies: { "bundled-1": "1.0.0", "no-deps": "1.0.0" } });
+    await runBunInstall(env, packageDir);
+    expect(await versionIn("no-deps")).toBe("1.0.0");
+    expect(await versionIn("bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
+  });
+});
+
 describe("transitive file dependencies", () => {
   async function checkHoistedFiles() {
     const aliasedFileDepFilesPackageJson = join(

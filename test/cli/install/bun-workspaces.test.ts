@@ -2883,3 +2883,156 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
   expect(readJson(join(cacheDir, cached[0], "package.json"))).toEqual({ name: "no-deps", version: "2.0.0" });
   expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
 });
+
+// The hoisted linker puts a workspace's own version of a package in the workspace's node_modules. Once bun.lock
+// no longer places it there, the copy would hide the version the workspace now resolves from the root.
+describe("hoisted: a copy in a workspace's node_modules that bun.lock no longer places", () => {
+  const versionOf = async (dir: string) => (await file(join(dir, "package.json")).json()).version;
+
+  // The root installs no-deps@1.0.0. pkg1 needs 2.0.0, so that one goes into packages/pkg1/node_modules.
+  async function nestedInWorkspace({ packageDir, packageJson, env }: TestCtx) {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({ name: "pkg2", version: "1.0.0", dependencies: { "a-dep": "1.0.1" } }),
+      ),
+    ]);
+    await runBunInstall(env, packageDir);
+    const nested = join(packageDir, "packages", "pkg1", "node_modules", "no-deps");
+    expect(await versionOf(nested)).toBe("2.0.0");
+    return nested;
+  }
+
+  const writePkg1 = ({ packageDir }: TestCtx, dependencies: Record<string, string>) =>
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies }),
+    );
+
+  test.concurrent.each([
+    ["drops the dependency", {}],
+    ["takes the root's version", { "no-deps": "1.0.0" }],
+    ["takes a range the root's version satisfies", { "no-deps": "<=1.0.0" }],
+  ] as [string, Record<string, string>][])("is removed when the workspace %s", async (_label, dependencies) => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const nested = await nestedInWorkspace(ctx);
+
+    await writePkg1(ctx, dependencies);
+    await runBunInstall(env, packageDir);
+    expect(await exists(nested)).toBeFalse();
+    expect(await versionOf(join(packageDir, "node_modules", "no-deps"))).toBe("1.0.0");
+    expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("no-deps@2.0.0");
+
+    const { out } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(out).toContain("(no changes)");
+  });
+
+  test.concurrent("is removed when the root node_modules is installed again", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const nested = await nestedInWorkspace(ctx);
+    // What an install without this pass left behind: bun.lock has no row for the copy.
+    await writePkg1(ctx, { "no-deps": "1.0.0" });
+    await runBunInstall(env, packageDir);
+    await cp(join(packageDir, "node_modules", "no-deps"), nested, { recursive: true });
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(await exists(nested)).toBeFalse();
+    expect(await versionOf(join(packageDir, "node_modules", "no-deps"))).toBe("1.0.0");
+  });
+
+  test.concurrent("stays when the run does not select the workspace, installs nothing, or fails", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const nested = await nestedInWorkspace(ctx);
+    await writePkg1(ctx, {});
+
+    await using dryRun = spawn({
+      cmd: [bunExe(), "install", "--dry-run"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await dryRun.exited).toBe(0);
+    expect(await versionOf(nested)).toBe("2.0.0");
+
+    // `uglify-js` is not in the registry, so the run exits 1.
+    const manifest = await file(packageJson).json();
+    await write(
+      packageJson,
+      JSON.stringify({ ...manifest, dependencies: { ...manifest.dependencies, "uglify-js": "1.0.0" } }),
+    );
+    await runBunInstall(env, packageDir, { allowErrors: true, expectedExitCode: 1, savesLockfile: false });
+    expect(await versionOf(nested)).toBe("2.0.0");
+    await write(packageJson, JSON.stringify(manifest));
+
+    await using filtered = spawn({
+      cmd: [bunExe(), "install", "--filter", "pkg2"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, filteredErr, filteredCode] = await Promise.all([
+      filtered.stdout.text(),
+      filtered.stderr.text(),
+      filtered.exited,
+    ]);
+    expect(filteredErr).not.toContain("error:");
+    expect(await versionOf(nested)).toBe("2.0.0");
+    expect(filteredCode).toBe(0);
+  });
+
+  // The linker links a `file:` dependency again on every run. A repeat install stays a repeat install:
+  // that row alone is no reason to list the workspace folders.
+  test.concurrent("a repeat install that only links a file: dependency again looks at nothing", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0", "file-dep": "file:./file-dep" },
+        }),
+      ),
+      write(join(packageDir, "file-dep", "package.json"), JSON.stringify({ name: "file-dep", version: "1.0.0" })),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+      ),
+    ]);
+    await runBunInstall(env, packageDir);
+    const copy = join(packageDir, "packages", "pkg1", "node_modules", "no-deps");
+    await cp(join(packageDir, "node_modules", "no-deps"), copy, { recursive: true });
+
+    const { out } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(out).toContain("1 package installed");
+    expect(await versionOf(copy)).toBe("1.0.0");
+  });
+
+  test.concurrent("an entry that no folder above provides stays", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const nested = await nestedInWorkspace(ctx);
+    const handPlaced = join(packageDir, "packages", "pkg1", "node_modules", "hand-placed");
+    await write(join(handPlaced, "package.json"), JSON.stringify({ name: "hand-placed", version: "1.0.0" }));
+
+    await writePkg1(ctx, {});
+    await runBunInstall(env, packageDir);
+    expect(await exists(nested)).toBeFalse();
+    expect(await versionOf(handPlaced)).toBe("1.0.0");
+  });
+});

@@ -1226,6 +1226,12 @@ impl<'p> Checker<'p> {
 
     /// `getSimplifiedIndexedAccessType`
     fn simplified_indexed_access(&mut self, t: TypeId, writing: bool) -> TypeId {
+        // An access that waits on an alias is looked into, cached or not: see `force_reference`.
+        if let TypeData::IndexedAccess { obj, .. } = *self.data(t)
+            && matches!(self.data(obj), TypeData::LazyAlias { .. })
+        {
+            self.force(obj);
+        }
         if let Some(&known) = self.simplified.get(&(t, writing)) {
             return known;
         }
@@ -1248,7 +1254,8 @@ impl<'p> Checker<'p> {
         let TypeData::IndexedAccess { obj, index, .. } = *self.data(t) else {
             return t;
         };
-        let object = self.simplified(obj, writing);
+        let object = self.force(obj);
+        let object = self.simplified(object, writing);
         let index_ty = self.simplified(index, writing);
         // T[A | B] is T[A] | T[B] to read, T[A] & T[B] to write.
         if let TypeData::Union(parts) = self.data(index_ty) {
@@ -1461,6 +1468,56 @@ impl<'p> Checker<'p> {
         }
     }
 
+    /// `getConstraintOfType`, of a part of a restrictive instantiation (`getRestrictiveInstantiation`): its type parameters extend
+    /// nothing. An indexed access and a conditional type still go by what their parts extend.
+    fn restrictive_constraint_of(&mut self, t: TypeId) -> Option<TypeId> {
+        match *self.data(t) {
+            TypeData::TypeParam(..) | TypeData::ThisParam(_) | TypeData::Marker(_) => None,
+            TypeData::IndexedAccess {
+                obj,
+                index,
+                undefined,
+            } => {
+                self.base_constraint(t);
+                if self.p.circular_constraints.get(&t).is_some() {
+                    return None;
+                }
+                if let Some(substituted) = self.substitute_indexed_mapped(obj, index) {
+                    return Some(substituted);
+                }
+                if let Some(constraint) = self.restrictive_simplified_or_constraint(index)
+                    && constraint != index
+                    && let Some(access) = self.indexed_access_flagged(obj, constraint, undefined)
+                {
+                    return Some(access);
+                }
+                if let Some(constraint) = self.restrictive_simplified_or_constraint(obj)
+                    && constraint != obj
+                {
+                    return self.indexed_access_flagged(constraint, index, undefined);
+                }
+                None
+            }
+            TypeData::Cond { .. } => {
+                match self.constraint_of_distributive_conditional_worker(t, true) {
+                    Some(constraint) => Some(constraint),
+                    None => Some(self.default_constraint_of_conditional(t)),
+                }
+            }
+            _ => self.base_constraint_of(t),
+        }
+    }
+
+    /// `getSimplifiedTypeOrConstraint`, of the same.
+    fn restrictive_simplified_or_constraint(&mut self, t: TypeId) -> Option<TypeId> {
+        let simplified = self.simplified(t, false);
+        if simplified != t {
+            Some(simplified)
+        } else {
+            self.restrictive_constraint_of(t)
+        }
+    }
+
     /// `getConstraintFromIndexedAccess`. `undefined`: what the access has kept of how it was made (`accessFlags`).
     fn constraint_of_indexed_access(
         &mut self,
@@ -1483,6 +1540,12 @@ impl<'p> Checker<'p> {
             return self.indexed_access_flagged(constraint, index, undefined);
         }
         None
+    }
+
+    /// `hasNonCircularBaseConstraint`
+    fn has_non_circular_base_constraint(&mut self, t: TypeId) -> bool {
+        self.base_constraint(t);
+        self.p.circular_constraints.get(&t).is_none()
     }
 
     /// `getBaseConstraintOfType`. `None`: there is none.
@@ -1846,7 +1909,7 @@ impl<'p> Checker<'p> {
             return cached;
         }
         let cycles_before = self.cycles;
-        let result = self.constraint_of_distributive_conditional_worker(t);
+        let result = self.constraint_of_distributive_conditional_worker(t, false);
         // A result computed while a resolution cycle was hit may be incomplete, so it is not cached.
         if self.cycles == cycles_before {
             self.cond_distributive_memo.insert(t, result);
@@ -1854,13 +1917,22 @@ impl<'p> Checker<'p> {
         result
     }
 
-    fn constraint_of_distributive_conditional_worker(&mut self, t: TypeId) -> Option<TypeId> {
+    /// `restrictive`: see `restrictive_constraint_of`.
+    fn constraint_of_distributive_conditional_worker(
+        &mut self,
+        t: TypeId,
+        restrictive: bool,
+    ) -> Option<TypeId> {
         let param = self.cond_distributes_over(t)?;
         let (file, node, mapper, _) = self.cond_origin(t);
         let check = self.cond_check(t);
         let mut constraint = self.simplified(check, false);
         if constraint == check {
-            constraint = self.constraint_of(check)?;
+            constraint = if restrictive {
+                self.restrictive_constraint_of(check)?
+            } else {
+                self.constraint_of(check)?
+            };
         }
         if constraint == check {
             return None;
@@ -3346,11 +3418,9 @@ impl<'p> Checker<'p> {
                 w = r.maybe_keys.len() * 2
             );
         }
-        if r.source_stack.len() == 100
-            || r.target_stack.len() == 100
-            || self.is_stack_low()
-            || self.is_out_of_time()
-        {
+        let is_too_deep = r.source_stack.len() == 100 || r.target_stack.len() == 100;
+        if is_too_deep || self.is_stack_low() || self.is_out_of_time() {
+            self.relation_too_deep |= is_too_deep;
             r.maybe_keys_set.remove(&key);
             r.overflow = true;
             return Ternary::FALSE;
@@ -4223,14 +4293,10 @@ impl<'p> Checker<'p> {
                 if !(matches!(self.data(source), TypeData::IndexedAccess { .. })
                     && matches!(self.data(target), TypeData::IndexedAccess { .. }))
                 {
-                    let constraint = match *self.data(source) {
-                        _ if relation != Relation::Restrictive => self.constraint_of(source),
-                        // The type parameters of a restrictive instantiation extend nothing. What is left of
-                        // `getConstraintFromIndexedAccess` is `E` of `{ [P in K]: E }[X]` with `X` for `P`.
-                        TypeData::IndexedAccess { obj, index, .. } => {
-                            self.substitute_indexed_mapped(obj, index)
-                        }
-                        _ => None,
+                    let constraint = if relation != Relation::Restrictive {
+                        self.constraint_of(source)
+                    } else {
+                        self.restrictive_constraint_of(source)
                     };
                     let constraint = constraint.unwrap_or(TypeId::UNKNOWN);
                     let result = self.is_related_to_ex(r, constraint, target, REC_SOURCE, state);
@@ -4342,6 +4408,7 @@ impl<'p> Checker<'p> {
                 }
                 // Not against another conditional type: what is checked is replaced by what it extends, and too much fits.
                 if !matches!(self.data(target), TypeData::Cond { .. })
+                    && self.has_non_circular_base_constraint(source)
                     && relation != Relation::Restrictive
                     && let Some(distributive) = self.constraint_of_distributive_conditional(source)
                 {

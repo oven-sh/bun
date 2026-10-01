@@ -157,6 +157,8 @@ pub struct Program {
     declared_types: ByNode<Sym, TypeId>,
     /// The unions that a type alias, or an alias with type arguments, stands for.
     named_unions: IdSet<TypeId>,
+    /// The generic references made from a deferred type reference node (`isDeferredTypeReferenceNode`), and their generic instantiations.
+    deferred_references: IdSet<TypeId>,
     /// `UnionType.origin` of a union that `getIntersectionTypeEx` produced by distributing an intersection over its union
     /// members: the members of that intersection.
     union_origins: ByIdKept<TypeId, Arc<[TypeId]>>,
@@ -336,6 +338,7 @@ impl Program {
             initializer_is_undefined: ByNode::new(&params),
             declared_types: ByNode::new(&symbols),
             named_unions: Default::default(),
+            deferred_references: Default::default(),
             union_origins: Default::default(),
             alias_of: Default::default(),
             shapes: Default::default(),
@@ -398,6 +401,7 @@ impl Program {
             contextual: Vec::new(),
             inference: Vec::new(),
             instantiation_depth: 0,
+            deferring_type_arguments: 0,
             reports_depth: false,
             deep_events: 0,
             unreported_event: 0,
@@ -412,6 +416,7 @@ impl Program {
             cond_distributive_memo: FxHashMap::default(),
             relation_gave_up: false,
             relation_too_complex: false,
+            relation_too_deep: false,
             checking: None,
             never_in_progress: Vec::new(),
             retracing: false,
@@ -583,6 +588,8 @@ pub struct Checker<'p> {
     contextual: Vec<(FileId, ExprId, TypeId)>,
     inference: Vec<infer::Inference>,
     instantiation_depth: u32,
+    /// How many `instantiate_deferred_type_arguments` are trying an argument: a limit hit meanwhile is not reported.
+    deferring_type_arguments: u32,
     /// Set while `check_excessive_depth` runs: an instantiation limit is reported at `current_node`.
     reports_depth: bool,
     /// How many times an instantiation limit was hit, or a memo entry that depends on one was read. A change across an
@@ -608,6 +615,8 @@ pub struct Checker<'p> {
     pub(super) relation_gave_up: bool,
     /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
     pub(super) relation_too_complex: bool,
+    /// Set when a comparison reaches 100 nested comparisons (2321). The caller clears it before comparing.
+    pub(super) relation_too_deep: bool,
     /// The file whose errors are being looked for. For debugging.
     pub(super) checking: Option<FileId>,
     /// The intersections it is being found out of whether anything can be them.
@@ -1227,6 +1236,11 @@ impl<'p> Checker<'p> {
     fn record_excessive_depth(&mut self) -> bool {
         self.deep_events += 1;
         self.p.has_excessive.store(true, Ordering::Relaxed);
+        // tsgo instantiates the type arguments of a deferred type reference later, with another `currentNode`.
+        if self.deferring_type_arguments > 0 {
+            self.unreported_event = self.deep_events;
+            return false;
+        }
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         if self.reports_depth
             && self.eager.is_empty()

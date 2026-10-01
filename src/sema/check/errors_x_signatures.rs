@@ -483,6 +483,26 @@ fn question_token(hir: &hir::File, pat: PatId) -> Option<u32> {
 /// they only say of JavaScript (1206) or of a regular expression, which is scanned for its errors by the checker, and 1359 2427 2457,
 /// which the binder and the checker say more often, and 18016: the parser's own sets `hir.has_parse_diagnostics`, one that is left in
 /// `early_errors` without it is `checkGrammarObjectLiteralExpression`'s.
+/// Where the type alias, class, interface or function declaration that has the type parameter `tp` is named.
+fn name_of_type_parameter_owner(hir: &hir::File, tp: TypeParamId) -> Option<u32> {
+    let has = |list: Span<TypeParamId>| list.range().contains(&tp.idx());
+    let alias = hir.aliases.iter().find(|a| has(a.type_params));
+    let class = hir
+        .classes
+        .iter()
+        .find(|c| has(c.type_params) && c.name.is_some());
+    let interface = hir.interfaces.iter().find(|i| has(i.type_params));
+    let function = hir
+        .fns
+        .iter()
+        .find(|f| has(f.type_params) && f.kind == FnKind::Decl && f.name.is_some());
+    alias
+        .map(|a| a.name_pos)
+        .or(class.map(|c| c.name_pos))
+        .or(interface.map(|i| i.name_pos))
+        .or(function.map(|f| f.name_pos))
+}
+
 pub(super) fn has_parse_diagnostics(hir: &hir::File) -> bool {
     hir.has_parse_diagnostics
         || hir.has_errors
@@ -1647,11 +1667,18 @@ impl Checker<'_> {
                         let mapper = self.mapper_from(&[param], &[default]);
                         let constraint = self.instantiate(constraint, mapper);
                         let constraint = self.type_with_this_argument(constraint, default);
+                        self.relation_too_deep = false;
                         if self.is_known_not_to_fit(default, constraint) {
                             let end = self.end_of_type_node_from(file, decl.default, start);
                             self.report_not_assignable_with_end(
                                 default, constraint, start, end, 2344, out,
                             );
+                        }
+                        // `checkTypeRelatedToEx`: a comparison without an error node reports at `currentNode`, the declaration.
+                        if std::mem::take(&mut self.relation_too_deep)
+                            && let Some(start) = name_of_type_parameter_owner(hir, tp)
+                        {
+                            out.push(Diagnostic { start, code: 2321 });
                         }
                     }
                 }

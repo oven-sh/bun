@@ -1866,7 +1866,8 @@ impl<'p> Checker<'p> {
             // `getTypeFromArrayOrTupleTypeNode`: an array or a tuple type that is first made here is made from a type node
             // (`ObjectFlagsFromTypeNode`).
             TypeNodeKind::Array(element) => {
-                let element = if self.is_deferred_type_reference_node(file, scope, node, false) {
+                let is_deferred = self.is_deferred_type_reference_node(file, scope, node, false);
+                let element = if is_deferred {
                     self.deferred_type_argument(file, element)
                 } else {
                     self.type_from_node(file, element)
@@ -1874,6 +1875,9 @@ impl<'p> Checker<'p> {
                 let made_before = self.p.types.len();
                 let ty = self.array_of(element);
                 self.p.types.mark_manifest(ty, made_before);
+                if is_deferred && self.has_type_variables(ty) {
+                    self.p.deferred_references.insert(ty, ());
+                }
                 ty
             }
             TypeNodeKind::Readonly(operand) => {
@@ -1896,6 +1900,9 @@ impl<'p> Checker<'p> {
                     },
                 };
                 self.p.types.mark_manifest(ty, made_before);
+                if self.p.deferred_references.get(&inner).is_some() {
+                    self.p.deferred_references.insert(ty, ());
+                }
                 ty
             }
             TypeNodeKind::Tuple(elems) => {
@@ -1908,6 +1915,16 @@ impl<'p> Checker<'p> {
                     && self.is_deferred_type_reference_node(file, scope, node, false);
                 for e in elems.iter() {
                     let elem = &hir[e];
+                    // `getTypeFromRestTypeNode`: of `...X[]` it is `X` that is resolved.
+                    if is_deferred
+                        && elem.rest
+                        && let Some(element) = array_element_type_node(hir, elem.ty)
+                        && let Some(waiting) = self.indexed_access_of_alias_under_way(file, element)
+                    {
+                        types.push(waiting);
+                        flags.push(ElemFlags::REST);
+                        continue;
+                    }
                     let ty = if is_deferred {
                         self.deferred_type_argument(file, elem.ty)
                     } else {
@@ -2329,6 +2346,9 @@ impl<'p> Checker<'p> {
                 }
                 let ty = self.written_type_reference(sym, &args);
                 self.aliased_reference = false;
+                if is_deferred && self.has_type_variables(ty) {
+                    self.p.deferred_references.insert(ty, ());
+                }
                 // `combineValueAndTypeSymbols`: an interface imported by name from an `export =` module whose value has a property of
                 // that name is a new symbol with a new declared type. `this` in its own members is still the `this` type of the
                 // original interface (`getThisType`), which the new type never binds.
@@ -2796,6 +2816,47 @@ impl<'p> Checker<'p> {
         Some((sym, args))
     }
 
+    /// `Alias<Args>[K]` written at `node`, in a type argument that a deferred type reference node puts off, where the generic `Alias` is
+    /// not resolved yet. tsgo resolves the node on the first `getTypeArguments`, when it is. The access waits on a reference to the alias.
+    fn indexed_access_of_alias_under_way(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+    ) -> Option<TypeId> {
+        if node.is_none() {
+            return None;
+        }
+        let TypeNodeKind::IndexedAccess { obj, index } = self.hir(file)[node].kind else {
+            return None;
+        };
+        let (sym, args) = self.deferrable_alias_reference(file, obj)?;
+        if args.is_empty() {
+            return None;
+        }
+        let is_under_way = self.stack.contains(&Query::Declared(sym))
+            || self.p.declared_types.get(&sym).is_none()
+                && self.enclosing_alias(file, self.bound(file).type_scope[node.idx()]) == Some(sym);
+        if !is_under_way {
+            return None;
+        }
+        let args = self.types_from_nodes(file, args);
+        let params = self.local_type_params_of_symbol(sym);
+        let args = self.fill_type_args(&params, &args);
+        let obj = self.intern(TypeData::LazyAlias {
+            sym,
+            args: args.into(),
+        });
+        if !self.has_type_variables(obj) {
+            return None;
+        }
+        let index = self.type_from_node(file, index);
+        Some(self.intern(TypeData::IndexedAccess {
+            obj,
+            index,
+            undefined: false,
+        }))
+    }
+
     /// The type of an element or type argument of a deferred type reference node (`isDeferredTypeReferenceNode`). tsgo resolves it
     /// on the first `getTypeArguments`. There are no deferred references here: the node is resolved now, and a direct reference to
     /// an alias stays a `LazyAlias` where resolving it leads back to the reference.
@@ -2810,7 +2871,10 @@ impl<'p> Checker<'p> {
     /// `deferred_type_argument`, inside its `eager` marker.
     fn deferred_type_argument_worker(&mut self, file: FileId, node: TypeNodeId) -> TypeId {
         let Some((sym, args)) = self.deferrable_alias_reference(file, node) else {
-            return self.type_from_node(file, node);
+            return match self.indexed_access_of_alias_under_way(file, node) {
+                Some(waiting) => waiting,
+                None => self.type_from_node(file, node),
+            };
         };
         // Instantiating the deferred reference must not instantiate the alias again, so a generic alias referenced in its own
         // declaration is never expanded here.
@@ -2830,6 +2894,36 @@ impl<'p> Checker<'p> {
             sym,
             args: args.into(),
         })
+    }
+
+    /// The conditional type `ty` as an unresolved reference to the generic type alias whose whole body it instantiates. `None` for any
+    /// other type, and for an alias declared under outer type parameters (see `deferrable_alias_reference`).
+    pub(super) fn as_unresolved_alias_reference(&mut self, ty: TypeId) -> Option<TypeId> {
+        let TypeData::Cond { file, node, mapper } = *self.data(ty) else {
+            return None;
+        };
+        let bound = self.bound(file);
+        let scope = bound.type_scope[node.idx()];
+        if scope.is_none() {
+            return None;
+        }
+        let alias = self.alias_with_body(file, scope, node)?;
+        if !self
+            .type_params_in_scope(file, bound.scopes[scope.idx()].parent)
+            .is_empty()
+        {
+            return None;
+        }
+        let sym = self.files().sym(file, bound.alias_symbol[alias.idx()]);
+        let params = self.local_type_params_of_symbol(sym);
+        if params.is_empty() {
+            return None;
+        }
+        let args: Box<[TypeId]> = params
+            .iter()
+            .map(|&param| self.p.types.map(mapper, param).unwrap_or(param))
+            .collect();
+        Some(self.intern(TypeData::LazyAlias { sym, args }))
     }
 
     /// `sym<args>`, where `sym` is not an alias for something imported.

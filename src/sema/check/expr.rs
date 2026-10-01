@@ -2181,7 +2181,10 @@ impl<'p> Checker<'p> {
             {
                 // `getThisTypeOfObjectLiteralFromContextualType`: `ThisType<T>` in what the literal, or a literal it is directly the
                 // value of a property of, is expected to be says so.
-                let context = self.settled_context_of_literal(file, containing);
+                let context = match self.context_of_accessor_in_argument(file, p, containing) {
+                    Some(context) => context,
+                    None => self.settled_context_of_literal(file, containing),
+                };
                 let (mut literal, mut expected) = (containing, context);
                 while let Some(ty) = expected {
                     let mut marked = Vec::new();
@@ -2239,6 +2242,40 @@ impl<'p> Checker<'p> {
             return Some(self.widened(this));
         }
         None
+    }
+
+    /// `getContextualTypeForArgumentAtIndex`: while a call is being resolved its arguments are expected to be `any` (`resolvingSignature`).
+    /// `checkObjectLiteral` puts an accessor off, so its type is first resolved when the call reads the property, after the contextual
+    /// type of the argument is popped. `Some`: what `literal` is then expected to be, if `p` is an accessor of it and it is an argument
+    /// or the value of a property of an object literal that is.
+    fn context_of_accessor_in_argument(
+        &self,
+        file: FileId,
+        p: PropId,
+        literal: ExprId,
+    ) -> Option<Option<TypeId>> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if !matches!(hir[p].kind, PropKind::Getter | PropKind::Setter) {
+            return None;
+        }
+        let mut at = literal;
+        loop {
+            match bound.expr_parent[at.idx()] {
+                Parent::Prop(outer) if hir[outer].kind == PropKind::Init => {
+                    at = bound.prop_owner[outer.idx()];
+                    if at.is_none() || !matches!(hir[at].kind, ExprKind::Object(_)) {
+                        return None;
+                    }
+                }
+                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                    ExprKind::Call(c) | ExprKind::New(c) if hir[c].callee != at => break,
+                    _ => return None,
+                },
+                _ => return None,
+            }
+        }
+        // `getTypeOfPropertyOfContextualType`: `any` says nothing of its properties.
+        Some((at == literal).then_some(TypeId::ANY))
     }
 
     /// `isContextSensitiveFunctionOrObjectLiteralMethod`, which an accessor is not.

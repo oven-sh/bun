@@ -672,6 +672,9 @@ impl Checker<'_> {
         if has(TEMPLATE | TUPLE | INTERSECTION) {
             self.check_size_of_cross_products(file, out);
         }
+        if has(TEMPLATE) {
+            self.check_template_literal_type_nodes(file, out);
+        }
         if has(INFER) {
             self.check_infer_type_nodes(file, &parents, out);
         }
@@ -946,6 +949,41 @@ impl Checker<'_> {
                 });
                 let end = self.end_inside_parentheses(file, e);
                 self.explain_to(hir.exprs[i].pos, end, 2590, |_| vec![]);
+            }
+        }
+    }
+
+    /// `checkTemplateLiteralType` compares each placeholder with `templateConstraintType`. Reported is 2321, for a comparison made on the
+    /// way that runs out of depth: it has no error node, and the template literal type is `currentNode`.
+    fn check_template_literal_type_nodes(&mut self, file: FileId, out: &mut Vec<Diagnostic>) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let constraint = self.union(&[
+            TypeId::STRING,
+            TypeId::NUMBER,
+            TypeId::BOOLEAN,
+            TypeId::BIGINT,
+            TypeId::NULL,
+            TypeId::UNDEFINED,
+        ]);
+        for t in 0..hir.types.len() {
+            let TypeNodeKind::Template { types, .. } = hir.types[t].kind else {
+                continue;
+            };
+            if bound.type_scope[t].is_none() {
+                continue;
+            }
+            self.relation_too_deep = false;
+            for placeholder in hir.ids(types) {
+                let ty = self.type_from_node(file, placeholder);
+                if self.is_known(ty) {
+                    self.answer_if_sure(|c| c.is_assignable(ty, constraint));
+                }
+            }
+            if std::mem::take(&mut self.relation_too_deep) {
+                out.push(Diagnostic {
+                    start: hir.types[t].pos,
+                    code: 2321,
+                });
             }
         }
     }
@@ -3135,6 +3173,48 @@ impl Checker<'_> {
         Some((sym, self.declaration_of_alias(sym)?))
     }
 
+    /// What the generic type alias named at `node` is declared as, if it is given its own type parameters in order:
+    /// `getTypeAliasInstantiation` then gives the declared type, with the deferred type references in it (`getObjectTypeInstantiation`).
+    fn alias_written_with_its_own_parameters(
+        &self,
+        file: FileId,
+        node: TypeNodeId,
+    ) -> Option<Written> {
+        let hir = self.hir(file);
+        let TypeNodeKind::Ref { args, .. } = hir[node].kind else {
+            return None;
+        };
+        if args.is_empty() {
+            return None;
+        }
+        let sym = self.type_symbol_written(file, node)?;
+        let flags = self.files().flags(sym);
+        if !flags.contains(SymFlags::TYPE_ALIAS)
+            || flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE)
+        {
+            return None;
+        }
+        let declared = self.declaration_of_alias(sym)?;
+        let alias = self
+            .hir(declared.file)
+            .aliases
+            .iter()
+            .find(|alias| alias.ty == declared.node)?;
+        let symbols = &self.bound(declared.file).type_param_symbol;
+        let is_identity = alias.type_params.len() == args.len()
+            && alias
+                .type_params
+                .iter()
+                .zip(hir.ids(args))
+                .all(|(param, arg)| {
+                    matches!(hir[arg].kind, TypeNodeKind::Ref { args, .. } if args.is_empty())
+                        && symbols[param.idx()].is_some()
+                        && self.type_symbol_written(file, arg)
+                            == Some(self.files().sym(declared.file, symbols[param.idx()]))
+                });
+        is_identity.then_some(declared)
+    }
+
     /// The aliases from `node` on, each of which is declared as the next.
     fn note_aliases_gone_through(
         &self,
@@ -3469,8 +3549,12 @@ impl Checker<'_> {
             ..at
         };
         match hir[at.node].kind {
-            TypeNodeKind::Ref { .. } => match self.plain_alias_written(at.file, at.node) {
-                Some((_, declared)) => self.collect_needs_of_members(declared, out, depth + 1),
+            TypeNodeKind::Ref { .. } => match self
+                .plain_alias_written(at.file, at.node)
+                .map(|(_, declared)| declared)
+                .or_else(|| self.alias_written_with_its_own_parameters(at.file, at.node))
+            {
+                Some(declared) => self.collect_needs_of_members(declared, out, depth + 1),
                 None => {
                     if self.puts_off_its_type_arguments(at) {
                         out.push(Needs::Arguments(at.file, at.node));

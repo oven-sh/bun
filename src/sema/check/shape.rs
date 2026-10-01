@@ -251,6 +251,8 @@ impl<'p> Checker<'p> {
                 if self.stack.contains(&Query::Declared(*sym)) {
                     return ty;
                 }
+                // `instantiate` marks the object of an indexed access that waits on an alias.
+                self.note_depth(Deep::Instantiation(ty, MapperId::IDENTITY), None);
                 match self.type_reference(*sym, args) {
                     expanded if matches!(self.data(expanded), TypeData::NoInfer(_)) => {
                         self.force(expanded)

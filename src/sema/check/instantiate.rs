@@ -52,6 +52,36 @@ impl<'p> Checker<'p> {
         types.iter().map(|&t| self.instantiate(t, mapper)).collect()
     }
 
+    /// The type arguments `args` of a deferred type reference under `mapper`. `getObjectTypeInstantiation` leaves them to the first
+    /// `getTypeArguments`. Here they are instantiated at once, but an instantiation of a generic alias that hits an instantiation limit
+    /// stays a reference to the alias, which hits the limit again where it is resolved.
+    fn instantiate_deferred_type_arguments(
+        &mut self,
+        args: &[TypeId],
+        mapper: MapperId,
+    ) -> Vec<TypeId> {
+        let mut new = Vec::with_capacity(args.len());
+        for &arg in args {
+            let Some(reference) = self.as_unresolved_alias_reference(arg) else {
+                new.push(self.instantiate(arg, mapper));
+                continue;
+            };
+            let (events, unreported) = (self.deep_events, self.unreported_event);
+            self.deferring_type_arguments += 1;
+            let instantiated = self.instantiate(arg, mapper);
+            self.deferring_type_arguments -= 1;
+            if self.deep_events == events {
+                new.push(instantiated);
+                continue;
+            }
+            // The memo entries around do not depend on the limit.
+            self.deep_events = events;
+            self.unreported_event = unreported;
+            new.push(self.instantiate(reference, mapper));
+        }
+        new
+    }
+
     /// `instantiateTypeWithAlias`
     pub fn instantiate(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
         self.time_trap();
@@ -118,11 +148,20 @@ impl<'p> Checker<'p> {
                 self.intersection(&new)
             }
             TypeData::Ref { target, args } => {
-                let args = self.instantiate_all(args, mapper);
-                self.intern(TypeData::Ref {
+                let is_deferred = self.p.deferred_references.get(&ty).is_some();
+                let args = if is_deferred {
+                    self.instantiate_deferred_type_arguments(args, mapper)
+                } else {
+                    self.instantiate_all(args, mapper)
+                };
+                let new = self.intern(TypeData::Ref {
                     target: *target,
                     args: args.into(),
-                })
+                });
+                if is_deferred && self.has_type_variables(new) {
+                    self.p.deferred_references.insert(new, ());
+                }
+                new
             }
             TypeData::LazyAlias { sym, args } => {
                 let args = self.instantiate_all(args, mapper);
@@ -246,10 +285,31 @@ impl<'p> Checker<'p> {
                     return substituted;
                 }
                 let undefined = *undefined;
+                let declared = *obj;
                 let (obj, index) = (
                     self.instantiate(*obj, mapper),
                     self.instantiate(*index, mapper),
                 );
+                // `indexed_access_of_alias_under_way`: the access goes on waiting while the type arguments of the alias are generic.
+                // `getTypeArguments` of the instantiated reference starts over until `instantiationDepth == 100` and stores the access all
+                // the same. `force_reference` reports that where the alias is first looked into.
+                if matches!(self.data(declared), TypeData::LazyAlias { .. })
+                    && self.has_type_variables(obj)
+                {
+                    if obj != declared {
+                        self.p
+                            .excessive
+                            .insert(Deep::Instantiation(obj, MapperId::IDENTITY), ());
+                        self.p
+                            .has_excessive
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    return self.intern(TypeData::IndexedAccess {
+                        obj,
+                        index,
+                        undefined,
+                    });
+                }
                 // `getIndexedAccessTypeEx(.., t.accessFlags, nil)`: there is no node to complain at, so what is not there is `unknown`.
                 self.indexed_access_flagged(obj, index, undefined)
                     .unwrap_or(TypeId::UNKNOWN)

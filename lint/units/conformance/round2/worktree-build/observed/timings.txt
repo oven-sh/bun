@@ -1,0 +1,38 @@
+Raw timing lines, 2026-10-01, machine shared with other units (cgroup: 12 CPUs, 32 GB; host load average 450 to 930; cpu.pressure "some" 13 to 52 percent).
+bin debug   = /workspace/wt/conformance/build/debug/bun-debug (1.4.3-debug+3110ce85c, ASAN)
+bin release = /workspace/wt/parser/build/release/bun (1.4.3-canary.1+be1ebe529; git diff be1ebe5295 3110ce85cf -- src/ is empty)
+40 case files of the corpus (every 310th of 12404 sorted .ts/.tsx paths, 15684 bytes in all), one operand per run, timing.ts.
+
+debug, env default (ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0), not under the lock:
+ width 1: total 24.17 s; per run wall min 195 median 506 p90 1270 max 1584 ms; cpu min 97 median 115 max 197 ms, cpu sum 5.07 s; maxrss 216 MB; exits 30x0 10x2
+ width 4: total  7.82 s; per run wall min 159 median 732 p90 1233 max 1790 ms; cpu sum 4.92 s
+ width 1: total 19.34 s; per run wall min 154 median 407 p90  938 max 1651 ms; cpu median 125 ms, cpu sum 5.37 s
+ width 4: total  6.54 s; per run wall min 268 median 594 p90 1012 max 1409 ms; cpu sum 5.01 s
+ width 1: total 13.78 s; per run wall min 108 median 281 p90  727 max 1032 ms; cpu sum 5.45 s
+ width 4: total  5.57 s; per run wall min 111 median 440 p90 1172 max 1395 ms; cpu sum 4.94 s
+debug, env none (no ASAN_OPTIONS):
+ width 1: total 17.94 s; median 368 ms; cpu sum 5.00 s      width 4: total 7.11 s
+debug, env leak (CI: detect_leaks=1:abort_on_error=1, LSAN_OPTIONS with test/leaksan.supp, BUN_DESTRUCT_VM_ON_EXIT=1):
+ width 1: total 25.42 s; median 548 ms; cpu median 173 ms, cpu sum 6.97 s; maxrss 241 MB      width 4: total 14.26 s
+release, env none:
+ width 1: total 8.66 s (median 214 ms)   width 4: total 7.49 s      [host stalled]
+ width 1: total 8.06 s (median 163 ms)   width 4: total 3.80 s      [host stalled]
+ width 1: total 0.27 s (median   3 ms)   width 4: total 0.25 s      [calmer minute]; cpu 2 ms per run, maxrss 41 MB
+
+sweep.ts --jobs 4 (seconds of the report, which include the enumeration):
+ debug   conformance/types/tuple/ (34 run)              8.2 s
+ debug   conformance/parser/ecmascript6/ (85 run)      11.8 s
+ debug   "*7.ts" (209 run)                             31.9 s, 66.5 s, 67.3 s, 68.0 s   (the same command at four times of the day)
+ debug   "*7.ts", leak env                             58.4 s   (beside the 31.9 s run)
+ debug   conformance/parser/ecmascript5/ (716 run)    157.4 s   under /workspace/tools/lk, pinned env: 0.22 s per instance
+ release "*7.ts" (209 run)                              7.5 s, 14.6 s, 16.9 s, 20.5 s, 48.3 s
+ release conformance/salsa/ jsdoc/ jsx/ (731 run)      44.1 s
+ no-op check, "*7.ts", --no-files                       4.2 s, 4.3 s   (what a pattern costs before the first instance, cases in the page cache)
+ no-op check, whole corpus, --no-files (12797 run)     23.5 s
+ no-op check, whole corpus, files written (12797 run)  28.0 s   (186 unsupported: 175 absolute-path-in-text, 8 dos-root, 3 case-insensitive-requested)
+ --no-run, whole corpus                                17.5 s
+
+one child of another kind, for scale: bun-debug <fixtures/lints-fixture.ts> --lint clean.ts (a JavaScript VM starts): 4.2 s, 4.5 s, 4.6 s
+a child that dies under ASAN: 5 to 25 s until it has exited (the symbolizer); with ASAN_OPTIONS symbolize=0: 0.3 s
+
+lock waits of this unit: 30 min 36 s (09:19:49 to 09:50:25), 1 min 50 s (10:25:13 to 10:27:03), 8 min 18 s (10:34:02 to 10:42:20), more than 17 min and not served (10:41:36 to 10:58)

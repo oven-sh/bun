@@ -480,6 +480,7 @@ const cases: Case[] = [
     b: () => Object.create({ [Symbol.toStringTag]: "X" }),
     strict: false,
     loose: false,
+    looseBug: "reports equal",
   },
   {
     name: "Object.create({ x: 1 }) and { x: 1 }",
@@ -562,6 +563,18 @@ const cases: Case[] = [
     loose: false,
     looseBug: "reports equal",
   },
+  { name: "a Promise and {}", a: () => Promise.resolve(), b: () => ({}), strict: false, loose: false },
+  { name: "a WeakRef and {}", a: () => new WeakRef({}), b: () => ({}), strict: false, loose: false },
+  {
+    name: "a DataView and {}",
+    a: () => new DataView(new ArrayBuffer(8)),
+    b: () => ({}),
+    strict: false,
+    loose: false,
+  },
+  { name: "an empty arguments object and {}", a: () => argumentsObject(), b: () => ({}), strict: false, loose: false },
+  { name: "a URL and {}", a: () => new URL("http://a"), b: () => ({}), strict: false, loose: false },
+  { name: "Math and {}", a: () => Math, b: () => ({}), strict: false, loose: false },
 
   // Symbol keys: compared in strict mode, ignored in loose mode.
   {

@@ -5760,9 +5760,6 @@ impl<'p> Checker<'p> {
                 }
                 // `getDefaultConstructSignatures`: a clone of one of the base class, declared where that one is.
                 SigData::DefaultConstruct { class, base, .. } => {
-                    if self.base_types(class).is_empty() {
-                        return None;
-                    }
                     sig = *self.base_constructor_sigs(class).get(base as usize)?;
                 }
                 _ => return None,

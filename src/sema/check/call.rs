@@ -1868,9 +1868,6 @@ impl<'p> Checker<'p> {
                 break;
             };
             // One that extends itself, by whatever way round, has no base signatures, and so no declaration.
-            if self.base_types(class).is_empty() {
-                break;
-            }
             let Some(&of) = self.base_constructor_sigs(class).get(base as usize) else {
                 break;
             };

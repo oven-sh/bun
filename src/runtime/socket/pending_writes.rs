@@ -50,8 +50,7 @@ impl PendingWrites {
         }
     }
 
-    /// Lends the queued bytes to `send`, which can close the socket from inside. A `release()` under
-    /// `send` waits. The second result is true then, and the caller releases after the send.
+    /// Runs `send` over the queued bytes. True in the result: a `release()` waited for `send`, and the caller runs it.
     #[inline]
     pub(crate) fn lend<R>(&self, send: impl FnOnce(&[u8]) -> R) -> (R, bool) {
         let nested = self.lent.replace(true);

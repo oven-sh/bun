@@ -289,6 +289,7 @@ describe("assigning require.extensions repeatedly from one statement", () => {
       "index.js": `
         const Module = require("node:module");
         const path = require("node:path");
+        const { numberOfDFGCompiles, noInline } = require("bun:jsc");
         const originalJs = Module._extensions[".js"];
         const dispatched = [];
 
@@ -301,6 +302,8 @@ describe("assigning require.extensions repeatedly from one statement", () => {
         function restore(extension, previous) {
           Module._extensions[extension] = previous;
         }
+        noInline(install);
+        noInline(restore);
 
         // No require() in here: this only gets both helpers compiled by every JIT tier.
         for (let i = 0; i < 200; i++) {
@@ -308,6 +311,7 @@ describe("assigning require.extensions repeatedly from one statement", () => {
           restore(".js", originalJs);
           install(".hooked", "warm-hooked-" + i);
         }
+        const compiles = { install: numberOfDFGCompiles(install), restore: numberOfDFGCompiles(restore) };
 
         const rounds = [];
         for (let i = 0; i < 3; i++) {
@@ -320,7 +324,7 @@ describe("assigning require.extensions repeatedly from one statement", () => {
           rounds.push({ jsExports, afterRestore, hookedExports });
         }
 
-        console.log(JSON.stringify({ rounds, dispatched, restored: Module._extensions[".js"] === originalJs }));
+        console.log(JSON.stringify({ compiles, rounds, dispatched, restored: Module._extensions[".js"] === originalJs }));
       `,
     };
     for (let i = 0; i < 3; i++) {
@@ -333,15 +337,19 @@ describe("assigning require.extensions repeatedly from one statement", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "index.js"],
       cwd: String(dir),
-      // Compile on the main thread, so after the warm-up loop the helpers are
-      // guaranteed to run as JIT code (baseline and DFG) when the rounds start.
-      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      // Compile on the main thread with a fast, deterministic tier-up policy, so
+      // after the warm-up loop the helpers run as DFG code when the rounds start.
+      // numberOfDFGCompiles() in the fixture proves that they do.
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", BUN_JSC_jitPolicyScale: "0.05" },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
+    const { compiles, ...result } = JSON.parse(stdout);
+    expect(compiles.install).toBeGreaterThanOrEqual(1);
+    expect(compiles.restore).toBeGreaterThanOrEqual(1);
+    expect(result).toEqual({
       rounds: [
         { jsExports: "js-0", afterRestore: "builtin restored-0", hookedExports: "hooked-0" },
         { jsExports: "js-1", afterRestore: "builtin restored-1", hookedExports: "hooked-1" },

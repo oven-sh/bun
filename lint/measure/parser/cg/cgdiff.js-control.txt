@@ -1,0 +1,26 @@
+program  Ir 5,117,879,038 -> 5,113,741,607 (-4,137,431)  Bc 706,344,757 -> 706,283,862 (-60,895)  Bi 53,858,942 -> 53,859,764 (+822)
+matched /bun_js_parser|bun_ast/ 235 symbols  Ir 3,315,551,372 -> 3,313,003,842 (-2,547,530)  Bc 343,415,262 -> 343,578,782 (+163,520)  Bi 42,778,342 -> 42,778,342 (+0)
+23 matched symbols differ
+  Ir   -1,154,380  Bc    +192,360  Bi        +0  (a Ir 147,062,920) <bun_js_parser::p::P<false, false>>::parse_prefix
+  Ir     -995,200  Bc          +0  Bi        +0  (a Ir 10,698,400) <bun_js_parser::p::P<false, false>>::parse_fn_stmt
+  Ir     +596,180  Bc        +100  Bi        +0  (a Ir 50,966,760) <bun_js_parser::visit::visit_binary::BinaryExpressionVisitor>::visit_right_and_finish::<false, false>
+  Ir     -267,900  Bc     -17,860  Bi        +0  (a Ir 267,900) GONE core::ptr::drop_glue::<bun_ast::e::JSXElement>
+  Ir     -252,540  Bc     -21,960  Bi        +0  (a Ir 252,540) GONE core::ptr::drop_glue::<bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>
+  Ir     -197,520  Bc     -16,460  Bi        +0  (a Ir 1,382,640) <bun_js_parser::p::P<false, false>>::e_function
+  Ir     -180,200  Bc    -110,620  Bi        +0  (a Ir 32,547,880) <bun_js_parser::p::P<false, false>>::parse_stmt
+  Ir     -136,420  Bc          +0  Bi        +0  (a Ir 24,583,680) <bun_js_parser::p::P<false, false>>::hoist_symbols
+  Ir     -132,440  Bc          +0  Bi        +0  (a Ir 11,768,260) <bun_js_parser::p::P<false, false>>::visit_func
+  Ir     +118,040  Bc          +0  Bi        +0  (a Ir 1,420,120) <bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>::grow_exact
+  Ir     +111,160  Bc          +0  Bi        +0  (a Ir 7,117,569) <bun_js_parser::p::P<false, false>>::visit_args
+  Ir      -99,520  Bc          +0  Bi        +0  (a Ir 6,355,360) <bun_js_parser::p::P<false, false>>::s_function
+  Ir      +88,500  Bc     +10,980  Bi        +0  (a Ir 21,454,220) <bun_js_parser::p::P<false, false>>::parse_fn
+  Ir      +51,580  Bc      +5,580  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<false, false>>::parse_arrow_body_with_flags
+  Ir      -50,560  Bc      -5,580  Bi        +0  (a Ir 50,560) GONE <bun_js_parser::p::P<false, false>>::parse_arrow_body
+  Ir      -49,140  Bc          +0  Bi        +0  (a Ir 2,129,400) <bun_js_parser::p::P<false, false>>::parse_fn_expr
+  Ir       +6,060  Bc          +0  Bi        +0  (a Ir 19,173,700) <bun_js_parser::p::P<false, false>>::parse_property
+  Ir       -2,920  Bc    +127,020  Bi        +0  (a Ir 21,731,620) <bun_js_parser::p::P<false, false>>::s_local
+  Ir         -378  Bc         -84  Bi        +0  (a Ir 378) GONE core::ptr::drop_glue::<bun_js_parser::parser::MacroState>
+  Ir         +147  Bc         +84  Bi        +0  (a Ir 3,774) core::ptr::drop_glue::<bun_js_parser::p::P<false, false>>
+  Ir         -120  Bc         -40  Bi        +0  (a Ir 20,657,220) <bun_js_parser::p::P<false, false>>::parse_and_declare_decls
+  Ir          +21  Bc          +0  Bi        +0  (a Ir 10,143) <bun_js_parser::p::P<false, false>>::init
+  Ir          +20  Bc          +0  Bi        +0  (a Ir 36,100) <bun_js_parser::p::P<false, false>>::to_ast

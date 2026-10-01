@@ -1,0 +1,5 @@
+### step=base-sizes cwd=/tmp/parser-bb/base-tree
+### cmd: /workspace/tools/lk /workspace/notes/lint/units/parser/measure/sizeprobe-a/run.sh base /tmp/parser-bb/base-tree /tmp/parser-bb/base-codegen /workspace/notes/lint/measure/parser/baseline/sizes-a
+### queued: 2026-10-01T07:46:38Z
+### lock acquired: 2026-10-01T08:12:25Z
+### finished: 2026-10-01T08:14:29Z rc=0 run_secs=123

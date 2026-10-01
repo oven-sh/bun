@@ -23,3 +23,9 @@ check-rule-from-literal.cjs   node check-rule-from-literal.cjs <literal.txt> <te
 
 ../oracle/ is the work of the other pass of this research (an AST written out on one line instead of a hash, random
 patterns, the unicode tables as Rust items). The two passes agree on the closed form of BranchID.separatedFrom.
+
+shape.rs            rustc --edition 2024 --crate-type lib shape.rs; rustc --edition 2024 --test shape.rs -o t && ./t
+                    NOT the port: 180 lines that show that the proposed shape compiles under deny(warnings, dead_code,
+                    unreachable_pub): a `pub mod regexpp` whose items nothing outside a test calls, the callbacks as a trait
+                    object with `Result` and default bodies, a validator that borrows the source and the callbacks, a parser
+                    that makes its state and its validator per call and returns an arena of nodes, `?` inside `||` and `&&`.

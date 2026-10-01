@@ -218,7 +218,8 @@ if (args[0] === "--random") {
 } else {
 	const files = args.length ? args : [path.join(__dirname, "..", "cases", "upstream-no-dupe-else-if.json")];
 	for (const f of files) {
-		const parsed = JSON.parse(fs.readFileSync(f, "utf8"));
+		const text = fs.readFileSync(f, "utf8");
+		const parsed = f.endsWith(".jsonl") ? text.split("\n").filter(Boolean).map(l => JSON.parse(l)) : JSON.parse(text);
 		const flat = Array.isArray(parsed) ? parsed : [...parsed.valid, ...parsed.invalid];
 		compare(flat.map(c => (typeof c === "string" ? c : c.code)));
 	}

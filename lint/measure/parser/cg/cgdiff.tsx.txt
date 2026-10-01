@@ -1,0 +1,82 @@
+program  Ir 2,094,513,776 -> 2,145,056,550 (+50,542,774)  Bc 333,948,498 -> 342,991,430 (+9,042,932)  Bi 19,577,883 -> 19,089,284 (-488,599)
+matched /bun_js_parser|bun_ast/ 330 symbols  Ir 1,366,367,615 -> 1,411,703,605 (+45,335,990)  Bc 156,419,646 -> 164,667,646 (+8,248,000)  Bi 15,337,062 -> 14,837,062 (-500,000)
+79 matched symbols differ
+  Ir  -39,904,000  Bc  -4,084,000  Bi -1,058,000  (a Ir 39,904,000) GONE <bun_js_parser::p::P<true, false>>::skip_type_script_type_with_opts::<bun_js_parser::parse::type_sink::Discard>
+  Ir  +24,950,000  Bc  +3,522,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_type::<bun_js_parser::parse::type_sink::Discard>
+  Ir  +17,026,000  Bc  +2,268,000  Bi  +340,000  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_type_operator_or_higher::<bun_js_parser::parse::type_sink::Discard>
+  Ir  +13,154,000  Bc  +2,236,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_type_reference::<bun_js_parser::parse::type_sink::Discard>
+  Ir  +11,108,000  Bc  +1,534,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_postfix_type_rest::<bun_js_parser::parse::type_sink::Discard>
+  Ir   +9,430,000  Bc  +1,064,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments_in::<bun_js_parser::parse::type_sink::Discard, false, false>
+  Ir   -8,698,000  Bc    -798,000  Bi        +0  (a Ir 8,698,000) GONE <bun_js_parser::p::P<true, true>>::skip_type_script_type_arguments::<false, false>
+  Ir   +6,140,000  Bc    +606,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_arrow_body_with_flags
+  Ir   -6,072,000  Bc    -606,000  Bi        +0  (a Ir 6,072,000) GONE <bun_js_parser::p::P<true, false>>::parse_arrow_body
+  Ir   +5,170,000  Bc    +852,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_property_or_method_signature
+  Ir   -4,876,000  Bc  -1,018,000  Bi        +0  (a Ir 4,876,000) GONE <bun_js_parser::p::P<true, false>>::skip_type_script_object_type
+  Ir   +4,580,000  Bc    +660,000  Bi   +48,000  (a Ir 394,789,271) <bun_js_parser::lexer::Lexer>::next
+  Ir   +4,382,000  Bc    +650,000  Bi  +106,000  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_type_member
+  Ir   +3,690,000  Bc    +200,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_stmt_named_like_cast
+  Ir   +2,892,000  Bc    +284,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_type_arguments_with_backtracking, bo
+  Ir   -2,510,000  Bc    -196,000  Bi        +0  (a Ir 2,510,000) GONE <bun_js_parser::p::P<true, false>>::try_skip_type_script_type_arguments_with_backtracking
+  Ir   -1,146,000  Bc     -22,000  Bi        +0  (a Ir 6,050,000) <bun_js_parser::p::P<true, false>>::skip_type_script_type_parameters
+  Ir   +1,144,000  Bc     +80,000  Bi   +16,000  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::next_is_start_of_mapped_type
+  Ir   -1,010,000  Bc     -86,000  Bi   -14,000  (a Ir 1,010,000) GONE <alloc::vec::Vec<bun_ast::g::Property, bun_alloc::ast_alloc::AstAlloc> as bun_collections::vec_ext::VecExt<bun_ast::g::Property>>::move_from_list
+  Ir     +878,000  Bc    +156,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_interface_stmt
+  Ir     -840,000  Bc     -56,000  Bi        +0  (a Ir 840,000) GONE core::ptr::drop_glue::<bun_ast::e::JSXElement>
+  Ir     +808,000  Bc    +132,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::skip_typescript_return_type
+  Ir     +790,000  Bc     +90,000  Bi   +30,000  (a Ir 10,394,000) <bun_js_parser::p::P<true, false>>::parse_stmt
+  Ir     +764,000  Bc     +78,000  Bi        +0  (a Ir 9,174,000) <bun_js_parser::p::P<true, false>>::parse_fn
+  Ir     -602,000  Bc     -30,000  Bi        +0  (a Ir 14,946,000) <bun_js_parser::p::P<true, false>>::parse_property
+  Ir     +536,000  Bc     +50,000  Bi        +0  (a Ir 11,104,000) <bun_js_parser::p::P<true, false>>::parse_paren_expr
+  Ir     +494,000  Bc     +90,000  Bi   +22,000  (a Ir 26,344,023) <bun_ast::lexer_tables::__ComptimeStringMap_KEYWORDS>::__key_index
+  Ir     +440,000  Bc     +56,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_type_literal
+  Ir     +402,000  Bc     +58,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_function_or_constructor_type_to_error::<bun_js_parser::parse::type_sink::Discard, true>
+  Ir     +394,000  Bc     +50,000  Bi        +0  (a Ir 40,386,000) <bun_js_parser::p::P<true, false>>::parse_prefix
+  Ir     +392,000  Bc     +42,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_union_or_intersection_type::<bun_js_parser::parse::type_sink::Discard, false>
+  Ir     -336,000  Bc     -16,000  Bi        +0  (a Ir 336,000) GONE <bun_js_parser::p::P<true, true>>::s::<bun_ast::s::Function>
+  Ir     +324,000  Bc     +28,000  Bi        +0  (a Ir 3,704,000) <bun_js_parser::p::P<true, false>>::parse_class
+  Ir     +324,000  Bc     +62,000  Bi        +0  (a Ir 862,000) <bun_js_parser::p::P<true, false>>::skip_typescript_fn_args
+  Ir     +304,000  Bc     +16,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::is_class_index_signature
+  Ir     +296,000  Bc     +44,000  Bi        +0  (a Ir 170,000) <bun_js_parser::p::P<true, false>>::skip_type_script_paren_or_fn_type::<bun_js_parser::parse::type_sink::Discard>
+  Ir     -296,000  Bc     +62,000  Bi   +14,000  (a Ir 11,570,000) <bun_js_parser::p::P<true, false>>::parse_jsx_element
+  Ir     +234,000  Bc     +36,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_conditional_type_rest::<bun_js_parser::parse::type_sink::Discard>
+  Ir     +212,000  Bc      +8,000  Bi        +0  (a Ir 1,592,000) <bun_js_parser::p::P<true, false>>::parse_fn_stmt
+  Ir     +200,000  Bc     +16,000  Bi        +0  (a Ir 0) NEW <alloc::vec::Vec<bun_ast::Msg>>::truncate
+  Ir     -164,000  Bc     -58,000  Bi        +0  (a Ir 208,000) <bun_js_parser::lexer::Lexer>::expect
+  Ir     -154,000  Bc     +46,000  Bi        +0  (a Ir 53,032,000) <bun_js_parser::p::P<true, false>>::parse_suffix
+  Ir     +150,000  Bc      +6,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_bracketed_name
+  Ir     -136,000  Bc          +0  Bi        +0  (a Ir 3,924,000) <bun_js_parser::p::P<true, false>>::visit_class
+  Ir     +132,000  Bc     +24,000  Bi        +0  (a Ir 7,856,000) <bun_js_parser::p::P<true, false>>::parse_stmts_up_to
+  Ir     -130,000  Bc     -20,000  Bi        +0  (a Ir 1,138,000) <bun_js_parser::p::P<true, false>>::parse_stmt_fallthrough_ts_keyword
+  Ir     +126,000  Bc     +36,000  Bi        +0  (a Ir 822,000) <bun_js_parser::p::P<true, false>>::skip_type_script_type_stmt
+  Ir     +126,000  Bc     +30,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_mapped_type
+  Ir     +122,000  Bc     +24,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_asserts_type_predicate::<bun_js_parser::parse::type_sink::Discard>
+  Ir     -120,000  Bc     -10,000  Bi        +0  (a Ir 840,000) <bun_js_parser::p::P<true, false>>::e_function
+  Ir     +116,000  Bc     +18,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_bracketed_name
+  Ir     +112,000  Bc     +12,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::parse_function_or_constructor_type::<bun_js_parser::parse::type_sink::Discard>
+  Ir     +106,000  Bc     +10,000  Bi        +0  (a Ir 760,000) <bun_js_parser::p::P<true, false>>::lexer_backtracker_bool::<<bun_js_parser::p::P<true, false>>::skip_type_script_arrow_args_with_backtracking, bool>
+  Ir     -104,000  Bc     -18,000  Bi        +0  (a Ir 8,128,000) <bun_js_parser::p::P<true, false>>::e_jsx_element
+  Ir      +90,000  Bc          +0  Bi        +0  (a Ir 5,110,009) <bun_js_parser::p::P<true, false>>::visit_args
+  Ir      -84,000  Bc     -12,000  Bi    -4,000  (a Ir 112,000) <bun_js_parser::lexer::Lexer>::is_contextual_keyword
+  Ir      +68,000  Bc          +0  Bi        +0  (a Ir 816,000) <bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>::grow_exact
+  Ir      +54,000  Bc          +0  Bi        +0  (a Ir 3,160,000) <bun_js_parser::visit::visit_binary::BinaryExpressionVisitor>::visit_right_and_finish::<true, false>
+  Ir      -46,000  Bc      -4,000  Bi        +0  (a Ir 46,000) GONE core::ptr::drop_glue::<bun_alloc::baby_vec::BabyVec<bun_ast::g::Arg>>
+  Ir      +42,000  Bc      +2,000  Bi        +0  (a Ir 0) NEW <bun_js_parser::p::P<true, false>>::skip_type_script_parameter_modifiers
+  Ir      +42,000  Bc          +0  Bi        +0  (a Ir 1,302,000) <bun_js_parser::p::P<true, false>>::parse_type_script_decorators
+  Ir      -36,018  Bc      -8,004  Bi        +0  (a Ir 36,018) GONE core::ptr::drop_glue::<bun_js_parser::parser::MacroState>
+  Ir      -36,000  Bc     -12,000  Bi        +0  (a Ir 234,000) <bun_js_parser::lexer::Lexer>::expect_or_insert_semicolon
+  Ir      -36,000  Bc     +14,000  Bi        +0  (a Ir 2,180,000) <bun_js_parser::p::P<true, false>>::parse_typescript_enum_stmt
+  Ir      -36,000  Bc          +0  Bi        +0  (a Ir 3,140,000) <bun_js_parser::p::P<true, false>>::visit_func
+  Ir      -30,000  Bc      -2,000  Bi        +0  (a Ir 622,000) <bun_js_parser::p::P<true, false>>::t_import
+  Ir      +26,000  Bc      +4,000  Bi        +0  (a Ir 662,000) <bun_js_parser::p::P<true, false>>::parse_class_stmt
+  Ir      -18,000  Bc      -2,000  Bi        +0  (a Ir 36,000) <bun_js_parser::lexer::Lexer>::range
+  Ir      -16,000  Bc          +0  Bi        +0  (a Ir 1,048,000) <bun_js_parser::p::P<true, false>>::s_function
+  Ir      +12,000  Bc      +4,000  Bi        +0  (a Ir 308,000) <bun_js_parser::p::P<false, false>>::parse_path
+  Ir      -12,000  Bc      -4,000  Bi        +0  (a Ir 1,458,000) <bun_collections::array_hash_map::StringArrayHashMap<bun_ast::nodes::NamedExport, bun_collections::array_hash_map::StringContext, bun_alloc::ast_alloc
+  Ir      -10,000  Bc          +0  Bi        +0  (a Ir 2,076,000) <bun_js_parser::p::P<true, false>>::lower_class
+  Ir      +10,000  Bc      +2,000  Bi        +0  (a Ir 1,134,000) <bun_js_parser::p::P<true, false>>::t_export
+  Ir       -2,000  Bc          +0  Bi        +0  (a Ir 696,000) <bun_js_parser::p::P<true, false>>::generate_closure_for_type_script_namespace_or_enum
+  Ir       +2,000  Bc     +26,000  Bi        +0  (a Ir 4,432,000) <bun_js_parser::parse::parse_entry::Parser>::_parse::<true>
+  Ir       +2,000  Bc          +0  Bi        +0  (a Ir 3,326,000) <bun_js_parser::p::P<true, false>>::to_ast
+  Ir           +7  Bc          +4  Bi        +0  (a Ir 174) core::ptr::drop_glue::<bun_js_parser::p::P<false, false>>
+  Ir           +1  Bc          +0  Bi        +0  (a Ir 483) <bun_js_parser::p::P<false, false>>::init
+  Ir           +0  Bc     +22,000  Bi        +0  (a Ir 5,214,000) <bun_js_parser::p::P<true, false>>::s_local

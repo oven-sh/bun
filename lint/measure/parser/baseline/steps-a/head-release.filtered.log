@@ -1,0 +1,1737 @@
+### step=head-release cwd=/workspace/wt/parser
+### cmd: /workspace/tools/lk bun run build:release -j8
+### queued: 2026-10-01T07:22:09Z
+### lock acquired: 2026-10-01T07:43:03Z
+$ bun scripts/build.ts --profile=release "-j8"
+[configured] bun-profile → bun (stripped)
+  target       linux-x64-gnu
+  build type   Release
+  build dir    ./build/release
+  revision     be1ebe5295
+  features     lto, baseline
+23 deps, 136 codegen, 1176 objects in 3810ms
+ninja: Entering directory `/workspace/wt/parser/build/release'
+[1/4] fetch rust-argon2
+[rust-argon2] up to date
+[2/4] fetch lolhtml
+[lolhtml] up to date
+[2/4] cargo plan → /workspace/wt/parser/build/release/rust-target/plan.json
+246 units: 174 lib, 16 proc-macro (host), 19 custom-build (host), 15 run custom-build, 17 lib (host), 4 run custom-build (host), 1 rlib
+[3/4] reconfigure
+[1/1501] mkdir stamps
+[2/1501] mkdir codegen
+[3/1501] install /workspace/wt/parser
+bun install v1.4.3-canary.1 (367d939d9)
+Checked 26 installs across 65 packages (no changes) [140.00ms]
+[4/1501] install /workspace/wt/parser/packages/bun-error
+bun install v1.4.3-canary.1 (367d939d9)
+Checked 1 install across 2 packages (no changes) [46.00ms]
+[5/1501] rustc build_script_build 
+[6/1501] rustc unicode_ident 
+[7/1501] rustc build_script_build 
+[8/1501] rustc build_script_build 
+[9/1501] rustc build_script_build 
+[10/1501] rustc build_script_build 
+[11/1501] install /workspace/wt/parser/src/node-fallbacks
+bun install v1.4.3-canary.1 (367d939d9)
+Checked 111 installs across 104 packages (no changes) [227.00ms]
+[12/1501] build.rs build_script_build
+[13/1501] build.rs build_script_build
+[14/1501] esbuild bun-error
+  ../../build/release/codegen/bun-error/index.js       34.9kb
+  ../../build/release/codegen/bun-error/bun-error.css  12.8kb
+⚡ Done in 289ms
+[15/1501] build.rs build_script_build
+[16/1501] gen node-fallbacks/react-refresh.js
+Bundled 1 module in 186ms
+  react-refresh.js  4.81 KB  (entry point)
+[17/1501] esbuild runtime.out.js
+  build/release/codegen/runtime.out.js  5.6kb
+⚡ Done in 22ms
+[18/1501] build.rs build_script_build
+[19/1501] build.rs build_script_build
+[20/1501] gen string-map defines_table
+[21/1501] gen ErrorCode+*.h
+[22/1501] gen bake.{client,server,error}.js
+-> bake.client.js, bake.server.js, bake.error.js
+[23/1501] rustc build_script_build 
+[24/1501] gen ZigGeneratedClasses.{cpp,h,rs}
+Found 2 classes from /workspace/wt/parser/src/jsc/resolve_message.classes.ts
+  - ResolveMessage (15 fields)
+  - BuildMessage (10 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/api/Archive.classes.ts
+  - Archive (4 fields, 1 class fields)
+Found 2 classes from /workspace/wt/parser/src/runtime/api/BunObject.classes.ts
+  - ResourceUsage (8 fields)
+  - Subprocess (20 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/api/cron.classes.ts
+  - CronJob (5 fields)
+Found 3 classes from /workspace/wt/parser/src/runtime/api/filesystem_router.classes.ts
+  - FileSystemRouter (5 fields)
+  - FrameworkFileSystemRouter (2 fields)
+  - MatchedRoute (8 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/api/Glob.classes.ts
+  - Glob (5 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/api/h2.classes.ts
+  - H2FrameParser (29 fields)
+Found 9 classes from /workspace/wt/parser/src/runtime/api/html_rewriter.classes.ts
+  - HTMLRewriter (3 fields)
+  - TextChunk (7 fields)
+  - DocType (5 fields)
+  - DocEnd (1 fields)
+  - Comment (6 fields)
+  - EndTag (4 fields)
+  - AttributeIterator (2 fields)
+  - Element (19 fields)
+  - HTMLRewriterTransform
+Found 2 classes from /workspace/wt/parser/src/runtime/api/JSBundler.classes.ts
+  - Transpiler (4 fields)
+  - BuildArtifact (12 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/api/ParsedShellScript.classes.ts
+  - ParsedShellScript (3 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/api/S3Client.classes.ts
+  - S3Client (9 fields, 9 class fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/api/S3Stat.classes.ts
+  - S3Stat (4 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/api/SecureContext.classes.ts
+  - SecureContext (2 fields, 3 class fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/api/Shell.classes.ts
+  - ShellInterpreter (1 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/api/sourcemap.classes.ts
+  - SourceMap (4 fields)
+Found 4 classes from /workspace/wt/parser/src/runtime/api/sql.classes.ts
+  - PostgresSQLConnection (7 fields)
+  - PostgresSQLQuery (5 fields)
+  - MySQLConnection (6 fields)
+  - MySQLQuery (5 fields)
+Found 3 classes from /workspace/wt/parser/src/runtime/api/streams.classes.ts
+  - BlobInternalReadableStreamSource (11 fields)
+  - FileInternalReadableStreamSource (8 fields)
+  - BytesInternalReadableStreamSource (11 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/api/Terminal.classes.ts
+  - Terminal (12 fields)
+Found 3 classes from /workspace/wt/parser/src/runtime/api/zlib.classes.ts
+  - NativeZlib (7 fields)
+  - NativeBrotli (7 fields)
+  - NativeZstd (7 fields)
+Found 10 classes from /workspace/wt/parser/src/runtime/crypto/crypto.classes.ts
+  - Crypto (3 fields)
+  - SHA1 (3 fields, 2 class fields)
+  - MD5 (3 fields, 2 class fields)
+  - MD4 (3 fields, 2 class fields)
+  - SHA224 (3 fields, 2 class fields)
+  - SHA512 (3 fields, 2 class fields)
+  - SHA384 (3 fields, 2 class fields)
+  - SHA256 (3 fields, 2 class fields)
+  - SHA512_256 (3 fields, 2 class fields)
+  - CryptoHasher (5 fields, 2 class fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/ffi/ffi.classes.ts
+  - FFI (2 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/image/Image.classes.ts
+  - Image (21 fields, 4 class fields)
+Found 6 classes from /workspace/wt/parser/src/runtime/node/node.classes.ts
+  - DNSResolver (16 fields)
+  - FSWatcher (3 fields)
+  - StatWatcher (3 fields)
+  - Timeout (12 fields)
+  - Immediate (6 fields)
+  - NodeJSFS (129 fields)
+Found 3 classes from /workspace/wt/parser/src/runtime/node/quic/quic.classes.ts
+  - QuicEndpoint (7 fields)
+  - QuicSession (13 fields)
+  - QuicStream (14 fields)
+Found 7 classes from /workspace/wt/parser/src/runtime/server/server.classes.ts
+  - HTTPServer (21 fields)
+  - DebugHTTPServer (21 fields)
+  - HTTPSServer (21 fields)
+  - DebugHTTPSServer (21 fields)
+  - NodeHTTPResponse (27 fields)
+  - ServerWebSocket (20 fields)
+  - HTMLBundle (1 fields)
+Found 6 classes from /workspace/wt/parser/src/runtime/socket/sockets.classes.ts
+  - TLSSocket (57 fields)
+  - TCPSocket (55 fields)
+  - Listener (11 fields)
+  - UDPSocket (23 fields)
+  - SocketAddress (6 fields, 2 class fields)
+  - BlockList (5 fields, 1 class fields)
+Found 15 classes from /workspace/wt/parser/src/runtime/test_runner/jest.classes.ts
+  - ExpectAnything
+  - ExpectAny
+  - ExpectCloseTo
+  - ExpectObjectContaining
+  - ExpectStringContaining
+  - ExpectStringMatching
+  - ExpectArrayContaining
+  - ExpectCustomAsymmetricMatcher (1 fields)
+  - ExpectMatcherContext (5 fields)
+  - ExpectMatcherUtils (6 fields)
+  - ExpectStatic (10 fields)
+  - Expect (89 fields, 15 class fields)
+  - ExpectTypeOf (38 fields)
+  - DoneCallback
+  - ScopeFunctions (13 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/valkey_jsc/valkey.classes.ts
+  - RedisClient (212 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/webcore/encoding.classes.ts
+  - TextDecoder (4 fields)
+Found 1 classes from /workspace/wt/parser/src/runtime/webcore/FetchSession.classes.ts
+  - FetchSession (3 fields)
+Found 3 classes from /workspace/wt/parser/src/runtime/webcore/response.classes.ts
+  - Request (22 fields)
+  - Response (17 fields, 3 class fields)
+  - Blob (18 fields)
+generated_classes.rs: 94 classes (80 resolved), 1546 exported symbols
+[25/1501] gen node-fallbacks/*.js
+[26/1501] gen generated_host_exports.rs
+generated_host_exports.rs: 121 exports (host=5, lazy=10, generic=106, rust=0); 248 extern-C blocks audited
+[27/1501] gen compressed/completions/bun.bash.zst
+[28/1501] gen JSSink.{cpp,h,lut.h,rs}
+generated_jssink.rs: 7 sinks, 91 exported symbols
+Generating /workspace/wt/parser/build/release/codegen/JSSink.lut.h from /workspace/wt/parser/build/release/codegen/JSSink.lut.txt
+[29/1501] rustc proc_macro2 
+[30/1501] gen compressed/completions/bun.zsh.zst
+[31/1501] gen compressed/completions/bun.fish.zst
+[32/1501] gen cpp.rs (cppbind)
+[33/1501] gen compressed/src/runtime/bake/bun-framework-react/client.tsx.zst
+[34/1501] gen compressed/codegen/bun-error/index.js.zst
+[35/1501] gen compressed/codegen/bake.error.js.zst
+[36/1501] gen compressed/codegen/bun-error/bun-error.css.zst
+[37/1501] gen compressed/codegen/node-fallbacks/react-refresh.js.zst
+[38/1501] gen compressed/codegen/bake.client.js.zst
+[39/1501] rustc quote 
+[40/1501] build.rs build_script_build
+[41/1501] rustc unicode_xid 
+[42/1501] rustc heck 
+[43/1501] rustc build_script_build 
+[44/1501] rustc build_script_build 
+[45/1501] rustc fnv 
+[46/1501] rustc rustversion 
+[47/1501] build.rs build_script_build
+[48/1501] rustc ident_case 
+[49/1501] build.rs build_script_build
+[50/1501] rustc const_format_proc_macros 
+[51/1501] rustc build_script_build 
+[52/1501] rustc siphasher 
+[53/1501] rustc fastrand 
+[54/1501] build.rs build_script_build
+[55/1501] rustc version_check 
+[56/1501] rustc phf_shared 
+[57/1501] rustc build_script_build 
+[58/1501] rustc build_script_build 
+[59/1501] rustc build_script_build 
+[60/1501] build.rs build_script_build
+[61/1501] rustc phf_generator 
+[62/1501] build.rs build_script_build
+[63/1501] rustc paste 
+[64/1501] build.rs build_script_build
+[65/1501] rustc build_script_build 
+[66/1501] rustc phf_codegen 
+[67/1501] fetch zlib
+[zlib] up to date
+[68/1501] fetch tinycc
+[tinycc] up to date
+[69/1501] fetch libjpeg-turbo
+[libjpeg-turbo] up to date
+[70/1501] mkdir pch
+[71/1501] build.rs build_script_build
+[72/1501] gen bindgenv2
+[73/1501] gen .bind.ts → GeneratedBindings.cpp
+[74/1501] gen BunObject.lut.h
+Generating /workspace/wt/parser/build/release/codegen/BunObject.lut.h from /workspace/wt/parser/src/jsc/bindings/BunObject.cpp
+[75/1501] gen ZigGlobalObject.lut.h
+Generating /workspace/wt/parser/build/release/codegen/ZigGlobalObject.lut.h from /workspace/wt/parser/src/jsc/bindings/ZigGlobalObject.lut.txt
+[76/1501] gen JSBuffer.lut.h
+Generating /workspace/wt/parser/build/release/codegen/JSBuffer.lut.h from /workspace/wt/parser/src/jsc/bindings/JSBuffer.cpp
+[77/1501] rustc build_script_build 
+[78/1501] rustc syn 
+[79/1501] gen JS modules (bundle-modules)
+Preprocess modules (11412ms)
+Bundle modules (603ms)
+Postprocesss modules (37ms)
+Bundle Functions (986ms)
+Generate Code (179ms)
+[13.23s] Bundled "src/js" for production
+  2613 kb
+  198 internal modules
+  13 native modules
+  50 internal functions across 16 files
+[80/1501] gen BunProcess.lut.h
+Generating /workspace/wt/parser/build/release/codegen/BunProcess.lut.h from /workspace/wt/parser/src/jsc/bindings/BunProcess.cpp
+[81/1501] gen ProcessBindingBuffer.lut.h
+Generating /workspace/wt/parser/build/release/codegen/ProcessBindingBuffer.lut.h from /workspace/wt/parser/src/jsc/bindings/ProcessBindingBuffer.cpp
+[82/1501] build.rs build_script_build
+[83/1501] rustc core 
+[84/1501] rustc bun_output_tags 
+[85/1501] rustc darling_core 
+[86/1501] rustc build_script_build 
+[87/1501] rustc compiler_builtins 
+[88/1501] rustc rustc_std_workspace_core 
+[89/1501] rustc thiserror_impl 
+[90/1501] rustc cfg_if 
+[91/1501] rustc libc 
+[92/1501] rustc strum_macros 
+[93/1501] rustc rustc_demangle 
+[94/1501] build.rs build_script_build
+[95/1501] rustc alloc 
+[96/1501] rustc bun_core_macros 
+[97/1501] rustc rustc_literal_escaper 
+[98/1501] rustc bun_dispatch 
+[99/1501] rustc panic_abort 
+[100/1501] rustc unwind 
+[101/1501] rustc rustc_std_workspace_alloc 
+[102/1501] rustc panic_unwind 
+[103/1501] rustc build_script_build 
+[104/1501] rustc std_detect 
+[105/1501] rustc enum_map_derive 
+[106/1501] rustc cssparser_macros 
+[107/1501] build.rs build_script_build
+[108/1501] rustc darling_macro 
+[109/1501] rustc hashbrown 
+[110/1501] rustc phf_macros 
+[111/1501] rustc darling 
+[112/1501] rustc build_script_build 
+[113/1501] rustc build_script_build 
+[114/1501] rustc bun_clap_macros 
+[115/1501] rustc derive_more_impl 
+[116/1501] rustc bun_jsc_macros 
+[117/1501] rustc bun_css_derive 
+[118/1501] build.rs build_script_build
+[119/1501] gen ProcessBindingConstants.lut.h
+Generating /workspace/wt/parser/build/release/codegen/ProcessBindingConstants.lut.h from /workspace/wt/parser/src/jsc/bindings/ProcessBindingConstants.cpp
+[120/1501] gen ProcessBindingFs.lut.h
+Generating /workspace/wt/parser/build/release/codegen/ProcessBindingFs.lut.h from /workspace/wt/parser/src/jsc/bindings/ProcessBindingFs.cpp
+[121/1501] build.rs build_script_build
+[122/1501] gen ProcessBindingHTTPParser.lut.h
+Generating /workspace/wt/parser/build/release/codegen/ProcessBindingHTTPParser.lut.h from /workspace/wt/parser/src/jsc/bindings/ProcessBindingHTTPParser.cpp
+[123/1501] gen NodeModuleModule.lut.h
+Generating /workspace/wt/parser/build/release/codegen/NodeModuleModule.lut.h from /workspace/wt/parser/src/jsc/modules/NodeModuleModule.cpp
+[124/1501] gen JSEvent.lut.h
+Generating /workspace/wt/parser/build/release/codegen/JSEvent.lut.h from /workspace/wt/parser/src/jsc/bindings/webcore/JSEvent.cpp
+[125/1501] gen ProcessBindingNatives.lut.h
+Generating /workspace/wt/parser/build/release/codegen/ProcessBindingNatives.lut.h from /workspace/wt/parser/src/jsc/bindings/ProcessBindingNatives.cpp
+[126/1501] fetch picohttpparser
+[picohttpparser] up to date
+[127/1501] subst deps/zlib/zlib.h
+[128/1501] rustc build_script_build 
+[129/1501] fetch nodejs (prebuilt)
+[nodejs] up to date
+[130/1501] rustc enumset_derive 
+[131/1501] subst deps/zlib/zconf.h
+[132/1501] fetch brotli
+[brotli] up to date
+[133/1501] fetch zstd
+[zstd] up to date
+[134/1501] fetch libarchive
+[libarchive] up to date
+[135/1501] fetch libdeflate
+[libdeflate] up to date
+[136/1501] subst deps/libjpeg-turbo/jconfig.h
+[137/1501] subst deps/libjpeg-turbo/jconfigint.h
+[138/1501] subst deps/libjpeg-turbo/jversion.h
+[139/1501] fetch libspng
+[libspng] up to date
+[140/1501] fetch libwebp
+[libwebp] up to date
+[141/1501] fetch hdrhistogram
+[hdrhistogram] up to date
+[142/1501] fetch cares
+[cares] up to date
+[143/1501] rustc bun_opaque 
+[144/1501] rustc konst_macro_rules 
+[145/1501] rustc std 
+[146/1501] rustc allocator_api2 
+[147/1501] rustc bun_mimalloc_sys 
+[148/1501] rustc proc_macro 
+[149/1501] rustc memchr 
+[150/1501] rustc konst 
+[151/1501] rustc bun_output_tags 
+[152/1501] rustc bstr 
+[153/1501] rustc bun_simdutf_sys 
+[154/1501] rustc libc 
+[155/1501] rustc bytemuck 
+[156/1501] rustc bun_wyhash 
+[157/1501] rustc bun_highway 
+[158/1501] rustc const_format 
+[159/1501] rustc strum 
+[160/1501] rustc itoa 
+[161/1501] rustc thiserror 
+[162/1501] rustc bun_hash 
+[163/1501] rustc bun_windows_sys 
+[164/1501] rustc scopeguard 
+[165/1501] rustc enum_map 
+[166/1501] rustc bun_alloc 
+[167/1501] rustc bun_libuv_sys 
+[168/1501] rustc bitflags 
+[169/1501] rustc rustc_hash 
+[170/1501] rustc smallvec 
+[171/1501] rustc hashbrown 
+[172/1501] rustc siphasher 
+[173/1501] rustc enumset 
+[174/1501] rustc linux_raw_sys 
+[175/1501] rustc dtoa 
+[176/1501] rustc stable_deref_trait 
+[177/1501] rustc cfg_if 
+[178/1501] rustc phf_shared 
+[179/1501] rustc equivalent 
+[180/1501] rustc derive_more 
+[181/1501] rustc dtoa_short 
+[182/1501] rustc foldhash 
+[183/1501] rustc phf 
+[184/1501] rustc bun_boringssl_sys 
+[185/1501] rustc bun_zlib_sys 
+[186/1501] rustc bun_errno 
+[187/1501] rustc bun_ptr 
+[188/1501] rustc bun_core 
+[189/1501] rustc rustix 
+[190/1501] rustc bun_safety 
+[191/1501] rustc bun_base64 
+[192/1501] rustc debug_unreachable 
+[193/1501] rustc bun_paths 
+[194/1501] rustc bun_zstd 
+[195/1501] rustc log 
+[196/1501] rustc bun_cares_sys 
+[197/1501] rustc bun_collections 
+[198/1501] rustc precomputed_hash 
+[199/1501] rustc cssparser 
+[200/1501] rustc bun_sys 
+[201/1501] rustc servo_arc 
+[202/1501] rustc bun_semver 
+[203/1501] rustc bun_zlib 
+[204/1501] rustc bun_brotli_sys 
+[205/1501] rustc bun_url 
+[206/1501] rustc bun_perf 
+[207/1501] rustc bun_which 
+[208/1501] rustc bun_boringssl 
+[209/1501] rustc bun_http_types 
+[210/1501] rustc bun_analytics 
+[211/1501] rustc bun_glob 
+[212/1501] rustc bun_threading 
+[213/1501] rustc bun_spawn_sys 
+[214/1501] rustc bun_sha_hmac 
+[215/1501] rustc bun_uws_sys 
+[216/1501] rustc bun_dotenv 
+[217/1501] rustc encoding_rs 
+[218/1501] rustc bun_watcher 
+[219/1501] rustc hashbrown 
+[220/1501] rustc mime 
+[221/1501] rustc bun_ast 
+[222/1501] rustc bun_install_types 
+[223/1501] rustc bun_resolve_builtins 
+[224/1501] rustc bun_io 
+[225/1501] rustc bun_uws 
+[226/1501] rustc selectors 
+[227/1501] rustc bun_crash_handler 
+[228/1501] rustc bun_options_types 
+[229/1501] rustc bun_brotli 
+[230/1501] rustc bun_sourcemap 
+[231/1501] rustc bun_event_loop 
+[232/1501] rustc bun_exe_format 
+[233/1501] rustc bun_dns 
+[234/1501] rustc bun_libdeflate_sys 
+[235/1501] rustc bun_parsers 
+[236/1501] rustc bun_js_printer 
+[237/1501] rustc bun_picohttp 
+[238/1501] rustc bun_md 
+[239/1501] rustc bun_output 
+[240/1501] rustc bun_api 
+[241/1501] rustc bun_clap 
+[242/1501] rustc bun_libarchive 
+[243/1501] rustc lol_html 
+[244/1501] rustc bun_spawn 
+[245/1501] rustc bun_s3_signing 
+[246/1501] rustc arrayref 
+[247/1501] rustc typenum 
+[248/1501] rustc bun_http 
+[249/1501] rustc bun_patch 
+[250/1501] rustc arrayvec 
+[251/1501] rustc byteorder 
+[252/1501] rustc generic_array 
+[253/1501] rustc constant_time_eq 
+[254/1501] rustc subtle 
+[255/1501] rustc bun_ini 
+[256/1501] rustc crypto_common 
+[257/1501] rustc inout 
+[258/1501] rustc block_buffer 
+[259/1501] rustc base64 
+[260/1501] rustc cipher 
+[261/1501] rustc blowfish 
+[262/1501] rustc bun_resolver 
+[263/1501] rustc bun_sql 
+[264/1501] rustc blake2b_simd 
+[265/1501] rustc digest 
+[266/1501] rustc bun_react_compiler 
+[267/1501] rustc crossbeam_utils 
+[268/1501] rustc getrandom 
+[269/1501] rustc keccak 
+[270/1501] fetch highway
+[highway] up to date
+[271/1501] rustc bun_transpiler 
+[272/1501] rustc zeroize 
+[273/1501] fetch lsqpack
+[lsqpack] up to date
+[274/1501] fetch mimalloc
+[mimalloc] up to date
+[275/1501] fetch lshpack
+[lshpack] up to date
+[276/1501] host-cc deps/tinycc/codegen-tool
+[277/1501] rustc bun_standalone_graph 
+[278/1501] fetch boringssl
+[boringssl] up to date
+[279/1501] fetch lsquic
+[lsquic] up to date
+[280/1501] mkdir obj
+[281/1501] fetch WebKit (prebuilt)
+[WebKit] up to date
+[282/1501] rustc bun_bunfig 
+[283/1501] rustc bcrypt 
+[284/1501] rustc bun_csrf 
+[285/1501] rustc blake2 
+[286/1501] rustc bun_lsquic_sys 
+[287/1501] build.rs build_script_build
+[288/1501] rustc bun_platform 
+[289/1501] rustc bun_router 
+[290/1501] rustc bun_lint 
+[291/1501] rustc bun_tcc_sys 
+[292/1501] rustc bun_typecheck 
+[293/1501] rustc bun_valkey 
+[294/1501] rustc bun_shell_parser 
+warning: `feature(generic_const_exprs)` is not supported with the next-generation trait solver
+ --> src/shell_parser/lib.rs:1:30
+  |
+1 | #![feature(adt_const_params, generic_const_exprs, allocator_api)]
+  |                              ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `-Znext-solver=globally` is currently enabled by default for testing
+  = note: reverted the setting to `-Znext-solver=coherence` for this crate
+  = note: the currently stable trait solver will be used for this crate
+  = note: see issues #160895 <https://github.com/rust-lang/rust/issues/160895> for more information
+warning: 1 warning emitted
+[295/1501] rustc sha3 
+[296/1501] codegen tinycc
+[297/1501] cc obj/vendor/zlib/adler32.c.o
+[298/1501] cc obj/vendor/zlib/compress.c.o
+[299/1501] cc obj/vendor/zlib/crc32.c.o
+[300/1501] rustc argon2 
+[301/1501] cc obj/vendor/zlib/crc32_braid_comb.c.o
+[302/1501] cc obj/vendor/zlib/deflate.c.o
+[303/1501] cc obj/vendor/zlib/deflate_fast.c.o
+[304/1501] cc obj/vendor/zlib/deflate_huff.c.o
+[305/1501] cc obj/vendor/zlib/deflate_medium.c.o
+[306/1501] cc obj/vendor/zlib/deflate_quick.c.o
+[307/1501] cc obj/vendor/zlib/deflate_rle.c.o
+[308/1501] cc obj/vendor/zlib/deflate_slow.c.o
+[309/1501] cc obj/vendor/zlib/deflate_stored.c.o
+[310/1501] cc obj/vendor/zlib/functable.c.o
+[311/1501] cc obj/vendor/zlib/infback.c.o
+[312/1501] cc obj/vendor/zlib/inftrees.c.o
+[313/1501] cc obj/vendor/zlib/inflate.c.o
+[314/1501] cc obj/vendor/zlib/insert_string.c.o
+[315/1501] cc obj/vendor/zlib/insert_string_roll.c.o
+[316/1501] cc obj/vendor/zlib/trees.c.o
+[317/1501] cc obj/vendor/zlib/uncompr.c.o
+[318/1501] cc obj/vendor/zlib/zutil.c.o
+[319/1501] cc obj/vendor/zlib/gzread.c.o
+[320/1501] cc obj/vendor/zlib/cpu_features.c.o
+[321/1501] cc obj/vendor/zlib/gzlib.c.o
+[322/1501] cc obj/vendor/zlib/gzwrite.c.o
+[323/1501] cc obj/vendor/zlib/arch/generic/crc32_chorba_c.c.o
+[324/1501] cc obj/vendor/zlib/arch/generic/adler32_c.c.o
+[325/1501] rustc bun_js_parser 
+[326/1501] cc obj/vendor/zlib/arch/generic/adler32_fold_c.c.o
+[327/1501] cc obj/vendor/zlib/arch/generic/crc32_braid_c.c.o
+[328/1501] cc obj/vendor/zlib/arch/generic/crc32_fold_c.c.o
+[329/1501] cc obj/vendor/zlib/arch/x86/x86_features.c.o
+[330/1501] rustc bun_css 
+[331/1501] cc obj/vendor/zlib/arch/x86/chunkset_sse2.c.o
+[332/1501] cc obj/vendor/zlib/arch/x86/chorba_sse2.c.o
+[333/1501] cc obj/vendor/zlib/arch/x86/slide_hash_sse2.c.o
+[334/1501] cc obj/vendor/zlib/arch/x86/compare256_sse2.c.o
+[335/1501] cc obj/vendor/zlib/arch/x86/adler32_ssse3.c.o
+[336/1501] cc obj/vendor/zlib/arch/x86/chunkset_ssse3.c.o
+[337/1501] cc obj/vendor/zlib/arch/x86/adler32_sse42.c.o
+[338/1501] cc obj/vendor/zlib/arch/x86/chorba_sse41.c.o
+[339/1501] cc obj/vendor/zlib/arch/x86/slide_hash_avx2.c.o
+[340/1501] cc obj/vendor/zlib/arch/x86/compare256_avx2.c.o
+[341/1501] cc obj/vendor/zlib/arch/x86/chunkset_avx2.c.o
+[342/1501] cc obj/vendor/zlib/arch/x86/chunkset_avx512.c.o
+[343/1501] cc obj/vendor/zlib/arch/x86/crc32_pclmulqdq.c.o
+[344/1501] cc obj/vendor/zlib/arch/x86/adler32_avx512_vnni.c.o
+[345/1501] cc obj/vendor/zlib/arch/x86/adler32_avx2.c.o
+[346/1501] cc obj/vendor/zlib/arch/x86/adler32_avx512.c.o
+[347/1501] cc obj/vendor/zlib/arch/x86/compare256_avx512.c.o
+[348/1501] cc obj/vendor/zlib/arch/x86/crc32_vpclmulqdq.c.o
+[349/1501] cc obj/vendor/zstd/lib/common/debug.c.o
+[350/1501] cc obj/vendor/zstd/lib/common/entropy_common.c.o
+[351/1501] cc obj/vendor/zstd/lib/common/error_private.c.o
+[352/1501] cc obj/vendor/zstd/lib/common/fse_decompress.c.o
+[353/1501] cc obj/vendor/zstd/lib/common/pool.c.o
+[354/1501] cc obj/vendor/zstd/lib/common/threading.c.o
+[355/1501] cc obj/vendor/zstd/lib/common/xxhash.c.o
+[356/1501] cc obj/vendor/zstd/lib/common/zstd_common.c.o
+[357/1501] cc obj/vendor/zstd/lib/compress/fse_compress.c.o
+[358/1501] cc obj/vendor/zstd/lib/compress/hist.c.o
+[359/1501] cc obj/vendor/zstd/lib/compress/huf_compress.c.o
+[360/1501] cc obj/vendor/zstd/lib/compress/zstd_compress_literals.c.o
+[361/1501] cc obj/vendor/zstd/lib/compress/zstd_compress.c.o
+[362/1501] cc obj/vendor/zstd/lib/compress/zstd_compress_sequences.c.o
+[363/1501] cc obj/vendor/zstd/lib/compress/zstd_compress_superblock.c.o
+[364/1501] cc obj/vendor/zstd/lib/compress/zstd_double_fast.c.o
+[365/1501] cc obj/vendor/zstd/lib/compress/zstd_fast.c.o
+[366/1501] cc obj/vendor/zstd/lib/compress/zstd_lazy.c.o
+[367/1501] cc obj/vendor/zstd/lib/compress/zstd_ldm.c.o
+[368/1501] cc obj/vendor/zstd/lib/compress/zstd_opt.c.o
+[369/1501] cc obj/vendor/zstd/lib/compress/zstd_preSplit.c.o
+[370/1501] cc obj/vendor/zstd/lib/decompress/huf_decompress.c.o
+[371/1501] cc obj/vendor/zstd/lib/compress/zstdmt_compress.c.o
+[372/1501] cc obj/vendor/zstd/lib/decompress/zstd_ddict.c.o
+[373/1501] cc obj/vendor/zstd/lib/decompress/zstd_decompress.c.o
+[374/1501] cc obj/vendor/zstd/lib/dictBuilder/cover.c.o
+[375/1501] cc obj/vendor/zstd/lib/decompress/zstd_decompress_block.c.o
+[376/1501] cc obj/vendor/zstd/lib/dictBuilder/divsufsort.c.o
+[377/1501] cc obj/vendor/zstd/lib/dictBuilder/fastcover.c.o
+[378/1501] cc obj/vendor/zstd/lib/decompress/huf_decompress_amd64.S.o
+[379/1501] cc obj/vendor/zstd/lib/dictBuilder/zdict.c.o
+[380/1501] cc obj/vendor/brotli/c/common/constants.c.o
+[381/1501] cc obj/vendor/brotli/c/common/context.c.o
+[382/1501] cc obj/vendor/brotli/c/common/dictionary.c.o
+[383/1501] cc obj/vendor/brotli/c/common/platform.c.o
+[384/1501] cc obj/vendor/brotli/c/common/shared_dictionary.c.o
+[385/1501] cc obj/vendor/brotli/c/common/transform.c.o
+[386/1501] cc obj/vendor/brotli/c/dec/bit_reader.c.o
+[387/1501] cc obj/vendor/brotli/c/dec/huffman.c.o
+[388/1501] cc obj/vendor/brotli/c/dec/decode.c.o
+[389/1501] cc obj/vendor/brotli/c/dec/state.c.o
+[390/1501] cc obj/vendor/brotli/c/dec/prefix.c.o
+[391/1501] cc obj/vendor/brotli/c/dec/static_init.c.o
+[392/1501] cc obj/vendor/brotli/c/enc/backward_references.c.o
+[393/1501] cc obj/vendor/brotli/c/enc/backward_references_hq.c.o
+[394/1501] cc obj/vendor/brotli/c/enc/bit_cost.c.o
+[395/1501] cc obj/vendor/brotli/c/enc/brotli_bit_stream.c.o
+[396/1501] cc obj/vendor/brotli/c/enc/cluster.c.o
+[397/1501] cc obj/vendor/brotli/c/enc/block_splitter.c.o
+[398/1501] cc obj/vendor/brotli/c/enc/command.c.o
+[399/1501] cc obj/vendor/brotli/c/enc/compound_dictionary.c.o
+[400/1501] cc obj/vendor/brotli/c/enc/compress_fragment.c.o
+[401/1501] cc obj/vendor/brotli/c/enc/dictionary_hash.c.o
+[402/1501] cc obj/vendor/brotli/c/enc/compress_fragment_two_pass.c.o
+[403/1501] cc obj/vendor/brotli/c/enc/encode.c.o
+[404/1501] cc obj/vendor/brotli/c/enc/encoder_dict.c.o
+[405/1501] cc obj/vendor/brotli/c/enc/entropy_encode.c.o
+[406/1501] cc obj/vendor/brotli/c/enc/histogram.c.o
+[407/1501] cc obj/vendor/brotli/c/enc/fast_log.c.o
+[408/1501] cc obj/vendor/brotli/c/enc/literal_cost.c.o
+[409/1501] cc obj/vendor/brotli/c/enc/memory.c.o
+[410/1501] cc obj/vendor/brotli/c/enc/metablock.c.o
+[411/1501] cc obj/vendor/brotli/c/enc/static_dict.c.o
+[412/1501] cc obj/vendor/brotli/c/enc/static_dict_lut.c.o
+[413/1501] cc obj/vendor/brotli/c/enc/utf8_util.c.o
+[414/1501] cc obj/vendor/brotli/c/enc/static_init.c.o
+[415/1501] cc obj/vendor/libdeflate/lib/utils.c.o
+[416/1501] cc obj/vendor/libdeflate/lib/arm/cpu_features.c.o
+[417/1501] cc obj/vendor/libdeflate/lib/x86/cpu_features.c.o
+[418/1501] cc obj/vendor/libdeflate/lib/deflate_decompress.c.o
+[419/1501] cc obj/vendor/libdeflate/lib/deflate_compress.c.o
+[420/1501] cc obj/vendor/libdeflate/lib/zlib_compress.c.o
+[421/1501] cc obj/vendor/libdeflate/lib/adler32.c.o
+[422/1501] cc obj/vendor/libdeflate/lib/zlib_decompress.c.o
+[423/1501] cc obj/vendor/libdeflate/lib/crc32.c.o
+[424/1501] cc obj/vendor/libdeflate/lib/gzip_compress.c.o
+[425/1501] cc obj/vendor/libdeflate/lib/gzip_decompress.c.o
+[426/1501] cc obj/vendor/libarchive/libarchive/archive_acl.c.o
+[427/1501] cc obj/vendor/libarchive/libarchive/archive_cmdline.c.o
+[428/1501] cc obj/vendor/libarchive/libarchive/archive_check_magic.c.o
+[429/1501] cc obj/vendor/libarchive/libarchive/archive_cryptor.c.o
+[430/1501] cc obj/vendor/libarchive/libarchive/archive_digest.c.o
+[431/1501] cc obj/vendor/libarchive/libarchive/archive_entry.c.o
+[432/1501] cc obj/vendor/libarchive/libarchive/archive_entry_copy_stat.c.o
+[433/1501] rustc bun_js_parser_jsc 
+[434/1501] rustc bun_ast_jsc 
+[435/1501] rustc bun_bundler_jsc 
+[436/1501] rustc bun_css_jsc 
+[437/1501] rustc bun_patch_jsc 
+[438/1501] rustc bun_install_jsc 
+[439/1501] rustc bun_jsc 
+[440/1501] rustc bun_http_jsc 
+[441/1501] rustc bun_bundler 
+[442/1501] cc obj/vendor/libarchive/libarchive/archive_entry_link_resolver.c.o
+[443/1501] cc obj/vendor/libarchive/libarchive/archive_entry_sparse.c.o
+[444/1501] rustc bun_semver_jsc 
+[445/1501] cc obj/vendor/libarchive/libarchive/archive_entry_stat.c.o
+[446/1501] cc obj/vendor/libarchive/libarchive/archive_entry_strmode.c.o
+[447/1501] cc obj/vendor/libarchive/libarchive/archive_entry_xattr.c.o
+[448/1501] cc obj/vendor/libarchive/libarchive/archive_hmac.c.o
+[449/1501] cc obj/vendor/libarchive/libarchive/archive_match.c.o
+[450/1501] cc obj/vendor/libarchive/libarchive/archive_options.c.o
+[451/1501] rustc bun_sys_jsc 
+[452/1501] cc obj/vendor/libarchive/libarchive/archive_pack_dev.c.o
+[453/1501] cc obj/vendor/libarchive/libarchive/archive_parse_date.c.o
+[454/1501] cc obj/vendor/libarchive/libarchive/archive_pathmatch.c.o
+[455/1501] cc obj/vendor/libarchive/libarchive/archive_ppmd7.c.o
+[456/1501] cc obj/vendor/libarchive/libarchive/archive_random.c.o
+[457/1501] cc obj/vendor/libarchive/libarchive/archive_rb.c.o
+[458/1501] cc obj/vendor/libarchive/libarchive/archive_read.c.o
+[459/1501] cc obj/vendor/libarchive/libarchive/archive_read_add_passphrase.c.o
+[460/1501] cc obj/vendor/libarchive/libarchive/archive_read_append_filter.c.o
+[461/1501] cc obj/vendor/libarchive/libarchive/archive_read_disk_entry_from_file.c.o
+[462/1501] cc obj/vendor/libarchive/libarchive/archive_read_disk_posix.c.o
+[463/1501] cc obj/vendor/libarchive/libarchive/archive_read_data_into_fd.c.o
+[464/1501] cc obj/vendor/libarchive/libarchive/archive_read_disk_set_standard_lookup.c.o
+[465/1501] cc obj/vendor/libarchive/libarchive/archive_read_extract.c.o
+[466/1501] cc obj/vendor/libarchive/libarchive/archive_read_extract2.c.o
+[467/1501] cc obj/vendor/libarchive/libarchive/archive_read_open_fd.c.o
+[468/1501] cc obj/vendor/libarchive/libarchive/archive_read_open_file.c.o
+[469/1501] cc obj/vendor/libarchive/libarchive/archive_read_open_filename.c.o
+[470/1501] cc obj/vendor/libarchive/libarchive/archive_read_open_memory.c.o
+[471/1501] cc obj/vendor/libarchive/libarchive/archive_read_set_options.c.o
+[472/1501] cc obj/vendor/libarchive/libarchive/archive_read_set_format.c.o
+[473/1501] cc obj/vendor/libarchive/libarchive/archive_read_support_filter_gzip.c.o
+[474/1501] cc obj/vendor/libarchive/libarchive/archive_read_support_format_raw.c.o
+[475/1501] cc obj/vendor/libarchive/libarchive/archive_read_support_format_tar.c.o
+[476/1501] cc obj/vendor/libarchive/libarchive/archive_string.c.o
+[477/1501] cc obj/vendor/libarchive/libarchive/archive_read_support_format_empty.c.o
+[478/1501] cc obj/vendor/libarchive/libarchive/archive_read_support_filter_program.c.o
+[479/1501] rustc bun_sourcemap_jsc 
+[480/1501] cc obj/vendor/libarchive/libarchive/archive_string_sprintf.c.o
+[481/1501] cc obj/vendor/libarchive/libarchive/archive_time.c.o
+[482/1501] cc obj/vendor/libarchive/libarchive/archive_util.c.o
+[483/1501] cc obj/vendor/libarchive/libarchive/archive_version_details.c.o
+[484/1501] cc obj/vendor/libarchive/libarchive/archive_virtual.c.o
+[485/1501] cc obj/vendor/libarchive/libarchive/archive_write.c.o
+[486/1501] cc obj/vendor/libarchive/libarchive/archive_write_disk_posix.c.o
+[487/1501] cc obj/vendor/libarchive/libarchive/archive_write_disk_set_standard_lookup.c.o
+[488/1501] cc obj/vendor/libarchive/libarchive/archive_write_open_fd.c.o
+[489/1501] cc obj/vendor/libarchive/libarchive/archive_write_open_file.c.o
+[490/1501] cc obj/vendor/libarchive/libarchive/archive_write_open_filename.c.o
+[491/1501] cc obj/vendor/libarchive/libarchive/archive_write_open_memory.c.o
+[492/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter.c.o
+[493/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_b64encode.c.o
+[494/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_by_name.c.o
+[495/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_bzip2.c.o
+[496/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_compress.c.o
+[497/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_grzip.c.o
+[498/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_gzip.c.o
+[499/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_lz4.c.o
+[500/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_lzop.c.o
+[501/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_none.c.o
+[502/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_program.c.o
+[503/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_uuencode.c.o
+[504/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_xz.c.o
+[505/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_lrzip.c.o
+[506/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format.c.o
+[507/1501] cc obj/vendor/libarchive/libarchive/archive_write_add_filter_zstd.c.o
+[508/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_7zip.c.o
+[509/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_ar.c.o
+[510/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_by_name.c.o
+[511/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_cpio.c.o
+[512/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_cpio_binary.c.o
+[513/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_cpio_newc.c.o
+[514/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_gnutar.c.o
+[515/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_cpio_odc.c.o
+[516/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_iso9660.c.o
+[517/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_filter_by_ext.c.o
+[518/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_mtree.c.o
+[519/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_raw.c.o
+[520/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_pax.c.o
+[521/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_ustar.c.o
+[522/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_shar.c.o
+[523/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_v7tar.c.o
+[524/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_warc.c.o
+[525/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_xar.c.o
+[526/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_options.c.o
+[527/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_format_zip.c.o
+[528/1501] cc obj/vendor/libarchive/libarchive/archive_write_set_passphrase.c.o
+[529/1501] cc obj/vendor/libarchive/libarchive/filter_fork_posix.c.o
+[530/1501] cc obj/vendor/libarchive/libarchive/xxhash.c.o
+[531/1501] cc obj/vendor/libjpeg-turbo/src/jcapimin.c.o
+[532/1501] cc obj/vendor/libjpeg-turbo/src/jcapistd.c.o
+[533/1501] cc obj/vendor/libjpeg-turbo/src/jccoefct.c.o
+[534/1501] cc obj/vendor/libjpeg-turbo/src/jccolor.c.o
+[535/1501] cc obj/vendor/libjpeg-turbo/src/jcdiffct.c.o
+[536/1501] cc obj/vendor/libjpeg-turbo/src/jcdctmgr.c.o
+[537/1501] cc obj/vendor/libjpeg-turbo/src/jchuff.c.o
+[538/1501] cc obj/vendor/libjpeg-turbo/src/jcinit.c.o
+[539/1501] cc obj/vendor/libjpeg-turbo/src/jcicc.c.o
+[540/1501] cc obj/vendor/libjpeg-turbo/src/jclhuff.c.o
+[541/1501] cc obj/vendor/libjpeg-turbo/src/jclossls.c.o
+[542/1501] cc obj/vendor/libjpeg-turbo/src/jcmainct.c.o
+[543/1501] cc obj/vendor/libjpeg-turbo/src/jcmarker.c.o
+[544/1501] cc obj/vendor/libjpeg-turbo/src/jcmaster.c.o
+[545/1501] cc obj/vendor/libjpeg-turbo/src/jcomapi.c.o
+[546/1501] cc obj/vendor/libjpeg-turbo/src/jcparam.c.o
+[547/1501] cc obj/vendor/libjpeg-turbo/src/jcphuff.c.o
+[548/1501] cc obj/vendor/libjpeg-turbo/src/jcprepct.c.o
+[549/1501] cc obj/vendor/libjpeg-turbo/src/jcsample.c.o
+[550/1501] cc obj/vendor/libjpeg-turbo/src/jctrans.c.o
+[551/1501] cc obj/vendor/libjpeg-turbo/src/jdapimin.c.o
+[552/1501] cc obj/vendor/libjpeg-turbo/src/jdapistd.c.o
+[553/1501] cc obj/vendor/libjpeg-turbo/src/jdatadst.c.o
+[554/1501] cc obj/vendor/libjpeg-turbo/src/jdatasrc.c.o
+[555/1501] cc obj/vendor/libjpeg-turbo/src/jdcoefct.c.o
+[556/1501] cc obj/vendor/libjpeg-turbo/src/jdcolor.c.o
+[557/1501] cc obj/vendor/libjpeg-turbo/src/jddctmgr.c.o
+[558/1501] cc obj/vendor/libjpeg-turbo/src/jddiffct.c.o
+[559/1501] cc obj/vendor/libjpeg-turbo/src/jdhuff.c.o
+[560/1501] cc obj/vendor/libjpeg-turbo/src/jdicc.c.o
+[561/1501] cc obj/vendor/libjpeg-turbo/src/jdlhuff.c.o
+[562/1501] cc obj/vendor/libjpeg-turbo/src/jdinput.c.o
+[563/1501] cc obj/vendor/libjpeg-turbo/src/jdlossls.c.o
+[564/1501] cc obj/vendor/libjpeg-turbo/src/jdmainct.c.o
+[565/1501] cc obj/vendor/libjpeg-turbo/src/jdmarker.c.o
+[566/1501] cc obj/vendor/libjpeg-turbo/src/jdmaster.c.o
+[567/1501] rustc bun_sql_jsc 
+[568/1501] cc obj/vendor/libjpeg-turbo/src/jdmerge.c.o
+[569/1501] cc obj/vendor/libjpeg-turbo/src/jdphuff.c.o
+[570/1501] cc obj/vendor/libjpeg-turbo/src/jdpostct.c.o
+[571/1501] cc obj/vendor/libjpeg-turbo/src/jdsample.c.o
+[572/1501] cc obj/vendor/libjpeg-turbo/src/jdtrans.c.o
+[573/1501] cc obj/vendor/libjpeg-turbo/src/jfdctfst.c.o
+[574/1501] cc obj/vendor/libjpeg-turbo/src/jfdctflt.c.o
+[575/1501] cc obj/vendor/libjpeg-turbo/src/jfdctint.c.o
+[576/1501] cc obj/vendor/libjpeg-turbo/src/jidctflt.c.o
+[577/1501] cc obj/vendor/libjpeg-turbo/src/jidctfst.c.o
+[578/1501] cc obj/vendor/libjpeg-turbo/src/jidctred.c.o
+[579/1501] cc obj/vendor/libjpeg-turbo/src/jaricom.c.o
+[580/1501] cc obj/vendor/libjpeg-turbo/src/jcarith.c.o
+[581/1501] cc obj/vendor/libjpeg-turbo/src/jdarith.c.o
+[582/1501] cc obj/vendor/libjpeg-turbo/src/jidctint.c.o
+[583/1501] cc obj/vendor/libjpeg-turbo/src/jmemnobs.c.o
+[584/1501] cc obj/vendor/libjpeg-turbo/src/jerror.c.o
+[585/1501] cc obj/vendor/libjpeg-turbo/src/jquant1.c.o
+[586/1501] cc obj/vendor/libjpeg-turbo/src/jmemmgr.c.o
+[587/1501] cc obj/vendor/libjpeg-turbo/src/jquant2.c.o
+[588/1501] cc obj/vendor/libjpeg-turbo/src/jutils.c.o
+[589/1501] cc obj/vendor/libjpeg-turbo/src/jpeg_nbits.c.o
+[590/1501] cc obj/vendor/libjpeg-turbo/src/transupp.c.o
+[591/1501] cc obj/vendor/libjpeg-turbo/src/turbojpeg.c.o
+[592/1501] cc obj/vendor/libjpeg-turbo/src/jdatadst-tj.c.o
+[593/1501] cc obj/vendor/libjpeg-turbo/src/jdatasrc-tj.c.o
+[594/1501] cc obj/vendor/libjpeg-turbo/jbun_stubs.c.o
+[595/1501] cc obj/vendor/libjpeg-turbo/simd/jsimd.c.o
+[596/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jsimdcpu.asm.o
+[597/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jfdctflt-sse.asm.o
+[598/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jccolor-sse2.asm.o
+[599/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jcgray-sse2.asm.o
+[600/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jchuff-sse2.asm.o
+[601/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jcphuff-sse2.asm.o
+[602/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jcsample-sse2.asm.o
+[603/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jdcolor-sse2.asm.o
+[604/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jdsample-sse2.asm.o
+[605/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jdmerge-sse2.asm.o
+[606/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jfdctfst-sse2.asm.o
+[607/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jidctflt-sse2.asm.o
+[608/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jidctfst-sse2.asm.o
+[609/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jidctint-sse2.asm.o
+[610/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jidctred-sse2.asm.o
+[611/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jquantf-sse2.asm.o
+[612/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jfdctint-sse2.asm.o
+[613/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jquanti-sse2.asm.o
+[614/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jccolor-avx2.asm.o
+[615/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jcsample-avx2.asm.o
+[616/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jcgray-avx2.asm.o
+[617/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jdcolor-avx2.asm.o
+[618/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jdmerge-avx2.asm.o
+[619/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jfdctint-avx2.asm.o
+[620/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jidctint-avx2.asm.o
+[621/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jquanti-avx2.asm.o
+[622/1501] cc obj/vendor/libspng/spng/spng.c.o
+[623/1501] cc obj/vendor/libwebp/src/dec/alpha_dec.c.o
+[624/1501] cc obj/vendor/libwebp/src/dec/buffer_dec.c.o
+[625/1501] nasm obj/vendor/libjpeg-turbo/simd/x86_64/jdsample-avx2.asm.o
+[626/1501] cc obj/vendor/libwebp/src/dec/frame_dec.c.o
+[627/1501] cc obj/vendor/libwebp/src/dec/idec_dec.c.o
+[628/1501] cc obj/vendor/libwebp/src/dec/io_dec.c.o
+[629/1501] cc obj/vendor/libwebp/src/dec/quant_dec.c.o
+[630/1501] cc obj/vendor/libwebp/src/dec/tree_dec.c.o
+[631/1501] cc obj/vendor/libwebp/src/dec/vp8_dec.c.o
+[632/1501] cc obj/vendor/libwebp/src/dec/vp8l_dec.c.o
+[633/1501] cc obj/vendor/libwebp/src/enc/alpha_enc.c.o
+[634/1501] cc obj/vendor/libwebp/src/dec/webp_dec.c.o
+[635/1501] cc obj/vendor/libwebp/src/enc/analysis_enc.c.o
+[636/1501] cc obj/vendor/libwebp/src/enc/backward_references_cost_enc.c.o
+[637/1501] cc obj/vendor/libwebp/src/enc/backward_references_enc.c.o
+[638/1501] cc obj/vendor/libwebp/src/enc/config_enc.c.o
+[639/1501] cc obj/vendor/libwebp/src/enc/cost_enc.c.o
+[640/1501] cc obj/vendor/libwebp/src/enc/filter_enc.c.o
+[641/1501] cc obj/vendor/libwebp/src/enc/frame_enc.c.o
+[642/1501] cc obj/vendor/libwebp/src/enc/histogram_enc.c.o
+[643/1501] cc obj/vendor/libwebp/src/enc/picture_enc.c.o
+[644/1501] cc obj/vendor/libwebp/src/enc/near_lossless_enc.c.o
+[645/1501] cc obj/vendor/libwebp/src/enc/picture_csp_enc.c.o
+[646/1501] cc obj/vendor/libwebp/src/enc/iterator_enc.c.o
+[647/1501] cc obj/vendor/libwebp/src/enc/picture_psnr_enc.c.o
+[648/1501] cc obj/vendor/libwebp/src/enc/picture_rescale_enc.c.o
+[649/1501] cc obj/vendor/libwebp/src/enc/picture_tools_enc.c.o
+[650/1501] cc obj/vendor/libwebp/src/enc/predictor_enc.c.o
+[651/1501] cc obj/vendor/libwebp/src/enc/quant_enc.c.o
+[652/1501] cc obj/vendor/libwebp/src/enc/syntax_enc.c.o
+[653/1501] cc obj/vendor/libwebp/src/enc/token_enc.c.o
+[654/1501] cc obj/vendor/libwebp/src/enc/webp_enc.c.o
+[655/1501] cc obj/vendor/libwebp/src/enc/tree_enc.c.o
+[656/1501] cc obj/vendor/libwebp/src/enc/vp8l_enc.c.o
+[657/1501] cc obj/vendor/libwebp/src/dsp/alpha_processing.c.o
+[658/1501] cc obj/vendor/libwebp/src/dsp/alpha_processing_mips_dsp_r2.c.o
+[659/1501] cc obj/vendor/libwebp/src/dsp/alpha_processing_neon.c.o
+[660/1501] cc obj/vendor/libwebp/src/dsp/alpha_processing_sse2.c.o
+[661/1501] cc obj/vendor/libwebp/src/dsp/alpha_processing_sse41.c.o
+[662/1501] cc obj/vendor/libwebp/src/dsp/cost.c.o
+[663/1501] cc obj/vendor/libwebp/src/dsp/cost_mips32.c.o
+[664/1501] cc obj/vendor/libwebp/src/dsp/cost_mips_dsp_r2.c.o
+[665/1501] cc obj/vendor/libwebp/src/dsp/cost_neon.c.o
+[666/1501] cc obj/vendor/libwebp/src/dsp/cost_sse2.c.o
+[667/1501] cc obj/vendor/libwebp/src/dsp/cpu.c.o
+[668/1501] cc obj/vendor/libwebp/src/dsp/dec.c.o
+[669/1501] cc obj/vendor/libwebp/src/dsp/dec_clip_tables.c.o
+[670/1501] cc obj/vendor/libwebp/src/dsp/dec_mips32.c.o
+[671/1501] cc obj/vendor/libwebp/src/dsp/dec_mips_dsp_r2.c.o
+[672/1501] cc obj/vendor/libwebp/src/dsp/dec_msa.c.o
+[673/1501] cc obj/vendor/libwebp/src/dsp/dec_neon.c.o
+[674/1501] cc obj/vendor/libwebp/src/dsp/dec_sse2.c.o
+[675/1501] cc obj/vendor/libwebp/src/dsp/dec_sse41.c.o
+[676/1501] cc obj/vendor/libwebp/src/dsp/enc.c.o
+[677/1501] rustc bun_install 
+[678/1501] cc obj/vendor/libwebp/src/dsp/enc_mips32.c.o
+[679/1501] cc obj/vendor/libwebp/src/dsp/enc_mips_dsp_r2.c.o
+[680/1501] cc obj/vendor/libwebp/src/dsp/enc_msa.c.o
+[681/1501] cc obj/vendor/libwebp/src/dsp/enc_neon.c.o
+[682/1501] cc obj/vendor/libwebp/src/dsp/enc_sse2.c.o
+[683/1501] cc obj/vendor/libwebp/src/dsp/enc_sse41.c.o
+[684/1501] cc obj/vendor/libwebp/src/dsp/filters.c.o
+[685/1501] cc obj/vendor/libwebp/src/dsp/filters_mips_dsp_r2.c.o
+[686/1501] cc obj/vendor/libwebp/src/dsp/filters_neon.c.o
+[687/1501] pch pch/root-pch.h.hxx.pch
+[688/1501] cc obj/vendor/libwebp/src/dsp/filters_msa.c.o
+[689/1501] cc obj/vendor/libwebp/src/dsp/filters_sse2.c.o
+[690/1501] cc obj/vendor/libwebp/src/dsp/lossless.c.o
+[691/1501] cc obj/vendor/libwebp/src/dsp/lossless_avx2.c.o
+[692/1501] cc obj/vendor/libwebp/src/dsp/lossless_enc.c.o
+[693/1501] cc obj/vendor/libwebp/src/dsp/lossless_enc_avx2.c.o
+[694/1501] cc obj/vendor/libwebp/src/dsp/lossless_enc_mips32.c.o
+[695/1501] cc obj/vendor/libwebp/src/dsp/lossless_enc_mips_dsp_r2.c.o
+[696/1501] cc obj/vendor/libwebp/src/dsp/lossless_enc_msa.c.o
+[697/1501] cc obj/vendor/libwebp/src/dsp/lossless_enc_neon.c.o
+[698/1501] cc obj/vendor/libwebp/src/dsp/lossless_enc_sse2.c.o
+[699/1501] cc obj/vendor/libwebp/src/dsp/lossless_enc_sse41.c.o
+[700/1501] cc obj/vendor/libwebp/src/dsp/lossless_mips_dsp_r2.c.o
+[701/1501] cc obj/vendor/libwebp/src/dsp/lossless_msa.c.o
+[702/1501] cc obj/vendor/libwebp/src/dsp/lossless_neon.c.o
+[703/1501] cc obj/vendor/libwebp/src/dsp/lossless_sse2.c.o
+[704/1501] cc obj/vendor/libwebp/src/dsp/lossless_sse41.c.o
+[705/1501] cc obj/vendor/libwebp/src/dsp/rescaler.c.o
+[706/1501] cc obj/vendor/libwebp/src/dsp/rescaler_mips32.c.o
+[707/1501] cc obj/vendor/libwebp/src/dsp/rescaler_mips_dsp_r2.c.o
+[708/1501] cc obj/vendor/libwebp/src/dsp/rescaler_msa.c.o
+[709/1501] cc obj/vendor/libwebp/src/dsp/rescaler_neon.c.o
+[710/1501] cc obj/vendor/libwebp/src/dsp/rescaler_sse2.c.o
+[711/1501] cc obj/vendor/libwebp/src/dsp/ssim.c.o
+[712/1501] cc obj/vendor/libwebp/src/dsp/ssim_sse2.c.o
+[713/1501] cc obj/vendor/libwebp/src/dsp/upsampling.c.o
+[714/1501] cc obj/vendor/libwebp/src/dsp/upsampling_mips_dsp_r2.c.o
+[715/1501] cc obj/vendor/libwebp/src/dsp/upsampling_msa.c.o
+[716/1501] cc obj/vendor/libwebp/src/dsp/upsampling_neon.c.o
+[717/1501] cc obj/vendor/libwebp/src/dsp/upsampling_sse2.c.o
+[718/1501] cc obj/vendor/libwebp/src/dsp/upsampling_sse41.c.o
+[719/1501] cc obj/vendor/libwebp/src/dsp/yuv.c.o
+[720/1501] cc obj/vendor/libwebp/src/dsp/yuv_mips32.c.o
+[721/1501] cc obj/vendor/libwebp/src/dsp/yuv_mips_dsp_r2.c.o
+[722/1501] cc obj/vendor/libwebp/src/dsp/yuv_neon.c.o
+[723/1501] cc obj/vendor/libwebp/src/dsp/yuv_sse2.c.o
+[724/1501] cc obj/vendor/libwebp/src/dsp/yuv_sse41.c.o
+[725/1501] cc obj/vendor/libwebp/src/utils/bit_reader_utils.c.o
+[726/1501] cc obj/vendor/libwebp/src/utils/bit_writer_utils.c.o
+[727/1501] cc obj/vendor/libwebp/src/utils/color_cache_utils.c.o
+[728/1501] cc obj/vendor/libwebp/src/utils/filters_utils.c.o
+[729/1501] cc obj/vendor/libwebp/src/utils/huffman_encode_utils.c.o
+[730/1501] cc obj/vendor/libwebp/src/utils/huffman_utils.c.o
+[731/1501] cc obj/vendor/libwebp/src/utils/palette.c.o
+[732/1501] cc obj/vendor/libwebp/src/utils/quant_levels_dec_utils.c.o
+[733/1501] cc obj/vendor/libwebp/src/utils/quant_levels_utils.c.o
+[734/1501] cc obj/vendor/libwebp/src/utils/random_utils.c.o
+[735/1501] cc obj/vendor/libwebp/src/utils/rescaler_utils.c.o
+[736/1501] cc obj/vendor/libwebp/src/utils/thread_utils.c.o
+[737/1501] cc obj/vendor/libwebp/src/utils/utils.c.o
+[738/1501] cc obj/vendor/libwebp/src/demux/demux.c.o
+[739/1501] cc obj/vendor/libwebp/src/mux/muxedit.c.o
+[740/1501] cc obj/vendor/libwebp/src/mux/muxinternal.c.o
+[741/1501] cc obj/vendor/libwebp/src/mux/muxread.c.o
+[742/1501] cc obj/vendor/libwebp/sharpyuv/sharpyuv_cpu.c.o
+[743/1501] cc obj/vendor/libwebp/sharpyuv/sharpyuv_csp.c.o
+[744/1501] cc obj/vendor/libwebp/sharpyuv/sharpyuv_dsp.c.o
+[745/1501] cc obj/vendor/libwebp/sharpyuv/sharpyuv.c.o
+[746/1501] cc obj/vendor/libwebp/sharpyuv/sharpyuv_gamma.c.o
+[747/1501] cc obj/vendor/libwebp/sharpyuv/sharpyuv_neon.c.o
+[748/1501] cc obj/vendor/libwebp/sharpyuv/sharpyuv_sse2.c.o
+[749/1501] cc obj/vendor/cares/src/lib/ares_addrinfo2hostent.c.o
+[750/1501] cc obj/vendor/cares/src/lib/ares_android.c.o
+[751/1501] cc obj/vendor/cares/src/lib/ares_cancel.c.o
+[752/1501] cc obj/vendor/cares/src/lib/ares_addrinfo_localhost.c.o
+[753/1501] cc obj/vendor/cares/src/lib/ares_close_sockets.c.o
+[754/1501] cc obj/vendor/cares/src/lib/ares_conn.c.o
+[755/1501] cc obj/vendor/cares/src/lib/ares_cookie.c.o
+[756/1501] cc obj/vendor/cares/src/lib/ares_data.c.o
+[757/1501] cc obj/vendor/cares/src/lib/ares_destroy.c.o
+[758/1501] cc obj/vendor/cares/src/lib/ares_free_hostent.c.o
+[759/1501] cc obj/vendor/cares/src/lib/ares_free_string.c.o
+[760/1501] cc obj/vendor/cares/src/lib/ares_freeaddrinfo.c.o
+[761/1501] cc obj/vendor/cares/src/lib/ares_getaddrinfo.c.o
+[762/1501] cc obj/vendor/cares/src/lib/ares_getenv.c.o
+[763/1501] cc obj/vendor/cares/src/lib/ares_gethostbyaddr.c.o
+[764/1501] cc obj/vendor/cares/src/lib/ares_gethostbyname.c.o
+[765/1501] cc obj/vendor/cares/src/lib/ares_hosts_file.c.o
+[766/1501] cc obj/vendor/cares/src/lib/ares_init.c.o
+[767/1501] cc obj/vendor/cares/src/lib/ares_metrics.c.o
+[768/1501] cc obj/vendor/cares/src/lib/ares_getnameinfo.c.o
+[769/1501] cc obj/vendor/cares/src/lib/ares_library_init.c.o
+[770/1501] cc obj/vendor/cares/src/lib/ares_options.c.o
+[771/1501] cc obj/vendor/cares/src/lib/ares_parse_into_addrinfo.c.o
+[772/1501] cc obj/vendor/cares/src/lib/ares_process.c.o
+[773/1501] cc obj/vendor/cares/src/lib/ares_qcache.c.o
+[774/1501] cc obj/vendor/cares/src/lib/ares_query.c.o
+[775/1501] cc obj/vendor/cares/src/lib/ares_search.c.o
+[776/1501] cc obj/vendor/cares/src/lib/ares_set_socket_functions.c.o
+[777/1501] cc obj/vendor/cares/src/lib/ares_send.c.o
+[778/1501] cc obj/vendor/cares/src/lib/ares_socket.c.o
+[779/1501] cc obj/vendor/cares/src/lib/ares_sysconfig.c.o
+[780/1501] cc obj/vendor/cares/src/lib/ares_strerror.c.o
+[781/1501] cc obj/vendor/cares/src/lib/ares_sysconfig_files.c.o
+[782/1501] cc obj/vendor/cares/src/lib/ares_sysconfig_win.c.o
+[783/1501] cc obj/vendor/cares/src/lib/ares_sortaddrinfo.c.o
+[784/1501] cc obj/vendor/cares/src/lib/ares_sysconfig_mac.c.o
+[785/1501] cc obj/vendor/cares/src/lib/ares_timeout.c.o
+[786/1501] cc obj/vendor/cares/src/lib/ares_update_servers.c.o
+[787/1501] cc obj/vendor/cares/src/lib/ares_version.c.o
+[788/1501] cc obj/vendor/cares/src/lib/inet_net_pton.c.o
+[789/1501] cc obj/vendor/cares/src/lib/inet_ntop.c.o
+[790/1501] cc obj/vendor/cares/src/lib/windows_port.c.o
+[791/1501] cc obj/vendor/cares/src/lib/dsa/ares_array.c.o
+[792/1501] cc obj/vendor/cares/src/lib/dsa/ares_htable.c.o
+[793/1501] cc obj/vendor/cares/src/lib/dsa/ares_htable_asvp.c.o
+[794/1501] cc obj/vendor/cares/src/lib/dsa/ares_htable_vpstr.c.o
+[795/1501] cc obj/vendor/cares/src/lib/dsa/ares_htable_strvp.c.o
+[796/1501] cc obj/vendor/cares/src/lib/dsa/ares_htable_vpvp.c.o
+[797/1501] cc obj/vendor/cares/src/lib/dsa/ares_llist.c.o
+[798/1501] cc obj/vendor/cares/src/lib/dsa/ares_htable_dict.c.o
+[799/1501] cc obj/vendor/cares/src/lib/dsa/ares_htable_szvp.c.o
+[800/1501] cc obj/vendor/cares/src/lib/dsa/ares_slist.c.o
+[801/1501] cc obj/vendor/cares/src/lib/event/ares_event_configchg.c.o
+[802/1501] cc obj/vendor/cares/src/lib/event/ares_event_epoll.c.o
+[803/1501] cc obj/vendor/cares/src/lib/event/ares_event_thread.c.o
+[804/1501] cc obj/vendor/cares/src/lib/event/ares_event_kqueue.c.o
+[805/1501] cc obj/vendor/cares/src/lib/event/ares_event_poll.c.o
+[806/1501] cc obj/vendor/cares/src/lib/event/ares_event_select.c.o
+[807/1501] cc obj/vendor/cares/src/lib/event/ares_event_wake_pipe.c.o
+[808/1501] cc obj/vendor/cares/src/lib/event/ares_event_win32.c.o
+[809/1501] cc obj/vendor/cares/src/lib/legacy/ares_create_query.c.o
+[810/1501] cc obj/vendor/cares/src/lib/legacy/ares_expand_name.c.o
+[811/1501] cc obj/vendor/cares/src/lib/legacy/ares_expand_string.c.o
+[812/1501] cc obj/vendor/cares/src/lib/legacy/ares_fds.c.o
+[813/1501] cc obj/vendor/cares/src/lib/legacy/ares_getsock.c.o
+[814/1501] cc obj/vendor/cares/src/lib/legacy/ares_parse_a_reply.c.o
+[815/1501] cc obj/vendor/cares/src/lib/legacy/ares_parse_aaaa_reply.c.o
+[816/1501] cc obj/vendor/cares/src/lib/legacy/ares_parse_caa_reply.c.o
+[817/1501] cc obj/vendor/cares/src/lib/legacy/ares_parse_mx_reply.c.o
+[818/1501] cc obj/vendor/cares/src/lib/legacy/ares_parse_naptr_reply.c.o
+[819/1501] cc obj/vendor/cares/src/lib/legacy/ares_parse_ns_reply.c.o
+[820/1501] cc obj/vendor/cares/src/lib/legacy/ares_parse_ptr_reply.c.o
+[821/1501] cc obj/vendor/cares/src/lib/legacy/ares_parse_soa_reply.c.o
+[822/1501] cc obj/vendor/cares/src/lib/legacy/ares_parse_srv_reply.c.o
+[823/1501] cc obj/vendor/cares/src/lib/legacy/ares_parse_txt_reply.c.o
+[824/1501] cc obj/vendor/cares/src/lib/legacy/ares_parse_uri_reply.c.o
+[825/1501] cc obj/vendor/cares/src/lib/record/ares_dns_mapping.c.o
+[826/1501] cc obj/vendor/cares/src/lib/record/ares_dns_multistring.c.o
+[827/1501] cc obj/vendor/cares/src/lib/record/ares_dns_name.c.o
+[828/1501] cc obj/vendor/cares/src/lib/record/ares_dns_parse.c.o
+[829/1501] cc obj/vendor/cares/src/lib/record/ares_dns_record.c.o
+[830/1501] cc obj/vendor/cares/src/lib/record/ares_dns_write.c.o
+[831/1501] cc obj/vendor/cares/src/lib/str/ares_buf.c.o
+[832/1501] cc obj/vendor/cares/src/lib/str/ares_str.c.o
+[833/1501] cc obj/vendor/cares/src/lib/str/ares_strsplit.c.o
+[834/1501] cc obj/vendor/cares/src/lib/util/ares_iface_ips.c.o
+[835/1501] cc obj/vendor/cares/src/lib/util/ares_threads.c.o
+[836/1501] cc obj/vendor/cares/src/lib/util/ares_math.c.o
+[837/1501] cc obj/vendor/cares/src/lib/util/ares_rand.c.o
+[838/1501] cc obj/vendor/hdrhistogram/src/hdr_encoding.c.o
+[839/1501] cc obj/vendor/hdrhistogram/src/hdr_histogram.c.o
+[840/1501] cc obj/vendor/hdrhistogram/src/hdr_histogram_log_no_op.c.o
+[841/1501] cc obj/vendor/cares/src/lib/util/ares_timeval.c.o
+[842/1501] cc obj/vendor/cares/src/lib/util/ares_uri.c.o
+[843/1501] cxx obj/vendor/highway/hwy/abort.cc.o
+[844/1501] cxx obj/vendor/highway/hwy/nanobenchmark.cc.o
+[845/1501] cxx obj/vendor/highway/hwy/aligned_allocator.cc.o
+[846/1501] cxx obj/vendor/highway/hwy/per_target.cc.o
+[847/1501] cxx obj/vendor/highway/hwy/perf_counters.cc.o
+[848/1501] cxx obj/vendor/highway/hwy/print.cc.o
+[849/1501] cxx obj/vendor/highway/hwy/profiler.cc.o
+[850/1501] cxx obj/vendor/highway/hwy/targets.cc.o
+[851/1501] cxx obj/vendor/highway/hwy/timer.cc.o
+[852/1501] cc obj/vendor/lshpack/deps/xxhash/xxhash.c.o
+[853/1501] cc obj/vendor/lshpack/lshpack.c.o
+[854/1501] cc obj/src/jsc/bindings/sqlite/sqlite3.c.o
+[855/1501] cc obj/vendor/tinycc/libtcc.c.o
+[856/1501] cc obj/vendor/mimalloc/src/static.c.o
+In file included from ../../vendor/mimalloc/src/static.c:23:
+In file included from ../../vendor/mimalloc/src/alloc.c:21:
+../../vendor/mimalloc/src/alloc-override.c:343:44: warning: alias and aliasee have different types 'size_t (void *)' (aka 'unsigned long (void *)') and 'size_t (const void *) noexcept' (aka 'unsigned long (const void *) noexcept') [-Wattribute-alias]
+  343 |   size_t malloc_usable_size(void *p)       MI_FORWARD1(mi_malloc_usable_size,p)
+      |                                            ^
+../../vendor/mimalloc/src/alloc-override.c:37:35: note: expanded from macro 'MI_FORWARD1'
+   37 |   #define MI_FORWARD1(fun,x)      MI_FORWARD(fun)
+      |                                   ^
+../../vendor/mimalloc/src/alloc-override.c:35:49: note: expanded from macro 'MI_FORWARD'
+   35 |     #define MI_FORWARD(fun)      __attribute__((alias(#fun), used, visibility("default")));
+      |                                                 ^
+../../vendor/mimalloc/src/alloc-override.c:333:26: note: aliasee is declared here
+  333 | mi_decl_nodiscard size_t mi_malloc_usable_size(const void *p) mi_attr_noexcept {
+      |                          ^
+1 warning generated.
+[857/1501] cc obj/vendor/tinycc/tccpp.c.o
+[858/1501] cc obj/vendor/tinycc/tccgen.c.o
+[859/1501] cc obj/vendor/tinycc/tccdbg.c.o
+[860/1501] cc obj/vendor/tinycc/tccelf.c.o
+[861/1501] cc obj/vendor/tinycc/tccasm.c.o
+[862/1501] cc obj/vendor/tinycc/tccrun.c.o
+[863/1501] cc obj/vendor/tinycc/x86_64-gen.c.o
+[864/1501] cc obj/vendor/tinycc/x86_64-link.c.o
+[865/1501] cc obj/vendor/tinycc/i386-asm.c.o
+[866/1501] cxx obj/vendor/boringssl/crypto/fipsmodule/bcm.cc.o
+[867/1501] cxx obj/vendor/boringssl/crypto/aes/aes.cc.o
+[868/1501] cxx obj/vendor/boringssl/crypto/asn1/a_bitstr.cc.o
+[869/1501] cxx obj/vendor/boringssl/crypto/asn1/a_bool.cc.o
+[870/1501] cxx obj/vendor/boringssl/crypto/asn1/a_d2i_fp.cc.o
+[871/1501] cxx obj/vendor/boringssl/crypto/asn1/a_dup.cc.o
+[872/1501] cxx obj/vendor/boringssl/crypto/asn1/a_gentm.cc.o
+[873/1501] cxx obj/vendor/boringssl/crypto/asn1/a_i2d_fp.cc.o
+[874/1501] cxx obj/vendor/boringssl/crypto/asn1/a_int.cc.o
+[875/1501] cxx obj/vendor/boringssl/crypto/asn1/a_mbstr.cc.o
+[876/1501] cxx obj/vendor/boringssl/crypto/asn1/a_object.cc.o
+[877/1501] cxx obj/vendor/boringssl/crypto/asn1/a_octet.cc.o
+[878/1501] cxx obj/vendor/boringssl/crypto/asn1/a_strex.cc.o
+[879/1501] cxx obj/vendor/boringssl/crypto/asn1/a_strnid.cc.o
+[880/1501] cxx obj/vendor/boringssl/crypto/asn1/a_time.cc.o
+[881/1501] cxx obj/vendor/boringssl/crypto/asn1/a_type.cc.o
+[882/1501] cxx obj/vendor/boringssl/crypto/asn1/a_utctm.cc.o
+[883/1501] cxx obj/vendor/boringssl/crypto/asn1/asn1_lib.cc.o
+[884/1501] cxx obj/vendor/boringssl/crypto/asn1/asn1_par.cc.o
+[885/1501] cxx obj/vendor/boringssl/crypto/asn1/asn_pack.cc.o
+[886/1501] cxx obj/vendor/boringssl/crypto/asn1/f_int.cc.o
+[887/1501] cxx obj/vendor/boringssl/crypto/asn1/f_string.cc.o
+[888/1501] cxx obj/vendor/boringssl/crypto/asn1/posix_time.cc.o
+[889/1501] cxx obj/vendor/boringssl/crypto/asn1/tasn_enc.cc.o
+[890/1501] cxx obj/vendor/boringssl/crypto/asn1/tasn_dec.cc.o
+[891/1501] cxx obj/vendor/boringssl/crypto/asn1/tasn_fre.cc.o
+[892/1501] cxx obj/vendor/boringssl/crypto/asn1/tasn_new.cc.o
+[893/1501] cxx obj/vendor/boringssl/crypto/asn1/tasn_typ.cc.o
+[894/1501] cxx obj/vendor/boringssl/crypto/asn1/tasn_utl.cc.o
+[895/1501] cxx obj/vendor/boringssl/crypto/base64/base64.cc.o
+[896/1501] cxx obj/vendor/boringssl/crypto/bio/bio.cc.o
+[897/1501] cxx obj/vendor/boringssl/crypto/bio/bio_mem.cc.o
+[898/1501] cxx obj/vendor/boringssl/crypto/bio/connect.cc.o
+[899/1501] cxx obj/vendor/boringssl/crypto/bio/errno.cc.o
+[900/1501] cxx obj/vendor/boringssl/crypto/bio/file.cc.o
+[901/1501] cxx obj/vendor/boringssl/crypto/bio/fd.cc.o
+[902/1501] cxx obj/vendor/boringssl/crypto/bio/hexdump.cc.o
+[903/1501] cxx obj/vendor/boringssl/crypto/bio/pair.cc.o
+[904/1501] cxx obj/vendor/boringssl/crypto/bio/printf.cc.o
+[905/1501] cxx obj/vendor/boringssl/crypto/bio/socket.cc.o
+[906/1501] cxx obj/vendor/boringssl/crypto/bio/socket_helper.cc.o
+[907/1501] cxx obj/vendor/boringssl/crypto/blake2/blake2.cc.o
+[908/1501] cxx obj/vendor/boringssl/crypto/bn/bn_asn1.cc.o
+[909/1501] cxx obj/vendor/boringssl/crypto/bn/convert.cc.o
+[910/1501] cxx obj/vendor/boringssl/crypto/bn/div.cc.o
+[911/1501] cxx obj/vendor/boringssl/crypto/bn/exponentiation.cc.o
+[912/1501] cxx obj/vendor/boringssl/crypto/bn/sqrt.cc.o
+[913/1501] cxx obj/vendor/boringssl/crypto/buf/buf.cc.o
+[914/1501] cxx obj/vendor/boringssl/crypto/bytestring/asn1_compat.cc.o
+[915/1501] cxx obj/vendor/boringssl/crypto/bytestring/ber.cc.o
+[916/1501] cxx obj/vendor/boringssl/crypto/bytestring/cbb.cc.o
+[917/1501] cxx obj/vendor/boringssl/crypto/bytestring/cbs.cc.o
+[918/1501] cxx obj/vendor/boringssl/crypto/bytestring/unicode.cc.o
+[919/1501] cxx obj/vendor/boringssl/crypto/chacha/chacha.cc.o
+[920/1501] cxx obj/vendor/boringssl/crypto/cipher/derive_key.cc.o
+[921/1501] cxx obj/vendor/boringssl/crypto/cipher/e_aesctrhmac.cc.o
+[922/1501] cxx obj/vendor/boringssl/crypto/cipher/e_aeseax.cc.o
+[923/1501] cxx obj/vendor/boringssl/crypto/cipher/e_aesgcmsiv.cc.o
+[924/1501] cxx obj/vendor/boringssl/crypto/cipher/e_chacha20poly1305.cc.o
+[925/1501] cxx obj/vendor/boringssl/crypto/cipher/e_des.cc.o
+[926/1501] cxx obj/vendor/boringssl/crypto/cipher/e_null.cc.o
+[927/1501] cxx obj/vendor/boringssl/crypto/cipher/e_rc2.cc.o
+[928/1501] cxx obj/vendor/boringssl/crypto/cipher/e_rc4.cc.o
+[929/1501] cxx obj/vendor/boringssl/crypto/cipher/e_tls.cc.o
+[930/1501] cxx obj/vendor/boringssl/crypto/cipher/get_cipher.cc.o
+[931/1501] cxx obj/vendor/boringssl/crypto/cipher/tls_cbc.cc.o
+[932/1501] cxx obj/vendor/boringssl/crypto/cms/cms.cc.o
+[933/1501] cxx obj/vendor/boringssl/crypto/conf/conf.cc.o
+[934/1501] cxx obj/vendor/boringssl/crypto/cpu_aarch64_apple.cc.o
+[935/1501] cxx obj/vendor/boringssl/crypto/cpu_aarch64_fuchsia.cc.o
+[936/1501] cxx obj/vendor/boringssl/crypto/cpu_aarch64_linux.cc.o
+[937/1501] cxx obj/vendor/boringssl/crypto/cpu_aarch64_openbsd.cc.o
+[938/1501] cxx obj/vendor/boringssl/crypto/cpu_aarch64_sysreg.cc.o
+[939/1501] cxx obj/vendor/boringssl/crypto/cpu_aarch64_win.cc.o
+[940/1501] cxx obj/vendor/boringssl/crypto/cpu_arm_freebsd.cc.o
+[941/1501] cxx obj/vendor/boringssl/crypto/cpu_arm_linux.cc.o
+[942/1501] cxx obj/vendor/boringssl/crypto/cpu_intel.cc.o
+[943/1501] cxx obj/vendor/boringssl/crypto/crypto.cc.o
+[944/1501] cxx obj/vendor/boringssl/crypto/curve25519/curve25519.cc.o
+[945/1501] cxx obj/vendor/boringssl/crypto/curve25519/curve25519_64_adx.cc.o
+[946/1501] cxx obj/vendor/boringssl/crypto/curve25519/spake25519.cc.o
+[947/1501] cxx obj/vendor/boringssl/crypto/des/des.cc.o
+[948/1501] cxx obj/vendor/boringssl/crypto/dh/dh_asn1.cc.o
+[949/1501] cxx obj/vendor/boringssl/crypto/dh/params.cc.o
+[950/1501] cxx obj/vendor/boringssl/crypto/digest/digest_extra.cc.o
+[951/1501] cxx obj/vendor/boringssl/crypto/dsa/dsa.cc.o
+[952/1501] cxx obj/vendor/boringssl/crypto/dsa/dsa_asn1.cc.o
+[953/1501] cxx obj/vendor/boringssl/crypto/ec/ec_asn1.cc.o
+[954/1501] cxx obj/vendor/boringssl/crypto/ec/ec_derive.cc.o
+[955/1501] cxx obj/vendor/boringssl/crypto/ec/hash_to_curve.cc.o
+[956/1501] cxx obj/vendor/boringssl/crypto/ecdh/ecdh.cc.o
+[957/1501] cxx obj/vendor/boringssl/crypto/ecdsa/ecdsa_asn1.cc.o
+[958/1501] cxx obj/vendor/boringssl/crypto/ecdsa/ecdsa_p1363.cc.o
+[959/1501] cxx obj/vendor/boringssl/crypto/engine/engine.cc.o
+[960/1501] cxx obj/vendor/boringssl/crypto/err/err.cc.o
+[961/1501] cxx obj/vendor/boringssl/crypto/evp/evp.cc.o
+[962/1501] cxx obj/vendor/boringssl/crypto/evp/evp_asn1.cc.o
+[963/1501] cxx obj/vendor/boringssl/crypto/evp/evp_ctx.cc.o
+[964/1501] cxx obj/vendor/boringssl/crypto/evp/evp_kem.cc.o
+[965/1501] cxx obj/vendor/boringssl/crypto/evp/p_dh.cc.o
+[966/1501] cxx obj/vendor/boringssl/crypto/evp/p_dsa.cc.o
+[967/1501] cxx obj/vendor/boringssl/crypto/evp/p_ec.cc.o
+[968/1501] cxx obj/vendor/boringssl/crypto/evp/p_ed25519.cc.o
+[969/1501] cxx obj/vendor/boringssl/crypto/evp/p_hkdf.cc.o
+[970/1501] cxx obj/vendor/boringssl/crypto/evp/p_mldsa.cc.o
+[971/1501] cxx obj/vendor/boringssl/crypto/evp/p_mlkem.cc.o
+[972/1501] cxx obj/vendor/boringssl/crypto/evp/p_rsa.cc.o
+[973/1501] cxx obj/vendor/boringssl/crypto/evp/p_x25519.cc.o
+[974/1501] cxx obj/vendor/boringssl/crypto/evp/p_xwing.cc.o
+[975/1501] cxx obj/vendor/boringssl/crypto/evp/pbkdf.cc.o
+[976/1501] cxx obj/vendor/boringssl/crypto/evp/print.cc.o
+[977/1501] cxx obj/vendor/boringssl/crypto/evp/scrypt.cc.o
+[978/1501] cxx obj/vendor/boringssl/crypto/evp/sign.cc.o
+[979/1501] cxx obj/vendor/boringssl/crypto/ex_data.cc.o
+[980/1501] cxx obj/vendor/boringssl/crypto/fipsmodule/fips_shared_support.cc.o
+[981/1501] cxx obj/vendor/boringssl/crypto/fuzzer_mode.cc.o
+[982/1501] cxx obj/vendor/boringssl/crypto/hpke/hpke.cc.o
+[983/1501] cxx obj/vendor/boringssl/crypto/hrss/hrss.cc.o
+[984/1501] cxx obj/vendor/boringssl/crypto/lhash/lhash.cc.o
+[985/1501] cxx obj/vendor/boringssl/crypto/md4/md4.cc.o
+[986/1501] cxx obj/vendor/boringssl/crypto/md5/md5.cc.o
+[987/1501] cxx obj/vendor/boringssl/crypto/mldsa/mldsa.cc.o
+[988/1501] cxx obj/vendor/boringssl/crypto/pem/pem_all.cc.o
+[989/1501] cxx obj/vendor/boringssl/crypto/mem.cc.o
+[990/1501] cxx obj/vendor/boringssl/crypto/mlkem/mlkem.cc.o
+[991/1501] cxx obj/vendor/boringssl/crypto/obj/obj.cc.o
+[992/1501] cxx obj/vendor/boringssl/crypto/obj/obj_xref.cc.o
+[993/1501] cxx obj/vendor/boringssl/crypto/pem/pem_info.cc.o
+[994/1501] cxx obj/vendor/boringssl/crypto/pem/pem_lib.cc.o
+[995/1501] cxx obj/vendor/boringssl/crypto/pem/pem_oth.cc.o
+[996/1501] cxx obj/vendor/boringssl/crypto/pem/pem_pk8.cc.o
+[997/1501] cxx obj/vendor/boringssl/crypto/pem/pem_pkey.cc.o
+[998/1501] cxx obj/vendor/boringssl/crypto/pem/pem_x509.cc.o
+[999/1501] cxx obj/vendor/boringssl/crypto/pem/pem_xaux.cc.o
+[1000/1501] cxx obj/vendor/boringssl/crypto/pkcs7/pkcs7.cc.o
+[1001/1501] cxx obj/vendor/boringssl/crypto/pkcs7/pkcs7_x509.cc.o
+[1002/1501] cxx obj/vendor/boringssl/crypto/pkcs8/p5_pbev2.cc.o
+[1003/1501] cxx obj/vendor/boringssl/crypto/pkcs8/pkcs8.cc.o
+[1004/1501] cxx obj/vendor/boringssl/crypto/pkcs8/pkcs8_x509.cc.o
+[1005/1501] cxx obj/vendor/boringssl/crypto/poly1305/poly1305.cc.o
+[1006/1501] cxx obj/vendor/boringssl/crypto/poly1305/poly1305_arm.cc.o
+[1007/1501] cxx obj/vendor/boringssl/crypto/poly1305/poly1305_vec.cc.o
+[1008/1501] cxx obj/vendor/boringssl/crypto/pool/pool.cc.o
+[1009/1501] cxx obj/vendor/boringssl/crypto/rand/deterministic.cc.o
+[1010/1501] cxx obj/vendor/boringssl/crypto/rand/fork_detect.cc.o
+[1011/1501] cxx obj/vendor/boringssl/crypto/rand/forkunsafe.cc.o
+[1012/1501] cxx obj/vendor/boringssl/crypto/rand/getentropy.cc.o
+[1013/1501] cxx obj/vendor/boringssl/crypto/rand/ios.cc.o
+[1014/1501] cxx obj/vendor/boringssl/crypto/rand/rand.cc.o
+[1015/1501] cxx obj/vendor/boringssl/crypto/rand/trusty.cc.o
+[1016/1501] cxx obj/vendor/boringssl/crypto/rand/urandom.cc.o
+[1017/1501] cxx obj/vendor/boringssl/crypto/rand/windows.cc.o
+[1018/1501] cxx obj/vendor/boringssl/crypto/rc4/rc4.cc.o
+[1019/1501] cxx obj/vendor/boringssl/crypto/refcount.cc.o
+[1020/1501] cxx obj/vendor/boringssl/crypto/ripemd/ripemd.cc.o
+[1021/1501] cxx obj/vendor/boringssl/crypto/rsa/rsa_asn1.cc.o
+[1022/1501] cxx obj/vendor/boringssl/crypto/rsa/rsa_extra.cc.o
+[1023/1501] cxx obj/vendor/boringssl/crypto/rsa/rsa_print.cc.o
+[1024/1501] cxx obj/vendor/boringssl/crypto/sha/sha1.cc.o
+[1025/1501] cxx obj/vendor/boringssl/crypto/rsa/rsa_crypt.cc.o
+[1026/1501] cxx obj/vendor/boringssl/crypto/sha/sha256.cc.o
+[1027/1501] cxx obj/vendor/boringssl/crypto/sha/sha512.cc.o
+[1028/1501] cxx obj/vendor/boringssl/crypto/siphash/siphash.cc.o
+[1029/1501] cxx obj/vendor/boringssl/crypto/slhdsa/slhdsa.cc.o
+[1030/1501] cxx obj/vendor/boringssl/crypto/spake2plus/spake2plus.cc.o
+[1031/1501] cxx obj/vendor/boringssl/crypto/stack/stack.cc.o
+[1032/1501] cxx obj/vendor/boringssl/crypto/thread.cc.o
+[1033/1501] cxx obj/vendor/boringssl/crypto/thread_pthread.cc.o
+[1034/1501] cxx obj/vendor/boringssl/crypto/thread_win.cc.o
+[1035/1501] cxx obj/vendor/boringssl/crypto/trust_token/pmbtoken.cc.o
+[1036/1501] cxx obj/vendor/boringssl/crypto/trust_token/trust_token.cc.o
+[1037/1501] cxx obj/vendor/boringssl/crypto/trust_token/voprf.cc.o
+[1038/1501] cxx obj/vendor/boringssl/crypto/x509/a_digest.cc.o
+[1039/1501] cxx obj/vendor/boringssl/crypto/x509/a_sign.cc.o
+[1040/1501] cxx obj/vendor/boringssl/crypto/x509/algorithm.cc.o
+[1041/1501] cxx obj/vendor/boringssl/crypto/x509/a_verify.cc.o
+[1042/1501] cxx obj/vendor/boringssl/crypto/x509/asn1_gen.cc.o
+[1043/1501] cxx obj/vendor/boringssl/crypto/x509/by_dir.cc.o
+[1044/1501] cxx obj/vendor/boringssl/crypto/x509/by_file.cc.o
+[1045/1501] cxx obj/vendor/boringssl/crypto/x509/i2d_pr.cc.o
+[1046/1501] cxx obj/vendor/boringssl/crypto/x509/name_print.cc.o
+[1047/1501] cxx obj/vendor/boringssl/crypto/x509/policy.cc.o
+[1048/1501] cxx obj/vendor/boringssl/crypto/x509/t_crl.cc.o
+[1049/1501] cxx obj/vendor/boringssl/crypto/thread_none.cc.o
+[1050/1501] cxx obj/vendor/boringssl/crypto/x509/rsa_pss.cc.o
+[1051/1501] cxx obj/vendor/boringssl/crypto/x509/t_req.cc.o
+[1052/1501] cxx obj/vendor/boringssl/crypto/x509/t_x509.cc.o
+[1053/1501] cxx obj/vendor/boringssl/crypto/x509/t_x509a.cc.o
+[1054/1501] cxx obj/vendor/boringssl/crypto/x509/v3_akey.cc.o
+[1055/1501] cxx obj/vendor/boringssl/crypto/x509/v3_akeya.cc.o
+[1056/1501] cxx obj/vendor/boringssl/crypto/x509/v3_alt.cc.o
+[1057/1501] cxx obj/vendor/boringssl/crypto/x509/v3_bcons.cc.o
+[1058/1501] cxx obj/vendor/boringssl/crypto/x509/v3_bitst.cc.o
+[1059/1501] cxx obj/vendor/boringssl/crypto/x509/v3_cpols.cc.o
+[1060/1501] cxx obj/vendor/boringssl/crypto/x509/v3_crld.cc.o
+[1061/1501] cxx obj/vendor/boringssl/crypto/x509/v3_conf.cc.o
+[1062/1501] cxx obj/vendor/boringssl/crypto/x509/v3_extku.cc.o
+[1063/1501] cxx obj/vendor/boringssl/crypto/x509/v3_enum.cc.o
+[1064/1501] cxx obj/vendor/boringssl/crypto/x509/v3_genn.cc.o
+[1065/1501] cxx obj/vendor/boringssl/crypto/x509/v3_ia5.cc.o
+[1066/1501] cxx obj/vendor/boringssl/crypto/x509/v3_info.cc.o
+[1067/1501] cxx obj/vendor/boringssl/crypto/x509/v3_int.cc.o
+[1068/1501] cxx obj/vendor/boringssl/crypto/x509/v3_lib.cc.o
+[1069/1501] cxx obj/vendor/boringssl/crypto/x509/v3_ncons.cc.o
+[1070/1501] cxx obj/vendor/boringssl/crypto/x509/v3_ocsp.cc.o
+[1071/1501] cxx obj/vendor/boringssl/crypto/x509/v3_pcons.cc.o
+[1072/1501] cxx obj/vendor/boringssl/crypto/x509/v3_pmaps.cc.o
+[1073/1501] cxx obj/vendor/boringssl/crypto/x509/v3_purp.cc.o
+[1074/1501] cxx obj/vendor/boringssl/crypto/x509/v3_prn.cc.o
+[1075/1501] cxx obj/vendor/boringssl/crypto/x509/v3_skey.cc.o
+[1076/1501] cxx obj/vendor/boringssl/crypto/x509/v3_utl.cc.o
+[1077/1501] cxx obj/vendor/boringssl/crypto/x509/x509.cc.o
+[1078/1501] cxx obj/vendor/boringssl/crypto/x509/x509_att.cc.o
+[1079/1501] cxx obj/vendor/boringssl/crypto/x509/x509_cmp.cc.o
+[1080/1501] cxx obj/vendor/boringssl/crypto/x509/x509_d2.cc.o
+[1081/1501] cxx obj/vendor/boringssl/crypto/x509/x509_def.cc.o
+[1082/1501] cxx obj/vendor/boringssl/crypto/x509/x509_ext.cc.o
+[1083/1501] cxx obj/vendor/boringssl/crypto/x509/x509_lu.cc.o
+[1084/1501] cxx obj/vendor/boringssl/crypto/x509/x509_mtc.cc.o
+[1085/1501] cxx obj/vendor/boringssl/crypto/x509/x509_obj.cc.o
+[1086/1501] cxx obj/vendor/boringssl/crypto/x509/x509_req.cc.o
+[1087/1501] cxx obj/vendor/boringssl/crypto/x509/x509_set.cc.o
+[1088/1501] cxx obj/vendor/boringssl/crypto/x509/x509_trs.cc.o
+[1089/1501] cxx obj/vendor/boringssl/crypto/x509/x509_txt.cc.o
+[1090/1501] cxx obj/vendor/boringssl/crypto/x509/x509_v3.cc.o
+[1091/1501] cxx obj/vendor/boringssl/crypto/x509/x509_vfy.cc.o
+[1092/1501] cxx obj/vendor/boringssl/crypto/x509/x509_vpm.cc.o
+[1093/1501] cxx obj/vendor/boringssl/crypto/x509/x509cset.cc.o
+[1094/1501] cxx obj/vendor/boringssl/crypto/x509/x509name.cc.o
+[1095/1501] cxx obj/vendor/boringssl/crypto/x509/x509rset.cc.o
+[1096/1501] cxx obj/vendor/boringssl/crypto/x509/x509spki.cc.o
+[1097/1501] cxx obj/vendor/boringssl/crypto/x509/x_algor.cc.o
+[1098/1501] cxx obj/vendor/boringssl/crypto/x509/x_all.cc.o
+[1099/1501] cxx obj/vendor/boringssl/crypto/x509/x_attrib.cc.o
+[1100/1501] cxx obj/vendor/boringssl/crypto/x509/x_crl.cc.o
+[1101/1501] cxx obj/vendor/boringssl/crypto/x509/x_exten.cc.o
+[1102/1501] cxx obj/vendor/boringssl/crypto/x509/x_name.cc.o
+[1103/1501] cxx obj/vendor/boringssl/crypto/x509/x_pubkey.cc.o
+[1104/1501] cxx obj/vendor/boringssl/crypto/x509/x_req.cc.o
+[1105/1501] cxx obj/vendor/boringssl/crypto/x509/x_sig.cc.o
+[1106/1501] cxx obj/vendor/boringssl/crypto/x509/x_spki.cc.o
+[1107/1501] cxx obj/vendor/boringssl/crypto/x509/x_x509.cc.o
+[1108/1501] cxx obj/vendor/boringssl/crypto/x509/x_x509a.cc.o
+[1109/1501] cxx obj/vendor/boringssl/crypto/xwing/xwing.cc.o
+[1110/1501] cxx obj/vendor/boringssl/gen/crypto/err_data.cc.o
+[1111/1501] cxx obj/vendor/boringssl/ssl/bio_ssl.cc.o
+[1112/1501] cxx obj/vendor/boringssl/ssl/d1_both.cc.o
+[1113/1501] cxx obj/vendor/boringssl/ssl/d1_lib.cc.o
+[1114/1501] cxx obj/vendor/boringssl/ssl/d1_pkt.cc.o
+[1115/1501] cxx obj/vendor/boringssl/ssl/d1_srtp.cc.o
+[1116/1501] cxx obj/vendor/boringssl/ssl/dtls_method.cc.o
+[1117/1501] cxx obj/vendor/boringssl/ssl/encrypted_client_hello.cc.o
+[1118/1501] cxx obj/vendor/boringssl/ssl/dtls_record.cc.o
+[1119/1501] cxx obj/vendor/boringssl/ssl/extensions.cc.o
+[1120/1501] cxx obj/vendor/boringssl/ssl/handoff.cc.o
+[1121/1501] cxx obj/vendor/boringssl/ssl/handshake.cc.o
+[1122/1501] cxx obj/vendor/boringssl/ssl/handshake_client.cc.o
+[1123/1501] cxx obj/vendor/boringssl/ssl/handshake_server.cc.o
+[1124/1501] cxx obj/vendor/boringssl/ssl/s3_both.cc.o
+[1125/1501] cxx obj/vendor/boringssl/ssl/s3_lib.cc.o
+[1126/1501] cxx obj/vendor/boringssl/ssl/s3_pkt.cc.o
+[1127/1501] cxx obj/vendor/boringssl/ssl/ssl_aead_ctx.cc.o
+[1128/1501] cxx obj/vendor/boringssl/ssl/ssl_asn1.cc.o
+[1129/1501] cxx obj/vendor/boringssl/ssl/ssl_buffer.cc.o
+[1130/1501] cxx obj/vendor/boringssl/ssl/ssl_cert.cc.o
+[1131/1501] cxx obj/vendor/boringssl/ssl/ssl_cipher.cc.o
+[1132/1501] cxx obj/vendor/boringssl/ssl/ssl_file.cc.o
+[1133/1501] cxx obj/vendor/boringssl/ssl/ssl_credential.cc.o
+[1134/1501] cxx obj/vendor/boringssl/ssl/ssl_key_share.cc.o
+[1135/1501] cxx obj/vendor/boringssl/ssl/ssl_lib.cc.o
+[1136/1501] cxx obj/vendor/boringssl/ssl/ssl_privkey.cc.o
+[1137/1501] cxx obj/vendor/boringssl/ssl/ssl_session.cc.o
+[1138/1501] cxx obj/vendor/boringssl/ssl/ssl_stat.cc.o
+[1139/1501] cxx obj/vendor/boringssl/ssl/ssl_transcript.cc.o
+[1140/1501] cxx obj/vendor/boringssl/ssl/ssl_versions.cc.o
+[1141/1501] cxx obj/vendor/boringssl/ssl/ssl_x509.cc.o
+[1142/1501] cxx obj/vendor/boringssl/ssl/t1_enc.cc.o
+[1143/1501] cxx obj/vendor/boringssl/ssl/tls13_both.cc.o
+[1144/1501] cxx obj/vendor/boringssl/ssl/tls13_client.cc.o
+[1145/1501] cxx obj/vendor/boringssl/ssl/tls13_enc.cc.o
+[1146/1501] cxx obj/vendor/boringssl/ssl/tls13_server.cc.o
+[1147/1501] cxx obj/vendor/boringssl/ssl/tls_method.cc.o
+[1148/1501] cxx obj/vendor/boringssl/ssl/tls_record.cc.o
+[1149/1501] cxx obj/vendor/boringssl/decrepit/bio/base64_bio.cc.o
+[1150/1501] cxx obj/vendor/boringssl/decrepit/blowfish/blowfish.cc.o
+[1151/1501] cxx obj/vendor/boringssl/decrepit/cast/cast.cc.o
+[1152/1501] cxx obj/vendor/boringssl/decrepit/cast/cast_tables.cc.o
+[1153/1501] cxx obj/vendor/boringssl/decrepit/cfb/cfb.cc.o
+[1154/1501] cxx obj/vendor/boringssl/decrepit/des/cfb64ede.cc.o
+[1155/1501] cxx obj/vendor/boringssl/decrepit/dh/dh_decrepit.cc.o
+[1156/1501] cxx obj/vendor/boringssl/decrepit/dsa/dsa_decrepit.cc.o
+[1157/1501] cxx obj/vendor/boringssl/decrepit/evp/evp_do_all.cc.o
+[1158/1501] cxx obj/vendor/boringssl/decrepit/obj/obj_decrepit.cc.o
+[1159/1501] cxx obj/vendor/boringssl/decrepit/evp/dss1.cc.o
+[1160/1501] cxx obj/vendor/boringssl/decrepit/rc4/rc4_decrepit.cc.o
+[1161/1501] cxx obj/vendor/boringssl/decrepit/rsa/rsa_decrepit.cc.o
+[1162/1501] cxx obj/vendor/boringssl/decrepit/ssl/ssl_decrepit.cc.o
+[1163/1501] cxx obj/vendor/boringssl/decrepit/x509/x509_decrepit.cc.o
+[1164/1501] cxx obj/vendor/boringssl/decrepit/xts/xts.cc.o
+[1165/1501] cc obj/vendor/boringssl/gen/bcm/aes-gcm-avx2-x86_64-apple.S.o
+[1166/1501] cc obj/vendor/boringssl/gen/bcm/aes-gcm-avx2-x86_64-linux.S.o
+[1167/1501] cc obj/vendor/boringssl/gen/bcm/aes-gcm-avx512-x86_64-apple.S.o
+[1168/1501] cc obj/vendor/boringssl/gen/bcm/aes-gcm-avx512-x86_64-linux.S.o
+[1169/1501] cc obj/vendor/boringssl/gen/bcm/aesni-gcm-x86_64-apple.S.o
+[1170/1501] cc obj/vendor/boringssl/gen/bcm/aesni-gcm-x86_64-linux.S.o
+[1171/1501] cc obj/vendor/boringssl/gen/bcm/aesni-x86-apple.S.o
+[1172/1501] cc obj/vendor/boringssl/gen/bcm/aesni-x86-linux.S.o
+[1173/1501] cc obj/vendor/boringssl/gen/bcm/aesni-x86_64-apple.S.o
+[1174/1501] cc obj/vendor/boringssl/gen/bcm/aesni-x86_64-linux.S.o
+[1175/1501] cc obj/vendor/boringssl/gen/bcm/aesv8-armv7-linux.S.o
+[1176/1501] cc obj/vendor/boringssl/gen/bcm/aesv8-armv8-apple.S.o
+[1177/1501] cc obj/vendor/boringssl/gen/bcm/aesv8-armv8-linux.S.o
+[1178/1501] cc obj/vendor/boringssl/gen/bcm/aesv8-armv8-win.S.o
+[1179/1501] cc obj/vendor/boringssl/gen/bcm/aesv8-gcm-armv8-linux.S.o
+[1180/1501] cc obj/vendor/boringssl/gen/bcm/aesv8-gcm-armv8-apple.S.o
+[1181/1501] cc obj/vendor/boringssl/gen/bcm/aesv8-gcm-armv8-win.S.o
+[1182/1501] cc obj/vendor/boringssl/gen/bcm/armv4-mont-linux.S.o
+[1183/1501] cc obj/vendor/boringssl/gen/bcm/armv8-mont-apple.S.o
+[1184/1501] cc obj/vendor/boringssl/gen/bcm/armv8-mont-linux.S.o
+[1185/1501] cc obj/vendor/boringssl/gen/bcm/armv8-mont-win.S.o
+[1186/1501] cc obj/vendor/boringssl/gen/bcm/bn-586-apple.S.o
+[1187/1501] cc obj/vendor/boringssl/gen/bcm/bn-586-linux.S.o
+[1188/1501] cc obj/vendor/boringssl/gen/bcm/bn-armv8-apple.S.o
+[1189/1501] cc obj/vendor/boringssl/gen/bcm/bn-armv8-linux.S.o
+[1190/1501] cc obj/vendor/boringssl/gen/bcm/bn-armv8-win.S.o
+[1191/1501] cc obj/vendor/boringssl/gen/bcm/bsaes-armv7-linux.S.o
+[1192/1501] cc obj/vendor/boringssl/gen/bcm/co-586-apple.S.o
+[1193/1501] cc obj/vendor/boringssl/gen/bcm/co-586-linux.S.o
+[1194/1501] cc obj/vendor/boringssl/gen/bcm/ghash-armv4-linux.S.o
+[1195/1501] cc obj/vendor/boringssl/gen/bcm/ghash-neon-armv8-apple.S.o
+[1196/1501] cc obj/vendor/boringssl/gen/bcm/ghash-neon-armv8-linux.S.o
+[1197/1501] cc obj/vendor/boringssl/gen/bcm/ghash-ssse3-x86-apple.S.o
+[1198/1501] cc obj/vendor/boringssl/gen/bcm/ghash-neon-armv8-win.S.o
+[1199/1501] cc obj/vendor/boringssl/gen/bcm/ghash-ssse3-x86-linux.S.o
+[1200/1501] cc obj/vendor/boringssl/gen/bcm/ghash-ssse3-x86_64-apple.S.o
+[1201/1501] cc obj/vendor/boringssl/gen/bcm/ghash-ssse3-x86_64-linux.S.o
+[1202/1501] cc obj/vendor/boringssl/gen/bcm/ghash-x86-apple.S.o
+[1203/1501] cc obj/vendor/boringssl/gen/bcm/ghash-x86-linux.S.o
+[1204/1501] cc obj/vendor/boringssl/gen/bcm/ghash-x86_64-apple.S.o
+[1205/1501] cc obj/vendor/boringssl/gen/bcm/ghash-x86_64-linux.S.o
+[1206/1501] cc obj/vendor/boringssl/gen/bcm/ghashv8-armv7-linux.S.o
+[1207/1501] cc obj/vendor/boringssl/gen/bcm/ghashv8-armv8-apple.S.o
+[1208/1501] cc obj/vendor/boringssl/gen/bcm/ghashv8-armv8-linux.S.o
+[1209/1501] cc obj/vendor/boringssl/gen/bcm/ghashv8-armv8-win.S.o
+[1210/1501] cc obj/vendor/boringssl/gen/bcm/p256-armv8-asm-apple.S.o
+[1211/1501] cc obj/vendor/boringssl/gen/bcm/p256-armv8-asm-linux.S.o
+[1212/1501] cc obj/vendor/boringssl/gen/bcm/p256-armv8-asm-win.S.o
+[1213/1501] cc obj/vendor/boringssl/gen/bcm/p256-x86_64-asm-apple.S.o
+[1214/1501] cc obj/vendor/boringssl/gen/bcm/p256-x86_64-asm-linux.S.o
+[1215/1501] cc obj/vendor/boringssl/gen/bcm/p256_beeu-armv8-asm-apple.S.o
+[1216/1501] cc obj/vendor/boringssl/gen/bcm/p256_beeu-armv8-asm-linux.S.o
+[1217/1501] cc obj/vendor/boringssl/gen/bcm/p256_beeu-armv8-asm-win.S.o
+[1218/1501] cc obj/vendor/boringssl/gen/bcm/p256_beeu-x86_64-asm-apple.S.o
+[1219/1501] cc obj/vendor/boringssl/gen/bcm/p256_beeu-x86_64-asm-linux.S.o
+[1220/1501] cc obj/vendor/boringssl/gen/bcm/rdrand-x86_64-apple.S.o
+[1221/1501] cc obj/vendor/boringssl/gen/bcm/rdrand-x86_64-linux.S.o
+[1222/1501] cc obj/vendor/boringssl/gen/bcm/rsaz-avx2-apple.S.o
+[1223/1501] cc obj/vendor/boringssl/gen/bcm/rsaz-avx2-linux.S.o
+[1224/1501] cc obj/vendor/boringssl/gen/bcm/sha1-586-apple.S.o
+[1225/1501] cc obj/vendor/boringssl/gen/bcm/sha1-586-linux.S.o
+[1226/1501] cc obj/vendor/boringssl/gen/bcm/sha1-armv4-large-linux.S.o
+[1227/1501] cc obj/vendor/boringssl/gen/bcm/sha1-armv8-apple.S.o
+[1228/1501] cc obj/vendor/boringssl/gen/bcm/sha1-armv8-linux.S.o
+[1229/1501] cc obj/vendor/boringssl/gen/bcm/sha1-armv8-win.S.o
+[1230/1501] cc obj/vendor/boringssl/gen/bcm/sha1-x86_64-apple.S.o
+[1231/1501] cc obj/vendor/boringssl/gen/bcm/sha1-x86_64-linux.S.o
+[1232/1501] cc obj/vendor/boringssl/gen/bcm/sha256-586-apple.S.o
+[1233/1501] cc obj/vendor/boringssl/gen/bcm/sha256-586-linux.S.o
+[1234/1501] cc obj/vendor/boringssl/gen/bcm/sha256-armv4-linux.S.o
+[1235/1501] cc obj/vendor/boringssl/gen/bcm/sha256-armv8-apple.S.o
+[1236/1501] cc obj/vendor/boringssl/gen/bcm/sha256-armv8-linux.S.o
+[1237/1501] cc obj/vendor/boringssl/gen/bcm/sha256-armv8-win.S.o
+[1238/1501] cc obj/vendor/boringssl/gen/bcm/sha256-x86_64-apple.S.o
+[1239/1501] cc obj/vendor/boringssl/gen/bcm/sha256-x86_64-linux.S.o
+[1240/1501] cc obj/vendor/boringssl/gen/bcm/sha512-586-apple.S.o
+[1241/1501] cc obj/vendor/boringssl/gen/bcm/sha512-586-linux.S.o
+[1242/1501] cc obj/vendor/boringssl/gen/bcm/sha512-armv4-linux.S.o
+[1243/1501] cc obj/vendor/boringssl/gen/bcm/sha512-armv8-apple.S.o
+[1244/1501] cc obj/vendor/boringssl/gen/bcm/sha512-armv8-linux.S.o
+[1245/1501] cc obj/vendor/boringssl/gen/bcm/sha512-x86_64-apple.S.o
+[1246/1501] cc obj/vendor/boringssl/gen/bcm/sha512-armv8-win.S.o
+[1247/1501] cc obj/vendor/boringssl/gen/bcm/sha512-x86_64-linux.S.o
+[1248/1501] cc obj/vendor/boringssl/gen/bcm/vpaes-armv7-linux.S.o
+[1249/1501] cc obj/vendor/boringssl/gen/bcm/vpaes-armv8-apple.S.o
+[1250/1501] cc obj/vendor/boringssl/gen/bcm/vpaes-armv8-linux.S.o
+[1251/1501] cc obj/vendor/boringssl/gen/bcm/vpaes-armv8-win.S.o
+[1252/1501] cc obj/vendor/boringssl/gen/bcm/vpaes-x86-apple.S.o
+[1253/1501] cc obj/vendor/boringssl/gen/bcm/vpaes-x86_64-apple.S.o
+[1254/1501] cc obj/vendor/boringssl/gen/bcm/vpaes-x86-linux.S.o
+[1255/1501] cc obj/vendor/boringssl/gen/bcm/vpaes-x86_64-linux.S.o
+[1256/1501] cc obj/vendor/boringssl/gen/bcm/x86-mont-apple.S.o
+[1257/1501] cc obj/vendor/boringssl/gen/bcm/x86-mont-linux.S.o
+[1258/1501] cc obj/vendor/boringssl/gen/bcm/x86_64-mont-apple.S.o
+[1259/1501] cc obj/vendor/boringssl/gen/bcm/x86_64-mont5-apple.S.o
+[1260/1501] cc obj/vendor/boringssl/gen/bcm/x86_64-mont5-linux.S.o
+[1261/1501] cc obj/vendor/boringssl/gen/bcm/x86_64-mont-linux.S.o
+[1262/1501] cc obj/vendor/boringssl/third_party/fiat/asm/fiat_p256_adx_mul.S.o
+[1263/1501] cc obj/vendor/boringssl/third_party/fiat/asm/fiat_p256_adx_sqr.S.o
+[1264/1501] cc obj/vendor/boringssl/crypto/curve25519/asm/x25519-asm-arm.S.o
+[1265/1501] cc obj/vendor/boringssl/crypto/hrss/asm/poly_rq_mul.S.o
+[1266/1501] cc obj/vendor/boringssl/crypto/poly1305/poly1305_arm_asm.S.o
+[1267/1501] cc obj/vendor/boringssl/gen/crypto/aes128gcmsiv-x86_64-apple.S.o
+[1268/1501] cc obj/vendor/boringssl/gen/crypto/aes128gcmsiv-x86_64-linux.S.o
+[1269/1501] cc obj/vendor/boringssl/gen/crypto/chacha-armv4-linux.S.o
+[1270/1501] cc obj/vendor/boringssl/gen/crypto/chacha-armv8-apple.S.o
+[1271/1501] cc obj/vendor/boringssl/gen/crypto/chacha-armv8-linux.S.o
+[1272/1501] cc obj/vendor/boringssl/gen/crypto/chacha-armv8-win.S.o
+[1273/1501] cc obj/vendor/boringssl/gen/crypto/chacha-x86-apple.S.o
+[1274/1501] cc obj/vendor/boringssl/gen/crypto/chacha-x86-linux.S.o
+[1275/1501] cc obj/vendor/boringssl/gen/crypto/chacha-x86_64-apple.S.o
+[1276/1501] cc obj/vendor/boringssl/gen/crypto/chacha-x86_64-linux.S.o
+[1277/1501] cc obj/vendor/boringssl/gen/crypto/chacha20_poly1305_armv8-apple.S.o
+[1278/1501] cc obj/vendor/boringssl/gen/crypto/chacha20_poly1305_armv8-linux.S.o
+[1279/1501] cc obj/vendor/boringssl/gen/crypto/chacha20_poly1305_armv8-win.S.o
+[1280/1501] cc obj/vendor/boringssl/gen/crypto/chacha20_poly1305_x86_64-apple.S.o
+[1281/1501] cc obj/vendor/boringssl/gen/crypto/chacha20_poly1305_x86_64-linux.S.o
+[1282/1501] cc obj/vendor/boringssl/gen/crypto/md5-586-apple.S.o
+[1283/1501] cc obj/vendor/boringssl/gen/crypto/md5-586-linux.S.o
+[1284/1501] cc obj/vendor/boringssl/gen/crypto/md5-x86_64-apple.S.o
+[1285/1501] cc obj/vendor/boringssl/gen/crypto/md5-x86_64-linux.S.o
+[1286/1501] cc obj/vendor/boringssl/third_party/fiat/asm/fiat_curve25519_adx_mul.S.o
+[1287/1501] cc obj/vendor/boringssl/third_party/fiat/asm/fiat_curve25519_adx_square.S.o
+[1288/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_adaptive_cc.c.o
+[1289/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_alarmset.c.o
+[1290/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_arr.c.o
+[1291/1501] cc obj/vendor/lsquic/src/liblsquic/ls-sfparser.c.o
+[1292/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_attq.c.o
+[1293/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_bbr.c.o
+[1294/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_bw_sampler.c.o
+[1295/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_cfcw.c.o
+[1296/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_conn.c.o
+[1297/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_crand.c.o
+[1298/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_cubic.c.o
+[1299/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_di_error.c.o
+[1300/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_di_hash.c.o
+[1301/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_di_nocopy.c.o
+[1302/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_enc_sess_common.c.o
+[1303/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_enc_sess_ietf.c.o
+[1304/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_eng_hist.c.o
+[1305/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_engine.c.o
+[1306/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_ev_log.c.o
+[1307/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_frab_list.c.o
+[1308/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_full_conn_ietf.c.o
+[1309/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_global.c.o
+[1310/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_gquic_stubs.c.o
+[1311/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_hash.c.o
+[1312/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_hcsi_reader.c.o
+[1313/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_hcso_writer.c.o
+[1314/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_hkdf.c.o
+[1315/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_hpi.c.o
+[1316/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_http.c.o
+[1317/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_http1x_if.c.o
+[1318/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_logger.c.o
+[1319/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_malo.c.o
+[1320/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_min_heap.c.o
+[1321/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_mini_conn_ietf.c.o
+[1322/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_minmax.c.o
+[1323/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_mm.c.o
+[1324/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_pacer.c.o
+[1325/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_packet_common.c.o
+[1326/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_packet_out.c.o
+[1327/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_packet_in.c.o
+[1328/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_packet_resize.c.o
+[1329/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_parse_common.c.o
+[1330/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_parse_gquic_common.c.o
+[1331/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_parse_ietf_v1.c.o
+[1332/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_parse_iquic_common.c.o
+[1333/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_purga.c.o
+[1334/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_pr_queue.c.o
+[1335/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_qdec_hdl.c.o
+[1336/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_qlog.c.o
+[1337/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_qenc_hdl.c.o
+[1338/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_qpack_exp.c.o
+[1339/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_rechist.c.o
+[1340/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_rtt.c.o
+[1341/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_send_ctl.c.o
+[1342/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_senhist.c.o
+[1343/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_set.c.o
+[1344/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_sfcw.c.o
+[1345/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_spi.c.o
+[1346/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_stock_shi.c.o
+[1347/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_str.c.o
+[1348/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_stream.c.o
+[1349/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_trechist.c.o
+[1350/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_tokgen.c.o
+[1351/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_trans_params.c.o
+[1352/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_util.c.o
+[1353/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_varint.c.o
+[1354/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_version.c.o
+[1355/1501] cc obj/vendor/lsquic/src/liblsquic/lsquic_versions_to_string.c.o
+[1356/1501] cc obj/vendor/lsqpack/lsqpack.c.o
+[1357/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings-1.cpp.o
+[1358/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings-0.cpp.o
+[1359/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings-4.cpp.o
+[1360/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_node_crypto-1.cpp.o
+[1361/1501] cxx obj/unified/UnifiedSource-packages_bun_usockets_src_crypto-0.cpp.o
+[1362/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_node-0.cpp.o
+[1363/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_node_http-0.cpp.o
+[1364/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_node_crypto-0.cpp.o
+[1365/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_vm-0.cpp.o
+[1366/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_v8_shim-0.cpp.o
+[1367/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_v8-1.cpp.o
+[1368/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_v8-0.cpp.o
+[1369/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings-2.cpp.o
+[1370/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_webcore-0.cpp.o
+[1371/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_webcrypto-1.cpp.o
+[1372/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_webcrypto-0.cpp.o
+[1373/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_webcore-1.cpp.o
+[1374/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings-5.cpp.o
+[1375/1501] cxx obj/unified/UnifiedSource-src_jsc_modules-0.cpp.o
+[1376/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings-3.cpp.o
+[1377/1501] cxx obj/unified/UnifiedSource-src_runtime_bake-0.cpp.o
+[1378/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_webcrypto-2.cpp.o
+[1379/1501] cxx obj/packages/bun-usockets/src/crypto/root_certs_darwin.cpp.o
+[1380/1501] cxx obj/packages/bun-usockets/src/crypto/root_certs_windows.cpp.o
+[1381/1501] cxx obj/unified/UnifiedSource-src_runtime_webview-0.cpp.o
+[1382/1501] cxx obj/unified/UnifiedSource-src_uws_sys-0.cpp.o
+[1383/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_webcore-2.cpp.o
+[1384/1501] cxx obj/src/jsc/bindings/BunObject.cpp.o
+[1385/1501] cxx obj/src/jsc/bindings/image_coregraphics_shim.cpp.o
+[1386/1501] cxx obj/unified/UnifiedSource-src_jsc_bindings_webcore-3.cpp.o
+[1387/1501] cxx obj/src/jsc/bindings/image_wic_shim.cpp.o
+[1388/1501] cxx obj/src/jsc/bindings/highway_json.cpp.o
+[1389/1501] cxx obj/src/jsc/bindings/bindings.cpp.o
+[1390/1501] cxx obj/src/jsc/bindings/napi.cpp.o
+[1391/1501] cxx obj/src/jsc/bindings/BunProcess.cpp.o
+[1392/1501] cxx obj/src/jsc/bindings/ProcessBindingUV.cpp.o
+[1393/1501] cxx obj/src/jsc/bindings/highway_xml.cpp.o
+[1394/1501] cxx obj/src/jsc/bindings/highway_sourcemap.cpp.o
+[1395/1501] cxx obj/src/jsc/bindings/ProcessBindingConstants.cpp.o
+[1396/1501] cxx obj/src/jsc/bindings/JSBuffer.cpp.o
+[1397/1501] cxx obj/src/jsc/bindings/sqlite/NodeSqlite.cpp.o
+[1398/1501] cxx obj/src/jsc/bindings/webcore/HTTPParsers.cpp.o
+[1399/1501] cxx obj/src/jsc/bindings/image_resize.cpp.o
+[1400/1501] cxx obj/src/jsc/bindings/webcore/JSWasmStreamingCompiler.cpp.o
+[1401/1501] cxx obj/src/jsc/bindings/webcore/streams/BunAsyncIterableSource.cpp.o
+[1402/1501] cxx obj/src/jsc/bindings/sqlite/JSSQLStatement.cpp.o
+[1403/1501] cxx obj/src/jsc/bindings/webcore/JSDOMPromiseDeferred.cpp.o
+[1404/1501] cxx obj/src/jsc/bindings/webcore/JSMIMEType.cpp.o
+[1405/1501] cxx obj/src/jsc/bindings/webcore/streams/CrossRealmTransform.cpp.o
+[1406/1501] cxx obj/src/jsc/bindings/webcore/JSMessageEventCustom.cpp.o
+[1407/1501] cxx obj/src/jsc/bindings/webcore/streams/JSCompressionStream.cpp.o
+[1408/1501] cxx obj/src/jsc/bindings/webcore/streams/JSCompressionStreamShared.cpp.o
+[1409/1501] cxx obj/src/jsc/bindings/webcore/streams/BunStreamConsumers.cpp.o
+[1410/1501] cxx obj/src/jsc/bindings/webcore/streams/JSByteLengthQueuingStrategy.cpp.o
+[1411/1501] cxx obj/src/jsc/bindings/webcore/streams/BunStreamSource.cpp.o
+[1412/1501] cxx obj/src/jsc/bindings/webcore/streams/JSCountQueuingStrategy.cpp.o
+[1413/1501] cxx obj/src/jsc/bindings/webcore/streams/JSPullIntoDescriptor.cpp.o
+[1414/1501] cxx obj/src/jsc/bindings/webcore/streams/JSCrossRealmTransformState.cpp.o
+[1415/1501] cxx obj/src/jsc/bindings/webcore/SerializedScriptValue.cpp.o
+[1416/1501] cxx obj/src/jsc/bindings/webcore/streams/JSDirectStreamController.cpp.o
+[1417/1501] cxx obj/src/jsc/bindings/webcore/streams/JSDecompressionStream.cpp.o
+[1418/1501] cxx obj/src/jsc/bindings/webcore/streams/JSReadableStreamAsyncIterator.cpp.o
+[1419/1501] cxx obj/src/jsc/bindings/webcore/streams/JSReadableStreamBYOBRequest.cpp.o
+[1420/1501] cxx obj/src/jsc/bindings/webcore/streams/JSReadableStreamDefaultController.cpp.o
+[1421/1501] cxx obj/src/jsc/bindings/webcore/streams/JSReadableStream.cpp.o
+[1422/1501] cxx obj/src/jsc/bindings/webcore/streams/JSReadableByteStreamController.cpp.o
+[1423/1501] cxx obj/src/jsc/bindings/webcore/streams/JSReadableStreamBYOBReader.cpp.o
+[1424/1501] cxx obj/src/jsc/bindings/webcore/streams/JSReadableStreamReaderBase.cpp.o
+[1425/1501] cxx obj/src/jsc/bindings/webcore/streams/JSStreamAlgorithmContexts.cpp.o
+[1426/1501] cxx obj/src/jsc/bindings/webcore/streams/JSStreamPipeToOperation.cpp.o
+[1427/1501] cxx obj/src/jsc/bindings/webcore/streams/JSStreamsRuntime.cpp.o
+[1428/1501] cxx obj/src/jsc/bindings/webcore/streams/JSStreamTeeState.cpp.o
+[1429/1501] cxx obj/src/jsc/bindings/webcore/streams/JSTextDecoderStream.cpp.o
+[1430/1501] cxx obj/src/jsc/bindings/webcore/streams/JSTransformStreamDefaultController.cpp.o
+[1431/1501] cxx obj/src/jsc/bindings/webcore/streams/JSTextEncoderStream.cpp.o
+[1432/1501] cxx obj/src/jsc/bindings/webcore/streams/JSTransformStream.cpp.o
+[1433/1501] cxx obj/src/jsc/bindings/webcore/streams/JSReadableStreamDefaultReader.cpp.o
+[1434/1501] cxx obj/src/jsc/bindings/webcore/streams/JSReadRequest.cpp.o
+[1435/1501] cxx obj/src/jsc/bindings/webcore/streams/JSWritableStreamDefaultWriter.cpp.o
+[1436/1501] cxx obj/src/jsc/bindings/webcore/streams/JSWritableStream.cpp.o
+[1437/1501] cxx obj/src/jsc/bindings/webcore/streams/JSWritableStreamDefaultController.cpp.o
+[1438/1501] cxx obj/src/jsc/bindings/webcore/streams/TransformStreamOperations.cpp.o
+[1439/1501] cxx obj/src/jsc/bindings/webcore/streams/WebStreamsExports.cpp.o
+[1440/1501] cxx obj/src/jsc/bindings/webcore/streams/WebStreamsInspectCustom.cpp.o
+[1441/1501] cxx obj/src/jsc/bindings/webcore/streams/WebStreamsMisc.cpp.o
+[1442/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CBCOpenSSL.cpp.o
+[1443/1501] cxx obj/src/jsc/bindings/webcore/streams/ReadableStreamOperations.cpp.o
+[1444/1501] cxx obj/src/jsc/bindings/webcore/streams/WritableStreamOperations.cpp.o
+[1445/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CBC.cpp.o
+[1446/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CFB.cpp.o
+[1447/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmAES_GCM.cpp.o
+[1448/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CTR.cpp.o
+[1449/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CTROpenSSL.cpp.o
+[1450/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmAES_CFBOpenSSL.cpp.o
+[1451/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmECDSA.cpp.o
+[1452/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmAES_GCMOpenSSL.cpp.o
+[1453/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp.o
+[1454/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp.o
+[1455/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmHMAC.cpp.o
+[1456/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5.cpp.o
+[1457/1501] cxx obj/src/jsc/bindings/workaround-missing-symbols.cpp.o
+[1458/1501] cxx obj/src/jsc/bindings/webcrypto/CryptoAlgorithmRSA_OAEP.cpp.o
+[1459/1501] cxx obj/src/simdutf_sys/bun-simdutf.cpp.o
+[1460/1501] cxx obj/src/io/io_darwin.cpp.o
+[1461/1501] cxx obj/codegen/GeneratedBindings.cpp.o
+[1462/1501] cxx obj/codegen/WebCoreJSBuiltins.cpp.o
+[1463/1501] cxx obj/src/jsc/bindings/webcrypto/SubtleCrypto.cpp.o
+[1464/1501] cxx obj/codegen/JSSink.cpp.o
+[1465/1501] cxx obj/src/jsc/bindings/xxhash3.cpp.o
+[1466/1501] cxx obj/codegen/GeneratedSocketConfigBinaryType.cpp.o
+[1467/1501] cc obj/packages/bun-usockets/src/bsd.c.o
+[1468/1501] cc obj/packages/bun-usockets/src/context.c.o
+[1469/1501] cc obj/packages/bun-usockets/src/crypto/openssl.c.o
+[1470/1501] cc obj/packages/bun-usockets/src/eventing/epoll_kqueue.c.o
+[1471/1501] cc obj/packages/bun-usockets/src/eventing/libuv.c.o
+[1472/1501] cc obj/packages/bun-usockets/src/fault_inject.c.o
+[1473/1501] cc obj/packages/bun-usockets/src/loop.c.o
+[1474/1501] cc obj/packages/bun-usockets/src/node_quic_shim.c.o
+[1475/1501] cxx obj/codegen/GeneratedSSLConfig.cpp.o
+[1476/1501] cc obj/packages/bun-usockets/src/socket.c.o
+[1477/1501] cc obj/packages/bun-usockets/src/quic.c.o
+[1478/1501] cc obj/packages/bun-usockets/src/udp.c.o
+[1479/1501] cc obj/src/jsc/bindings/node/http/llhttp/api.c.o
+[1480/1501] cc obj/src/jsc/bindings/node/http/llhttp/http.c.o
+[1481/1501] cc obj/src/jsc/bindings/node/http/llhttp/llhttp.c.o
+[1482/1501] cc obj/src/jsc/bindings/uv-posix-polyfills.c.o
+[1483/1501] cc obj/src/jsc/bindings/uv-posix-stubs.c.o
+[1484/1501] cc obj/vendor/picohttpparser/picohttpparser.c.o
+[1485/1501] cc obj/codegen/InternalModuleRegistryConstants.S.o
+[1486/1501] check boringssl undefined symbols
+[1487/1501] cxx obj/codegen/GeneratedSocketConfigHandlers.cpp.o
+[1488/1501] cxx obj/codegen/GeneratedFakeTimersConfig.cpp.o
+[1489/1501] rustc bun_runtime 
+[1490/1501] cxx obj/codegen/GeneratedSocketConfig.cpp.o
+[1491/1501] cxx obj/src/jsc/bindings/ZigGlobalObject.cpp.o
+[1492/1501] cxx obj/codegen/ZigGeneratedClasses.cpp.o
+[1493/1501] link bun-profile
+[1494/1501] strip bun
+[1495/1501] check bun-profile --revision
+[check] bun-profile 1.4.3-canary.1+be1ebe529 (409ms)
+[1496/1501] check bun-profile exports, dynamic deps, initializers, hardening
+[check] bun-profile 688 exported symbols (989ms)
+[check] bun-profile 3 shared libraries (2ms)
+[check] bun-profile 393 imported symbols (309ms)
+[check] bun-profile 10 static initializers (707ms)
+[check] bun-profile 3 hardening properties (1ms)
+[check] bun-profile 11 debug sections (0ms)
+[1497/1501] check bun-profile link inputs for duplicate definitions
+[check] bun-profile 0 duplicate strong symbols (7.1s)
+[build] done
+### finished: 2026-10-01T07:57:25Z rc=0 run_secs=863

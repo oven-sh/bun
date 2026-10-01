@@ -1,0 +1,7 @@
+### step=debug-build cwd=/workspace/wt/parser
+### cmd: /workspace/tools/lk bun bd -j8 --version
+### queued: 2026-10-01T06:29:28Z
+### lock acquired: 2026-10-01T06:56:18Z
+$ BUN_DEBUG_QUIET_LOGS=1 bun scripts/build.ts --profile=debug --quiet "-j8" --version
+1.4.3-debug
+### finished: 2026-10-01T06:56:29Z rc=0 run_secs=10

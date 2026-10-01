@@ -146,6 +146,8 @@ function chainLink(n, insideChain) {
 		objectHasOptional = r.hasOptional;
 	} else {
 		objectExpr = expr(object);
+		// `(a?.b)?.c`: the chain in the parentheses is a chain of its own. Bun's side table has the parentheses.
+		if (object.type === "ChainExpression") objectExpr.paren = true;
 	}
 	const chain = n.optional ? "start" : objectHasOptional ? "continuation" : null;
 	const hasOptional = n.optional || objectHasOptional;

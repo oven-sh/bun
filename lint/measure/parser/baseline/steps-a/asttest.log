@@ -1,0 +1,10 @@
+### step=asttest cwd=/workspace/wt/parser
+### cmd: /workspace/tools/lk /tmp/parser-bb/asttest.sh
+### queued: 2026-10-01T08:18:43Z
+### lock acquired: 2026-10-01T08:52:57Z
+          clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+          
+
+error: could not compile `bun_ast` (lib test) due to 1 previous error
+### cargo test -p bun_ast --lib rc=101 secs=34 HEAD=be1ebe5295
+### finished: 2026-10-01T08:53:31Z rc=101 run_secs=34

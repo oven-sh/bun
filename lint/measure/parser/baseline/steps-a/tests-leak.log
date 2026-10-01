@@ -1,0 +1,5 @@
+### step=tests-leak cwd=/workspace/wt/parser
+### cmd: /workspace/tools/lk /tmp/parser-bb/tests.sh leak
+### queued: 2026-10-01T09:08:16Z
+### lock acquired: 2026-10-01T09:19:37Z
+### finished: 2026-10-01T09:35:45Z rc=1 run_secs=968

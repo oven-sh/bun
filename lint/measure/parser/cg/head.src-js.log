@@ -4,3 +4,10 @@
 ==339877== Command: /workspace/notes/lint/measure/parser/head/bun-profile /workspace/notes/lint/benchroot/bench/snippets/transpiler-typescript.mjs --iterations=20 --group=src-js
 ==339877== 
 group                    files   input bytes        passes output length            ms
+src-js                     193       3268179            20       2309463       84621.0
+==339877== 
+==339877== I refs:        7,511,994,344
+==339877== 
+==339877== Branches:      1,198,977,416  (1,125,256,623 cond + 73,720,793 ind)
+==339877== Mispredicts:      97,561,067  (   59,918,679 cond + 37,642,388 ind)
+==339877== Mispred rate:            8.1% (          5.3%     +       51.1%   )

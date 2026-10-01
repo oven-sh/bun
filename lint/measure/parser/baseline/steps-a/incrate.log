@@ -1,0 +1,5 @@
+### step=incrate cwd=/tmp
+### cmd: /workspace/tools/lk /tmp/parser-bb/incrate-both.sh
+### queued: 2026-10-01T08:16:56Z
+### lock acquired: 2026-10-01T08:50:00Z
+### finished: 2026-10-01T08:52:57Z rc=0 run_secs=174

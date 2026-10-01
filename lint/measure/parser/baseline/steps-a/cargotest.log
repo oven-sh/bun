@@ -1,0 +1,10 @@
+### step=cargotest cwd=/workspace/wt/parser
+### cmd: /workspace/tools/lk /tmp/parser-bb/cargotest.sh
+### queued: 2026-10-01T08:12:25Z
+### lock acquired: 2026-10-01T08:35:58Z
+test type_sink_tests::type_parameters_end_at_their_closer ... ok
+
+test result: ok. 70 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+
+### cargo test -p bun_js_parser --lib rc=0 secs=3 HEAD=be1ebe5295
+### finished: 2026-10-01T08:36:04Z rc=0 run_secs=6

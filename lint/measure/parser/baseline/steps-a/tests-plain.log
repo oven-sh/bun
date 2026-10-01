@@ -1,0 +1,5 @@
+### step=tests-plain cwd=/workspace/wt/parser
+### cmd: /workspace/tools/lk /tmp/parser-bb/tests.sh plain
+### queued: 2026-10-01T08:36:06Z
+### lock acquired: 2026-10-01T08:58:56Z
+### finished: 2026-10-01T09:08:16Z rc=1 run_secs=560

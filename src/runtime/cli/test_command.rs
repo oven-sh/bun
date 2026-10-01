@@ -2407,8 +2407,8 @@ impl TestCommand {
     }
 
     /// The report at the end of a run: snapshot files, the coverage table, the summary, the
-    /// JUnit and timings files. Returns whether the run failed. `on_requested_exit` calls it
-    /// too, when a `process.exit()` ends the run before `exec` gets here.
+    /// JUnit and timings files. Returns whether the run failed. Called from the tail of `exec`,
+    /// and from `report_run_ended_by_exit` when a `process.exit()` ends the run before that.
     fn report_run(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
@@ -3119,18 +3119,23 @@ impl TestCommand {
     }
 }
 
-/// `process.exit()`, `process.reallyExit()` or a fatal exception while `run_all_tests` is on
-/// the stack. The caller ends the process when this returns, so the tail of `exec` never runs.
-/// This reports the run in its place, and keeps a run that failed, or that the exit cut
-/// short, from exiting 0.
+/// `process.exit()`, `process.reallyExit()` or a fatal exception on the main thread. The
+/// caller ends the process when this returns, so a run that `run_all_tests` has on the stack
+/// never reaches the tail of `exec`.
+#[inline]
 pub(crate) fn on_requested_exit(vm: &mut VirtualMachine, code: u8) {
-    let Some(runner) = jest::Jest::runner_ptr() else {
-        return;
-    };
     // SAFETY: `RUNNER` is only read and written on the JS thread.
-    let Some(run) = (unsafe { (*runner.as_ptr()).serial_run.take() }) else {
-        return;
-    };
+    let run =
+        jest::Jest::runner_ptr().and_then(|runner| unsafe { (*runner.as_ptr()).serial_run.take() });
+    if let Some(run) = run {
+        report_run_ended_by_exit(run, vm, code);
+    }
+}
+
+/// Reports the run in place of the tail of `exec`, and keeps a run that failed, or that the
+/// exit cut short, from exiting 0.
+#[cold]
+fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code: u8) {
     // SAFETY: `run_all_tests` is on the stack, so its reporter and files are alive. Its frame
     // and the frames above it borrow both, and none of them runs again: the caller exits.
     let (reporter, files) = unsafe { (&mut *run.reporter.as_ptr(), run.files.as_ref()) };

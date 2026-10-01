@@ -10709,9 +10709,9 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     ).toEqual({ name: "other-inside", version: "2.0.0" });
     const lockfile = await file(join(root, "project", "bun.lock")).text();
     expect(lockfile).toContain('"bar": ["bar@./vendor/bar.tgz"');
-    expect(lockfile).toContain('"inside": ["baz@vendor/inside.tgz"');
-    expect(lockfile).toContain('"outside": ["baz@outside.tgz"');
-    expect(lockfile).toContain('"other/inside": ["other-inside@other/inside.tgz"');
+    expect(lockfile).toContain('"inside": ["baz@./vendor/inside.tgz"');
+    expect(lockfile).toContain('"outside": ["baz@./outside.tgz"');
+    expect(lockfile).toContain('"other/inside": ["other-inside@./other/inside.tgz"');
     expect(exitCode).toBe(0);
 
     await Promise.all([
@@ -10752,8 +10752,8 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     expect(out).toContain("3 packages installed");
     expect(await file(join(root, "project", "node_modules", "c", "package.json")).json()).toEqual(plantedManifest);
     const lockfile = await file(join(root, "project", "bun.lock")).text();
-    expect(lockfile).toContain('"b": ["b@vendor/nested/b.tgz"');
-    expect(lockfile).toContain('"c": ["baz@vendor/nested/c.tgz"');
+    expect(lockfile).toContain('"b": ["b@./vendor/nested/b.tgz"');
+    expect(lockfile).toContain('"c": ["baz@./vendor/nested/c.tgz"');
     expect(exitCode).toBe(0);
 
     await Promise.all([
@@ -10795,9 +10795,54 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     expect(await file(join(root, "project", "node_modules", "b", "package.json")).json()).toEqual(plantedManifest);
     const lockfile = await file(join(root, "project", "bun.lock")).text();
     expect(lockfile).toContain('"a": ["a@./vendor/a.tgz"');
-    expect(lockfile).toContain('"b": ["baz@packages/app/vendor/b.tgz"');
+    expect(lockfile).toContain('"b": ["baz@./packages/app/vendor/b.tgz"');
     expect(exitCode).toBe(0);
   });
+
+  // The tarball a workspace gets through the root catalog is relative to the
+  // project, like every path written in the root package.json. An absolute one is
+  // where it says.
+  for (const [how, aPath, bLocation] of [
+    ["the root catalog", "./vendor/a.tgz", "./vendor/b.tgz"],
+    ["an absolute path", "<root>/project/vendor/a.tgz", "<root>/project/vendor/b.tgz"],
+  ] as const) {
+    it(`reads the ones declared by a workspace's tarball from ${how} from next to that tarball`, async () => {
+      using dir = tempDir("local-tarballs-of-catalog-tarball", {});
+      const root = String(dir);
+      const abs = (p: string) => p.replaceAll("<root>", root.replaceAll("\\", "/"));
+      const fromCatalog = how === "the root catalog";
+      const aSpec = fromCatalog ? "catalog:" : `file:${abs(aPath)}`;
+      await Promise.all([
+        write(
+          join(root, "project", "package.json"),
+          JSON.stringify({
+            name: "my-app",
+            version: "1.0.0",
+            workspaces: fromCatalog ? { packages: ["packages/*"], catalog: { a: `file:${aPath}` } } : ["packages/*"],
+          }),
+        ),
+        write(join(root, "project", "bunfig.toml"), '[install]\nlinker = "hoisted"\n'),
+        write(
+          join(root, "project", "packages", "app", "package.json"),
+          JSON.stringify({ name: "app", version: "1.0.0", dependencies: { a: aSpec } }),
+        ),
+        packManifest(join(root, "project", "vendor", "a.tgz"), {
+          name: "a",
+          version: "1.0.0",
+          dependencies: { b: "file:./b.tgz" },
+        }),
+        cp(planted, join(root, "project", "vendor", "b.tgz")),
+      ]);
+
+      const { err, out, exitCode } = await install(root);
+      expect(diagnostics(err)).toEqual([]);
+      expect(out).toContain("3 packages installed");
+      expect(await file(join(root, "project", "node_modules", "b", "package.json")).json()).toEqual(plantedManifest);
+      const lockfile = await file(join(root, "project", "bun.lock")).text();
+      expect(lockfile).toContain(`"b": ["baz@${abs(bLocation)}"`);
+      expect(exitCode).toBe(0);
+    });
+  }
 
   it("rejects the ones declared by a git dependency", async () => {
     using dir = tempDir("local-tarballs-of-git-dep", {});

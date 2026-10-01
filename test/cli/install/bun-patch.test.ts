@@ -1349,6 +1349,28 @@ describe.concurrent("bun patch --commit on an already patched package", () => {
     ).toEqual(["added.js", "empty.js", "package.json"]);
   });
 
+  test("a commit that fails keeps the marker in node_modules", async () => {
+    const packageDir = await createProject("hoisted");
+    const pkgDir = join(packageDir, "node_modules", "basic-1");
+
+    await commitEdit(packageDir, "// edit1");
+    await runBun(packageDir, "patch", "basic-1");
+    const markers = readdirSync(pkgDir).filter(name => name.startsWith(".bun-tag-"));
+    expect(markers).toHaveLength(1);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "patch", "--commit", "node_modules/basic-1"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"), PATH: join(packageDir, "no-git") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("git must be installed");
+    expect(exitCode).toBe(1);
+    expect(readdirSync(pkgDir).filter(name => name.startsWith(".bun-tag-"))).toEqual(markers);
+  });
+
   // https://github.com/oven-sh/bun/issues/19327
   test("committing again without new edits leaves the patch file as it is", async () => {
     const packageDir = await createProject("hoisted");

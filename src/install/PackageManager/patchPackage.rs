@@ -285,7 +285,7 @@ pub fn do_patch_commit(
     )
     .expect("formatting into a Vec is infallible");
 
-    let patchfile_contents: Vec<u8> = 'brk: {
+    let patchfile_contents: Option<Vec<u8>> = 'brk: {
         let new_folder = changes_dir;
         let mut buf2 = bun_paths::path_buffer_pool::get();
         let old_folder: &[u8] = 'old_folder: {
@@ -314,89 +314,6 @@ pub fn do_patch_commit(
             }
         };
 
-        let new_folder_handle = match Dir::cwd().open_dir(
-            new_folder,
-            sys::OpenDirOptions {
-                iterate: true,
-                ..Default::default()
-            },
-        ) {
-            Ok(h) => h,
-            Err(e) => {
-                Output::err(
-                    e,
-                    "failed to open directory <b>{s}<r>",
-                    (bstr::BStr::new(new_folder),),
-                );
-                Global::crash();
-            }
-        };
-
-        // `git diff --no-index` cannot exclude a nested node_modules folder, so
-        // it is renamed out and back.
-        let has_nested_node_modules: bool = sys::renameat_concurrently_a(
-            new_folder_handle.fd,
-            b"node_modules",
-            root_node_modules.fd,
-            random_tempdir.as_bytes(),
-            sys::RenameOptions {
-                move_fallback: true,
-            },
-        )
-        .is_ok();
-
-        // `.bun-tag-<hash>` markers are install state, not package files. The
-        // folder is scanned for them because the lockfile does not know the
-        // hash before an install.
-        let bun_patch_tags: Vec<Vec<u8>> = {
-            let mut tags: Vec<Vec<u8>> = Vec::new();
-            let mut iterator = sys::iterate_dir(new_folder_handle.fd);
-            while let Some(entry) = iterator.next().unwrap_or(None) {
-                let name = entry.name.slice_u8();
-                if entry.kind == sys::EntryKind::Directory
-                    || !strings::has_prefix(name, crate::bun_hash_tag)
-                {
-                    continue;
-                }
-                let mut name_z = Vec::with_capacity(name.len() + 1);
-                name_z.extend_from_slice(name);
-                name_z.push(0);
-                tags.push(name_z);
-            }
-            for name_z in &tags {
-                if let Err(e) =
-                    sys::unlinkat(new_folder_handle.fd, ZStr::from_slice_with_nul(name_z))
-                {
-                    bun_core::warn!(
-                        "failed removing the bun patch tag, this may cause issues: {}",
-                        e
-                    );
-                }
-            }
-            tags
-        };
-        // deferred restore — one-off rename-back logic on every exit
-        // path of `'brk`. Captures borrow into stack buffers.
-        scopeguard::defer! {
-            if has_nested_node_modules {
-                if let Err(e) = sys::renameat_concurrently_a(
-                    root_node_modules.fd,
-                    random_tempdir.as_bytes(),
-                    new_folder_handle.fd,
-                    b"node_modules",
-                    sys::RenameOptions { move_fallback: true },
-                ) {
-                    bun_core::warn!("failed renaming nested node_modules folder, this may cause issues: {}", e);
-                }
-            }
-
-            for name_z in &bun_patch_tags {
-                if let Err(e) = sys::File::write_file(new_folder_handle.fd, ZStr::from_slice_with_nul(name_z), b"") {
-                    bun_core::warn!("failed restoring the bun patch tag, this may cause issues: {}", e);
-                }
-            }
-        }
-
         let mut cwdbuf = bun_paths::path_buffer_pool::get();
         let cwd = match sys::getcwd_z(&mut cwdbuf) {
             Ok(fd) => fd,
@@ -420,6 +337,101 @@ pub fn do_patch_commit(
                 Global::crash();
             }
         };
+
+        let new_folder_handle = match Dir::cwd().open_dir(
+            new_folder,
+            sys::OpenDirOptions {
+                iterate: true,
+                ..Default::default()
+            },
+        ) {
+            Ok(h) => h,
+            Err(e) => {
+                Output::err(
+                    e,
+                    "failed to open directory <b>{s}<r>",
+                    (bstr::BStr::new(new_folder),),
+                );
+                Global::crash();
+            }
+        };
+
+        // `.bun-tag-<hash>` markers are install state, not package files. The
+        // folder is scanned for them because the lockfile does not know the
+        // hash before an install.
+        let bun_patch_tags: Vec<Vec<u8>> = {
+            let mut tags: Vec<Vec<u8>> = Vec::new();
+            let mut iterator = sys::iterate_dir(new_folder_handle.fd);
+            loop {
+                let entry = match iterator.next() {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) => break,
+                    Err(e) => {
+                        Output::err(
+                            e,
+                            "failed to read directory <b>{s}<r>",
+                            (bstr::BStr::new(new_folder),),
+                        );
+                        Global::crash();
+                    }
+                };
+                let name = entry.name.slice_u8();
+                if entry.kind == sys::EntryKind::Directory
+                    || !strings::has_prefix(name, crate::bun_hash_tag)
+                {
+                    continue;
+                }
+                let mut name_z = Vec::with_capacity(name.len() + 1);
+                name_z.extend_from_slice(name);
+                name_z.push(0);
+                tags.push(name_z);
+            }
+            tags
+        };
+
+        // From here on a failure leaves `'brk`: `Global::crash()` would skip the deferred restore.
+
+        // `git diff --no-index` cannot exclude a nested node_modules folder, so
+        // it is renamed out and back.
+        let has_nested_node_modules: bool = sys::renameat_concurrently_a(
+            new_folder_handle.fd,
+            b"node_modules",
+            root_node_modules.fd,
+            random_tempdir.as_bytes(),
+            sys::RenameOptions {
+                move_fallback: true,
+            },
+        )
+        .is_ok();
+
+        for name_z in &bun_patch_tags {
+            if let Err(e) = sys::unlinkat(new_folder_handle.fd, ZStr::from_slice_with_nul(name_z)) {
+                bun_core::warn!(
+                    "failed removing the bun patch tag, this may cause issues: {}",
+                    e
+                );
+            }
+        }
+        scopeguard::defer! {
+            if has_nested_node_modules {
+                if let Err(e) = sys::renameat_concurrently_a(
+                    root_node_modules.fd,
+                    random_tempdir.as_bytes(),
+                    new_folder_handle.fd,
+                    b"node_modules",
+                    sys::RenameOptions { move_fallback: true },
+                ) {
+                    bun_core::warn!("failed renaming nested node_modules folder, this may cause issues: {}", e);
+                }
+            }
+
+            for name_z in &bun_patch_tags {
+                if let Err(e) = sys::File::write_file(new_folder_handle.fd, ZStr::from_slice_with_nul(name_z), b"") {
+                    bun_core::warn!("failed restoring the bun patch tag, this may cause issues: {}", e);
+                }
+            }
+        }
+
         let paths = bun_patch::git_diff_preprocess_paths(old_folder, new_folder);
         let (opts, _envp_guard) =
             bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
@@ -427,12 +439,12 @@ pub fn do_patch_commit(
         let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
             Err(e) => {
                 bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
-                Global::crash();
+                break 'brk None;
             }
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
                 bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e);
-                Global::crash();
+                break 'brk None;
             }
         };
 
@@ -443,7 +455,7 @@ pub fn do_patch_commit(
                         "<r><red>error<r>: failed to make diff {}<r>\n",
                         e.name(),
                     );
-                    Global::crash();
+                    break 'brk None;
                 }
                 Ok(Ok(stdout)) => stdout,
                 Ok(Err(stderr)) => {
@@ -471,7 +483,7 @@ pub fn do_patch_commit(
                         Truncate { stderr: &stderr }
                     );
                     drop(stderr);
-                    Global::crash();
+                    break 'brk None;
                 }
             };
 
@@ -486,7 +498,10 @@ pub fn do_patch_commit(
             return Ok(None);
         }
 
-        break 'brk contents;
+        break 'brk Some(contents);
+    };
+    let Some(patchfile_contents) = patchfile_contents else {
+        Global::crash();
     };
 
     // write the patch contents to temp file then rename

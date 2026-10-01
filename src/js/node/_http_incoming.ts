@@ -351,8 +351,7 @@ IncomingMessage.prototype._read = function _read(_n) {
   }
 };
 
-// The connection outlives this request, so the rest of its body still arrives. Like Node's
-// parserOnMessageComplete, the last chunk completes the message and brings its trailers.
+// Like Node's parserOnMessageComplete: the connection outlives this request, and the last chunk of its body completes the message and brings the trailers.
 function onDataDestroyedIncomingMessage(this: any, handle, _chunk, isLast, event) {
   if (!isLast || event !== NodeHTTPResponseAbortEvent.none) return;
   this.complete = true;

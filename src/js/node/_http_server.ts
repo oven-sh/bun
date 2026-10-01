@@ -528,8 +528,7 @@ Server.prototype.closeIdleConnections = function () {
     for (let i = sockets.length - 1; i >= 0; i--) {
       const socket = sockets[i];
       if (socket[kHandedOff]) continue;
-      // Node's parser is busy until its message is complete, so also in the listener of a request without a body:
-      // https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L1153
+      // Like Node's parser, busy until its message is complete, so also in the listener of a request without a body: https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L1153
       if (listening && socket.parser?.incoming?.complete === false) continue;
       // uWS knows the rest: a request head or body that arrives, a response in flight. A missing _httpMessage does not tell.
       socket[kHandle]?.closeIfIdle();

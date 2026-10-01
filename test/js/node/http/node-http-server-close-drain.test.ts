@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import { Readable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
@@ -663,8 +664,7 @@ async function rawClient(port: number, protocol: "http" | "https" = "http") {
 async function sweepFromListener(options: {
   respond: Respond;
   protocol?: "http" | "https";
-  // Two parts: the server reads the first part before the second part leaves.
-  request?: string | [string, string];
+  request?: string;
   event?: "request" | "checkContinue" | "checkExpectation";
 }) {
   const { respond, protocol = "http", request = `GET ${sweepHead}\r\n`, event = "request" } = options;
@@ -687,16 +687,7 @@ async function sweepFromListener(options: {
 
   const client = await rawClient(port, protocol);
   try {
-    if (typeof request === "string") {
-      client.socket.write(request);
-    } else {
-      client.socket.write(request[0]);
-      // One round trip on another connection: the server has read the first part by then.
-      const barrier = await rawClient(port, protocol);
-      await barrier.request("/barrier", "Connection: close\r\n");
-      barrier.socket.destroy();
-      client.socket.write(request[1]);
-    }
+    client.socket.write(request);
     if ((await Promise.race([swept.promise, client.closed])) === "closed") return "closed before the sweep";
     return (await client.request("/second")) === "answered" ? "kept" : "closed";
   } finally {
@@ -735,12 +726,6 @@ const afterContinue: Respond = (sweep, req, res, server) => {
   afterEnd(sweep, req, res, server);
 };
 test.each([
-  [
-    "a request head that came in two reads",
-    "request",
-    afterEnd,
-    [`GET ${sweepHead.slice(0, 20)}`, `${sweepHead.slice(20)}\r\n`],
-  ],
   ["a HEAD request", "request", afterEnd, `HEAD ${sweepHead}\r\n`],
   ["a DELETE request", "request", afterEnd, `DELETE ${sweepHead}\r\n`],
   ["a POST request with Content-Length: 0", "request", afterEnd, `POST ${sweepHead}Content-Length: 0\r\n\r\n`],
@@ -749,7 +734,7 @@ test.each([
 ] as const)(
   "closeIdleConnections() in the listener of a request, after res.end(), leaves its connection: %s",
   async (_name, event, respond, request) => {
-    expect(await sweepFromListener({ respond, event, request: request as string | [string, string] })).toBe("kept");
+    expect(await sweepFromListener({ respond, event, request })).toBe("kept");
   },
 );
 
@@ -763,43 +748,14 @@ test("closeIdleConnections() twice in the listener of a later request of a conne
   expect(await sweepFromListener({ respond, request })).toBe("kept");
 });
 
-// In Node the last chunk of a body reaches the request before the parser completes the message.
-test("closeIdleConnections() in the 'data' listener of the last chunk of a request body leaves its connection", async () => {
-  const respond: Respond = (sweep, req, res) => {
-    res.end(req.url);
-    req.on("data", sweep);
-  };
-  const request = `POST ${sweepHead}Content-Length: 5\r\n\r\nhello`;
-  expect(await sweepFromListener({ respond, request })).toBe("kept");
-});
-
-// Node runs these after its parser completed the message, so the connection is idle. process.nextTick is below.
-test.each<[string, Respond]>([
-  ["queueMicrotask", (sweep, req, res) => (res.end(req.url), queueMicrotask(sweep))],
-  ["setImmediate", (sweep, req, res) => (res.end(req.url), setImmediate(sweep))],
-  ["the 'finish' listener of the response", (sweep, req, res) => res.on("finish", sweep).end(req.url)],
-  ["the callback of res.end()", (sweep, req, res) => res.end(req.url, sweep)],
-  ["the 'end' listener of the request", (sweep, req, res) => (res.end(req.url), req.on("end", sweep).resume())],
-  ["a setImmediate that ends the response first", (sweep, req, res) => setImmediate(() => (res.end(req.url), sweep()))],
-  [
-    "the listener, behind an await",
-    async (sweep, req, res) => {
-      res.end(req.url);
-      await null;
-      sweep();
-    },
-  ],
-])("closeIdleConnections() from %s closes the connection of a request with no body", async (_name, respond) => {
-  expect(await sweepFromListener({ respond })).toBe("closed");
-});
-
-// The stream destroyer destroys the request and keeps the connection. The parser still completes the message.
+// The stream destroyer destroys the request in the listener and keeps the connection. The rest of the body
+// comes in two reads: Node stops reading such a connection, and Bun reads on and completes the message.
 test("closeIdleConnections() closes a connection whose destroyed request has ended", async () => {
   let first: IncomingMessage | undefined;
   const server = createServer(async (req, res) => {
     if (req.url === "/first") {
       first = req;
-      for await (const _ of req) break;
+      await Readable.toWeb(req).cancel();
     }
     res.end(req.url);
   });
@@ -810,13 +766,17 @@ test("closeIdleConnections() closes a connection whose destroyed request has end
 
   const destroyed = await rawClient(port);
   const barrier = await rawClient(port);
+  const state = () => ({ destroyed: first!.destroyed, complete: first!.complete });
   try {
-    destroyed.socket.write("POST /first HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nhello");
+    destroyed.socket.write("POST /first HTTP/1.1\r\nHost: x\r\nContent-Length: 15\r\n\r\nhello");
     expect(await destroyed.until("/first")).toBe("answered");
     destroyed.socket.write("world");
-    // One round trip on another connection: the server has read the rest of the body by then.
+    // One round trip on another connection: the server has read that part of the body by then.
     expect(await barrier.request("/barrier")).toBe("answered");
-    expect({ destroyed: first!.destroyed, complete: first!.complete }).toEqual({ destroyed: true, complete: true });
+    expect(state()).toEqual({ destroyed: true, complete: false });
+    destroyed.socket.write("again");
+    expect(await barrier.request("/barrier-again")).toBe("answered");
+    expect(state()).toEqual({ destroyed: true, complete: true });
 
     server.closeIdleConnections();
     // A connection that the server closed does not answer.

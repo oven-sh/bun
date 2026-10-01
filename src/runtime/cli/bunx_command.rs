@@ -813,6 +813,23 @@ impl BunxCommand {
             };
         // Cloned to avoid borrowck overlap when PATH is reassigned below.
 
+        // `BUN_WHICH_IGNORE_CWD` is set only for the node-gyp shim that
+        // `bun install` puts on a lifecycle script's PATH. That PATH already
+        // has the order the script must keep, so take the `node_modules/.bin`
+        // walk that was prepended above back out, for the lookup below and for
+        // the process that is spawned.
+        if !ignore_cwd.is_empty() {
+            let mut kept: Vec<u8> = Vec::with_capacity(path.len());
+            for entry in strings::tokenize(&local_bin_dirs, &[DELIMITER]) {
+                if !bun_paths::env_path::is_node_modules_bin_dir(entry) {
+                    kept.extend_from_slice(entry);
+                    kept.push(DELIMITER);
+                }
+            }
+            kept.extend_from_slice(&original_path);
+            path = kept;
+        }
+
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
             b"latest"
         } else {

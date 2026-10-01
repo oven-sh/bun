@@ -5,7 +5,7 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
-use bun_install::{Resolution, ResolutionTag, initialize_store};
+use bun_install::{DependencyID, PackageID, Resolution, ResolutionTag, initialize_store};
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
@@ -205,6 +205,7 @@ impl Scripts {
         package_name: &[u8],
         resolution_tag: ResolutionTag,
         add_node_gyp_rebuild_script: bool,
+        owner: Owner,
     ) -> Option<List> {
         let _ = lockfile;
         let (first_index, total, scripts) =
@@ -242,6 +243,7 @@ impl Scripts {
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
+                owner,
             });
         }
 
@@ -294,6 +296,7 @@ impl Scripts {
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution: &Resolution,
+        owner: Owner,
     ) -> Result<Option<List>, crate::Error> {
         if self.has_any() {
             let add_node_gyp_rebuild_script =
@@ -318,6 +321,7 @@ impl Scripts {
                 folder_name,
                 resolution.tag,
                 add_node_gyp_rebuild_script,
+                owner,
             ));
         } else if !self.filled {
             return self.create_from_package_json(
@@ -326,6 +330,7 @@ impl Scripts {
                 folder_path,
                 folder_name,
                 resolution.tag,
+                owner,
             );
         }
 
@@ -368,6 +373,7 @@ impl Scripts {
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
+        owner: Owner,
     ) -> Result<Option<List>, crate::Error> {
         let mut tmp = RealLockfile::init_empty_value();
         // `defer tmp.deinit()` — `tmp` stays empty (only `string_builder` borrows it), so field
@@ -393,6 +399,7 @@ impl Scripts {
             folder_name,
             resolution_tag,
             add_node_gyp_rebuild_script,
+            owner,
         ))
     }
 }
@@ -417,6 +424,28 @@ pub struct List {
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
+    pub(crate) owner: Owner,
+}
+
+/// Whose scripts a [`List`] holds. The owner decides which `node_modules/.bin`
+/// directories stand ahead of the user's PATH when the scripts run; see
+/// `PackageManager::spawn_package_lifecycle_scripts`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Owner {
+    /// The root package or a workspace member.
+    Project,
+    /// A dependency in an isolated store entry. The entry's own
+    /// `node_modules/.bin` holds the bins of its declared dependencies.
+    StoreEntry,
+    /// A dependency in a hoisted `node_modules` tree. `dependency_id` is the
+    /// entry that placed it in `tree_id`.
+    Hoisted {
+        package_id: PackageID,
+        tree_id: bun_install::lockfile::tree::Id,
+        dependency_id: DependencyID,
+    },
+    /// The list is printed and never spawned (`bun pm untrusted`).
+    Unspawned,
 }
 
 impl List {

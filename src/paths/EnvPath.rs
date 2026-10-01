@@ -14,6 +14,13 @@ fn trim_path_delimiters(input: &[u8]) -> &[u8] {
     trimmed
 }
 
+/// True when a PATH entry names a `node_modules/.bin` directory.
+pub fn is_node_modules_bin_dir(entry: &[u8]) -> bool {
+    let entry = strings::without_trailing_slash(entry);
+    crate::basename(entry) == b".bin"
+        && crate::dirname(entry).is_some_and(|parent| crate::basename(parent) == b"node_modules")
+}
+
 #[derive(Default)]
 pub struct EnvPath {
     buf: Vec<u8>,

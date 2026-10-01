@@ -1654,6 +1654,11 @@ impl Task {
                             &mut pkg_cwd,
                             dep.name.slice(string_buf),
                             &pkg_res,
+                            if pkg_res.tag == ResolutionTag::Workspace {
+                                package::scripts::Owner::Project
+                            } else {
+                                package::scripts::Owner::StoreEntry
+                            },
                         ) {
                             Ok(v) => v,
                             Err(err) => {

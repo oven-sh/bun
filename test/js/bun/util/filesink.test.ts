@@ -207,6 +207,28 @@ it("write result is not cumulative", async () => {
   await util.promisify(fs.close)(fd);
 });
 
+// A short chunk is held back to be coalesced, and is reported as written right away. The long
+// chunk that pushes it out to the fd has to count only itself.
+it.each([
+  { kind: "bytes", long: new Uint8Array(40000).fill(0x62), byteLength: 40000 },
+  { kind: "an ASCII string", long: Buffer.alloc(40000, "b").toString(), byteLength: 40000 },
+  { kind: "a Latin-1 string", long: Buffer.alloc(40000, 0xe9).toString("latin1"), byteLength: 80000 },
+  { kind: "a UTF-16 string", long: Buffer.alloc(40000, "😋").toString(), byteLength: 40000 },
+])("write() of $kind does not count the chunk buffered before it", async ({ long, byteLength }) => {
+  using dir = tempDir("filesink-write-count", {});
+  const file = path.join(String(dir), "out.txt");
+  const writer = Bun.file(file).writer();
+  const counts = [
+    await writer.write("a"),
+    await writer.write(long),
+    await writer.write("ccccccc"),
+    await writer.write(long),
+  ];
+  await writer.end();
+  expect(counts).toEqual([1, byteLength, 7, byteLength]);
+  expect(fs.statSync(file).size).toBe(1 + byteLength + 7 + byteLength);
+});
+
 // A backpressured write buffers everything `write(2)` would not take, so the
 // Promise it returns has to resolve with the chunk's own byte count. It used to
 // resolve with the partial `write(2)` return instead.

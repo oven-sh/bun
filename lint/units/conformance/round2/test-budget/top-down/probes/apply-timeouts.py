@@ -6,16 +6,23 @@ import sys
 p = sys.argv[1]
 s = open(p).read()
 
+read = '''// The passes over the list, the baselines and the cases of a sample: milliseconds in a release build, seconds in a debug build, which gets the time here that the default does not give it.
+const readTimeout = small ? 60_000 : undefined;
+'''
 old = '''// A debug build needs more than the default time of a test for the processes that a test starts.
 const spawnTimeout = small ? 60_000 : undefined;
 '''
 new = '''// The processes that a test starts: a debug build needs seconds for each, and a release build on a machine under load needs more than the default time of a test.
 const spawnTimeout = small ? 60_000 : 20_000;
-// The passes over the list, the baselines and the cases of a sample: milliseconds in a release build, seconds in a debug build, which gets the time here that the default does not give it.
-const readTimeout = small ? 60_000 : undefined;
 '''
-assert old in s, "the line of spawnTimeout is not the one of 3110ce85cf"
-s = s.replace(old, new)
+# The amendment of default-check-classification/top-down gives a release build its 20 seconds already.
+there = 'const spawnTimeout = small ? 60_000 : 20_000;\n'
+assert 'const readTimeout' not in s, "the file has the timeouts already"
+if old in s:
+    s = s.replace(old, new + read)
+else:
+    assert s.count(there) == 1, "the line of spawnTimeout is neither the one of 3110ce85cf nor the amended one"
+    s = s.replace(there, there + read)
 
 plain = [
     'the corpus holds the cases, the baselines and the lists of the pinned commits',
@@ -59,8 +66,11 @@ new = '''    const options = {
       timeoutMs: spawnTimeout,
     };
     return endingOf(await runInstance(instance, check, options));'''
+amended = 'timeoutMs: more.timeoutMs };'
 if old in s:
     s = s.replace(old, new)
+elif s.count(amended) == 1:
+    s = s.replace(amended, 'timeoutMs: more.timeoutMs ?? spawnTimeout };')
 else:
-    print("the helper of describe(\"default check\") has another form: give its options timeoutMs: spawnTimeout by hand")
+    print('the helper of describe("default check") has another form: give its options timeoutMs: spawnTimeout by hand')
 open(p, 'w').write(s)

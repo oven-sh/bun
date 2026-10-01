@@ -114,13 +114,20 @@ describe("bun test", () => {
     expect(stderr).toContain(path);
   });
 
-  test("a value nested too deeply to print is a RangeError", () => {
+  test.each([
+    ["arrays and objects", "1", "i % 2 ? [value] : { a: value }"],
+    ["instances of a class", "1", "new (class A { a = value; })()"],
+    ["JSX children", "1", `{ $$typeof: Symbol.for("react.element"), type: "div", props: { children: value } }`],
+    ["JSX props", "1", `{ $$typeof: Symbol.for("react.element"), type: "div", props: { a: value } }`],
+    ["the data of events", "1", `new MessageEvent("message", { data: value })`],
+    ["asymmetric matchers", "1", "expect.objectContaining({ a: value })"],
+  ])("%s nested too deeply to print are a RangeError", (_, innermost, wrap) => {
     const stderr = runTest({
       input: `
         import { test, expect } from "bun:test";
         test("deep", () => {
-          let value = 1;
-          for (let i = 0; i < 100_000; i++) value = i % 2 ? [value] : { a: value };
+          let value = ${innermost};
+          for (let i = 0; i < 100_000; i++) value = ${wrap};
           expect(() => expect(value).toMatchInlineSnapshot('"x"')).toThrow(RangeError);
         });
       `,

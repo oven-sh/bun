@@ -52,7 +52,8 @@ test("HTMLRewriter should handle errors in async handlers", async () => {
   const html = "<div>test</div>";
   const response = new Response(html);
 
-  expect(() => {
-    rewriter.transform(response);
-  }).toThrow("Async handler error");
+  // A `Response` input surfaces handler errors on the output body, so the
+  // descriptive error this issue is about arrives there rather than from
+  // `transform()`. The `string` inputs above still throw.
+  await expect(rewriter.transform(response).text()).rejects.toThrow("Async handler error");
 });

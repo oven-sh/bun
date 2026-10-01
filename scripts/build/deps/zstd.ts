@@ -41,6 +41,11 @@ export const zstd: Dependency = {
     commit: ZSTD_COMMIT,
   }),
 
+  // x64 targets nehalem, so zstd picks its BMI2 kernels at run time and
+  // probes CPUID in every CCtx/DCtx init. CPUID is a VM exit under a
+  // hypervisor (about 2 us each, two per init). Probe once instead.
+  patches: ["patches/zstd/bmi2-probe-once.patch"],
+
   build: cfg => {
     const sources = [...SOURCES];
     const defines: Record<string, number | true> = {

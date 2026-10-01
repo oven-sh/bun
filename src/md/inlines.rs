@@ -61,7 +61,7 @@ impl Default for EmphDelim {
 
 /// Closing-delimiter kinds tracked by `HtmlScanMemo`.
 #[derive(Clone, Copy)]
-pub enum HtmlScanKind {
+enum HtmlScanKind {
     /// `<!--` … `-->`
     Comment = 0,
     /// `<?` … `?>`
@@ -715,6 +715,15 @@ impl Parser<'_> {
                         i = auto.end_pos;
                         continue;
                     }
+                }
+            }
+            // Skip wiki links — like regular links they resolve before
+            // emphasis; the label gets its own collection pass.
+            if c == b'[' && self.flags.wiki_links && i + 1 < content.len() && content[i + 1] == b'['
+            {
+                if let Some(m) = self.match_wiki_link(content, i) {
+                    i = m.inner_end + 2;
+                    continue;
                 }
             }
             // Skip link/image constructs — links take precedence over emphasis (CommonMark §6.3)

@@ -12,8 +12,6 @@ enum class WeakRefType : uint32_t {
     PostgreSQLQueryClient = 2,
 };
 
-typedef void (*WeakRefFinalizeFn)(void* context);
-
 // clang-format off
 #define FOR_EACH_WEAK_REF_TYPE(macro) \
     macro(FetchResponse) \
@@ -56,6 +54,9 @@ static JSC::WeakHandleOwner* getWeakRefOwner()
 static JSC::WeakHandleOwner* getWeakRefOwner(WeakRefType type)
 {
     switch (type) {
+    case WeakRefType::None:
+        // Passive weak: no finalize callback. JSC::Weak accepts a null owner.
+        return nullptr;
     case WeakRefType::FetchResponse: {
         return getWeakRefOwner<WeakRefType::FetchResponse>();
     }

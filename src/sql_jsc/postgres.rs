@@ -2,11 +2,6 @@ use crate::jsc::{JSGlobalObject, JSValue};
 
 pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
     let binding = JSValue::create_empty_object_with_null_prototype(global_object);
-    binding.put(
-        global_object,
-        b"PostgresSQLConnection",
-        postgres_sql_connection::js::get_constructor(global_object),
-    );
     crate::put_host_functions!(
         binding,
         global_object,
@@ -24,7 +19,6 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
 
 #[path = "postgres/SASL.rs"]
 pub mod sasl;
-pub use sasl::SASL;
 
 #[path = "postgres/AuthenticationState.rs"]
 pub mod authentication_state;
@@ -74,7 +68,3 @@ pub mod protocol {
     #[path = "error_response_jsc.rs"]
     pub mod error_response_jsc;
 }
-
-// Re-exports of base-crate protocol/types modules.
-pub use bun_sql::postgres::postgres_protocol as base_protocol;
-pub use bun_sql::postgres::postgres_types as base_types;

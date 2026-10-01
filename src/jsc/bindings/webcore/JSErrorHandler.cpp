@@ -37,10 +37,7 @@
 #include "Event.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertStrings.h"
-// #include "JSDOMWindow.h"
 #include "JSEvent.h"
-// #include "JSExecState.h"
-// #include "JSExecStateInstrumentation.h"
 #include <JavaScriptCore/JSLock.h>
 #include <wtf/Ref.h>
 
@@ -71,7 +68,11 @@ void JSErrorHandler::handleEvent(ScriptExecutionContext& scriptExecutionContext,
     if (!jsFunction)
         return;
 
-    auto* globalObject = toJSDOMGlobalObject(scriptExecutionContext, isolatedWorld());
+    auto* isolatedWorld = this->isolatedWorld();
+    if (!isolatedWorld) [[unlikely]]
+        return;
+
+    auto* globalObject = toJSDOMGlobalObject(scriptExecutionContext, *isolatedWorld);
     if (!globalObject)
         return;
 

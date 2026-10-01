@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
 import { parseArgs } from "node:util";
 
 describe("parseArgs", () => {
@@ -1141,4 +1141,24 @@ describe("parseArgs extra tests", () => {
       ).toEqual({ values: { __proto__: null, flag: true, a: true }, positionals: [p] });
     }
   });
+});
+
+test("parseArgs does not leak argv strings", async () => {
+  const code = /* js */ `
+    const { parseArgs } = require("util");
+    const base = Buffer.alloc(256 * 1024, "a").toString();
+    function once(i) {
+      const s = base + i;
+      parseArgs({ args: [s, "--foo", s, "-b", s], options: { foo: { type: "string" }, b: { type: "string" } }, allowPositionals: true, strict: false });
+    }
+    for (let i = 0; i < 20; i++) once(i);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 400; i++) once(i);
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+
+  // Unfixed: ~100 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
 });

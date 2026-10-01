@@ -31,25 +31,6 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#if 0
-#include "CommonCryptoUtilities.h"
-
-typedef CCECCryptorRef PlatformECKey;
-namespace WebCore {
-struct CCECCryptorRefDeleter {
-    void operator()(CCECCryptorRef key) const { CCECCryptorRelease(key); }
-};
-}
-typedef std::unique_ptr<typename std::remove_pointer<CCECCryptorRef>::type, WebCore::CCECCryptorRefDeleter> PlatformECKeyContainer;
-#endif
-
-#if USE(GCRYPT)
-#include <pal/crypto/gcrypt/Handle.h>
-
-typedef gcry_sexp_t PlatformECKey;
-typedef std::unique_ptr<typename std::remove_pointer<gcry_sexp_t>::type, PAL::GCrypt::HandleDeleter<gcry_sexp_t>> PlatformECKeyContainer;
-#endif
-
 #if USE(OPENSSL)
 #include "OpenSSLCryptoUniquePtr.h"
 typedef EVP_PKEY* PlatformECKey;
@@ -88,7 +69,6 @@ public:
     ExceptionOr<Vector<uint8_t>> exportPkcs8() const;
 
     size_t keySizeInBits() const;
-    size_t keySizeInBytes() const { return std::ceil(keySizeInBits() / 8.); }
     NamedCurve namedCurve() const { return m_curve; }
     String namedCurveString() const;
     PlatformECKey platformKey() const { return m_platformKey.get(); }

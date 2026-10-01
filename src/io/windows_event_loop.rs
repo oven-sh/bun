@@ -12,9 +12,6 @@ use crate::posix_event_loop as posix;
 // that name them via this module.
 pub use crate::posix_event_loop::{EventLoopCtx, OpaqueCallback, js_vm_ctx};
 
-bun_core::declare_scope!(KeepAlive, visible);
-bun_core::declare_scope!(FilePoll, visible);
-
 // `Loop` here is the raw
 // `uv_loop_t`. (`WindowsLoop` is the uws wrapper that *owns* a `*mut uv::Loop`
 // in its `.uv_loop` field; callers that hold a `WindowsLoop*` project that
@@ -57,7 +54,7 @@ impl FilePoll {
             || self.flags.contains(Flags::PollMachport)
     }
 
-    /// Make calling ref() on this poll into a no-op.
+    /// Decrements the active counter if it was previously incremented.
     pub(crate) fn disable_keeping_process_alive(&mut self, vm: EventLoopCtx) {
         if self.flags.contains(Flags::Closed) {
             return;
@@ -154,36 +151,6 @@ impl FilePoll {
         self.flags.remove(Flags::Closed);
 
         vm.loop_add_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
-    }
-
-    /// Only intended to be used from EventLoop.Pollable
-    pub fn activate(&mut self, loop_: &mut WindowsLoop) {
-        loop_.add_active(
-            (!self.flags.contains(Flags::Closed)
-                && !self.flags.contains(Flags::HasIncrementedPollCount)) as u32,
-        );
-        bun_core::scoped_log!(FilePoll, "activate - {}", loop_.uv().active_handles);
-        self.flags.insert(Flags::HasIncrementedPollCount);
-    }
-
-    #[inline]
-    pub fn can_ref(&self) -> bool {
-        if self.flags.contains(Flags::Closed) {
-            return false;
-        }
-
-        !self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
-    /// Allow a poll to keep the process alive.
-    // pub fn ref(this: *FilePoll, vm: *jsc.VirtualMachine) void {
-    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.can_ref() {
-            return;
-        }
-        bun_core::scoped_log!(FilePoll, "ref");
-        // this.activate(vm.event_loop_handle.?);
-        self.activate(event_loop_ctx.loop_mut());
     }
 }
 

@@ -6,8 +6,11 @@ import { join } from "node:path";
 import { WebSocket } from "ws";
 
 test("--inspect inline sourcemap sources[0] is a valid path under cwd", async () => {
+  // VT (0x0B) / BEL (0x07) in the source exercise quote_for_json's RFC 8259
+  // escape handling for sourcesContent.
+  const source = "// comment [\x0b\x07]\nsetInterval(() => {}, 200);\n";
   using dir = tempDir("inspect-sourcemap", {
-    "sub/target.mjs": "// comment line\nsetInterval(() => {}, 200);\n",
+    "sub/target.mjs": source,
   });
   const cwd = fs.realpathSync(String(dir));
 
@@ -77,9 +80,12 @@ test("--inspect inline sourcemap sources[0] is a valid path under cwd", async ()
 
     const m = String(params.sourceMapURL ?? "").match(/base64,([A-Za-z0-9+/=]+)/);
     expect(m).not.toBeNull();
-    const map = JSON.parse(Buffer.from(m![1], "base64").toString());
+    const raw = Buffer.from(m![1], "base64").toString();
+    expect(raw).not.toMatch(/\\v|\\x[0-9A-Fa-f]{2}/);
+    const map = JSON.parse(raw);
 
     expect(map.sources[0]).toBe("/sub/target.mjs");
+    expect(map.sourcesContent[0]).toBe(source);
   } finally {
     ws.close();
   }

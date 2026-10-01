@@ -4596,30 +4596,31 @@ impl Checker<'_> {
     /// inside out, and the file if it is a module that exports the outermost.
     fn fully_qualified_name(&self, ty: TypeId) -> Option<(Vec<Atom>, Option<FileId>)> {
         use crate::bind::Decl;
-        match *self.data(ty) {
-            TypeData::TypeParam(file, tp, _) => Some((vec![self.hir(file)[tp].name], None)),
-            TypeData::Ref { target, ref args } if args.is_empty() => {
-                let files = self.files();
-                let (mut sym, mut names) = (target, Vec::new());
-                loop {
-                    let symbol = files.symbol(sym);
-                    // `import("./a").T`
-                    if symbol.decls.contains(&Decl::File) {
-                        return Some((names, Some(sym.file)));
-                    }
-                    names.push(symbol.name);
-                    if symbol.parent.is_none() {
-                        return Some((names, None));
-                    }
-                    let parent = files.sym(sym.file, symbol.parent);
-                    // What is not exported has no parent (`declareModuleMember`).
-                    if files.export(parent, symbol.name) != Some(sym) {
-                        return Some((names, None));
-                    }
-                    sym = parent;
-                }
+        let named = match *self.data(ty) {
+            TypeData::TypeParam(file, tp, _) => {
+                return Some((vec![self.hir(file)[tp].name], None));
             }
-            _ => None,
+            TypeData::Ref { target, ref args } if args.is_empty() => target,
+            _ => self.non_generic_alias_of(ty)?,
+        };
+        let files = self.files();
+        let (mut sym, mut names) = (named, Vec::new());
+        loop {
+            let symbol = files.symbol(sym);
+            // `import("./a").T`
+            if symbol.decls.contains(&Decl::File) {
+                return Some((names, Some(sym.file)));
+            }
+            names.push(symbol.name);
+            if symbol.parent.is_none() {
+                return Some((names, None));
+            }
+            let parent = files.sym(sym.file, symbol.parent);
+            // What is not exported has no parent (`declareModuleMember`).
+            if files.export(parent, symbol.name) != Some(sym) {
+                return Some((names, None));
+            }
+            sym = parent;
         }
     }
 

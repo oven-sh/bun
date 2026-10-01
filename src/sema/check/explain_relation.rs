@@ -2146,7 +2146,8 @@ impl<'p> Checker<'p> {
             return Ternary::FALSE;
         }
         let source_is_primitive = self.has_primitive_flag(source);
-        let source_is_object_keyword = source == TypeId::OBJECT;
+        let source_is_object_keyword =
+            self.looks_like_the_object_keyword(source, relation == Relation::Restrictive);
         let source = self.apparent_type_for_relation(source);
         let source = self.apparent_type_of_intersection(source);
         match (self.data(source), self.data(target)) {
@@ -2232,10 +2233,16 @@ impl<'p> Checker<'p> {
                 // What stands for `object` is nobody's declaration: it is not known to have nothing else in it.
                 let missing = if source_is_object_keyword {
                     self.members(target).and_then(|m| {
-                        m.shape()
-                            .index
+                        let index = &m.shape().index;
+                        // `indexSignaturesRelatedTo`: next to an index signature for strings, anything fits one of `any`.
+                        let any_takes_all = relation != Relation::StrictSubtype
+                            && index.iter().any(|i| i.key == TypeId::STRING);
+                        index
                             .iter()
-                            .find(|i| !self.is_any(i.value))
+                            .find(|i| {
+                                let wanted = self.instantiate(i.value, m.mapper);
+                                !(any_takes_all && self.is_any(wanted))
+                            })
                             .map(|i| i.key)
                     })
                 } else {

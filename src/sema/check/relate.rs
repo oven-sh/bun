@@ -4772,7 +4772,8 @@ impl<'p> Checker<'p> {
         }
         let source_is_primitive = self.has_primitive_flag_as(source, sd);
         // What stands for `object` is nobody's declaration: it is not known to have nothing else in it.
-        let source_is_object_keyword = source == TypeId::OBJECT;
+        let source_is_object_keyword = !is_object_kind(sd)
+            && self.looks_like_the_object_keyword(source, relation == Relation::Restrictive);
         let (mut source, mut sd) = (source, sd);
         if relation != Relation::Identity {
             // An object type other than a mapped one is its own apparent type.
@@ -4833,21 +4834,19 @@ impl<'p> Checker<'p> {
                     result &= self
                         .signatures_related_to_among(r, source, sd, target, td, true, state, both);
                     if result.holds() {
-                        result &= if source_is_object_keyword
-                            && self.members(target).is_some_and(|m| {
-                                m.shape().index.iter().any(|i| !self.is_any(i.value))
-                            }) {
-                            Ternary::FALSE
+                        let source = if source_is_object_keyword {
+                            TypeId::OBJECT
                         } else {
-                            self.index_signatures_related_to_among(
-                                r,
-                                source,
-                                target,
-                                source_is_primitive,
-                                state,
-                                both,
-                            )
+                            source
                         };
+                        result &= self.index_signatures_related_to_among(
+                            r,
+                            source,
+                            target,
+                            source_is_primitive,
+                            state,
+                            both,
+                        );
                     }
                 }
             }
@@ -6676,13 +6675,16 @@ impl<'p> Checker<'p> {
         let TypeData::Intersection(parts) = self.data(ty) else {
             return ty;
         };
-        if !parts.iter().any(|&p| self.is_deferred(p)) {
+        if !parts
+            .iter()
+            .any(|&p| self.intersection_member_looks_otherwise(p))
+        {
             return ty;
         }
         let looks: Vec<TypeId> = parts
             .iter()
             .map(|&p| {
-                if self.is_deferred(p) {
+                if self.intersection_member_looks_otherwise(p) {
                     self.apparent_type(p)
                 } else {
                     p
@@ -6690,6 +6692,44 @@ impl<'p> Checker<'p> {
             })
             .collect();
         self.intersection(&looks)
+    }
+
+    /// Whether `apparent_type_of_intersection` puts something else for the member `p`.
+    fn intersection_member_looks_otherwise(&self, p: TypeId) -> bool {
+        p == TypeId::OBJECT || self.is_deferred(p) || self.has_primitive_flag(p)
+    }
+
+    /// Whether `getApparentType(ty)` is `emptyObjectType`, which is what `object` looks like. It has no symbol, unlike a `{}` that
+    /// is written, and here the two are one type. Of what counts as `{}` in an intersection `addTypeToIntersection` takes the
+    /// first. `restrictive`: `ty` stands for its restrictive instantiation, whose type parameters extend nothing.
+    pub(super) fn looks_like_the_object_keyword(&mut self, ty: TypeId, restrictive: bool) -> bool {
+        let ty = if restrictive && is_type_param_kind(self.data(ty)) {
+            TypeId::UNKNOWN
+        } else if self.is_deferred(ty) {
+            self.base_constraint(ty)
+        } else {
+            ty
+        };
+        let TypeData::Intersection(parts) = self.data(ty) else {
+            return ty == TypeId::OBJECT
+                || ty == TypeId::UNKNOWN && !self.p.files.options.strict_null_checks;
+        };
+        let mut first = None;
+        for &p in parts.iter() {
+            let look = if restrictive && is_type_param_kind(self.data(p)) {
+                self.apparent_type(TypeId::UNKNOWN)
+            } else if p == TypeId::OBJECT || self.is_deferred(p) {
+                self.apparent_type(p)
+            } else {
+                p
+            };
+            if look == TypeId::EMPTY_OBJECT {
+                first = first.or(Some(p));
+            } else if look != TypeId::UNKNOWN {
+                return false;
+            }
+        }
+        first.is_some_and(|p| self.looks_like_the_object_keyword(p, restrictive))
     }
 
     /// `isObjectTypeWithInferableIndex`: known to have nothing but what is seen.

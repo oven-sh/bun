@@ -516,6 +516,7 @@ impl<'p> Checker<'p> {
     ) -> Option<(Sym, Vec<TypeId>, Vec<TypeId>)> {
         match (self.data(source), self.data(target)) {
             (TypeData::Anon { origin: s, .. }, TypeData::Anon { origin: t, .. }) if s == t => {}
+            (TypeData::Fns { decls: s, .. }, TypeData::Fns { decls: t, .. }) if s == t => {}
             (
                 TypeData::Cond {
                     file: sf, node: sn, ..
@@ -586,13 +587,22 @@ impl<'p> Checker<'p> {
 
     /// `Type.alias` of an object or a conditional type made from the body of an alias without type parameters. Such a type has
     /// type variables only if the alias is declared inside something generic.
-    fn non_generic_alias_of(&self, ty: TypeId) -> Option<Sym> {
+    pub(super) fn non_generic_alias_of(&self, ty: TypeId) -> Option<Sym> {
         let (file, node) = match *self.data(ty) {
             TypeData::Anon {
                 origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
                 ..
             }
             | TypeData::Cond { file, node, .. } => (file, node),
+            TypeData::Fns { ref decls, .. } => {
+                let [(file, func)] = decls[..] else {
+                    return None;
+                };
+                let FnOwner::Type(node) = self.bound(file).fns[func.idx()].owner else {
+                    return None;
+                };
+                (file, node)
+            }
             _ => return None,
         };
         let index = self
@@ -926,15 +936,19 @@ impl<'p> Checker<'p> {
     fn infer_to_conditional_type(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
         if matches!(self.data(source), TypeData::Cond { .. }) {
             for which in 0..4 {
-                let (s, t) = (
-                    self.cond_piece(source, which),
-                    self.cond_piece(target, which),
-                );
+                let (s, t) = if which == 2 {
+                    (self.cond_true(source), self.cond_true(target))
+                } else {
+                    (
+                        self.cond_piece(source, which),
+                        self.cond_piece(target, which),
+                    )
+                };
                 self.infer_types(n, s, t);
             }
             return;
         }
-        let targets = [self.cond_piece(target, 2), self.cond_piece(target, 3)];
+        let targets = [self.cond_true(target), self.cond_false(target)];
         let saved = n.priority;
         if n.contra {
             n.priority |= PRIORITY_CONTRAVARIANT_CONDITIONAL;
@@ -1757,8 +1771,14 @@ impl<'p> Checker<'p> {
         } else {
             0
         };
-        // What is known to have nothing but what is seen has an index signature for it.
-        if self.is_object_type_with_inferable_index(source) {
+        // What is known to have nothing but what is seen has an index signature for it. `inferFromTypes` has put
+        // `getApparentType(source)` for the source, unless what type parameters extend is to be left out of it.
+        let looks = if n.priority & PRIORITY_NO_CONSTRAINTS != 0 {
+            source
+        } else {
+            self.apparent_type_of_intersection(source)
+        };
+        if self.is_object_type_with_inferable_index(looks) {
             for info in &tm.shape().index {
                 let wanted = self.instantiate(info.value, tm.mapper);
                 if !self.has_type_variables(wanted) {

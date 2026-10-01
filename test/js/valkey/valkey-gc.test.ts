@@ -233,10 +233,10 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
   // the TCP handshake completes (POLL_TYPE_SEMI_SOCKET); closing one delivers
   // on_connect_error, which releases connect()'s keep-alive ref. One case per
   // way the client closes it: close() while the dial is pending, and the
-  // connection timeout firing during it. The
-  // command in the offline queue tells the two apart: connect() itself is
-  // always rejected as connection-closed. The client is created from a
-  // macrotask for the same reason as the workers'.
+  // connection timeout firing during it. The command in the offline queue
+  // tells the two apart: connect() itself is always rejected as
+  // connection-closed. The client is created from a macrotask for the same
+  // reason as the workers'.
   function closePendingDial(options: object, body: string, stdout: string) {
     return expectCleanExit(
       `

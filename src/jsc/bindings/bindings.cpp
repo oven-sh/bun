@@ -3291,9 +3291,6 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     JSC::JSValue jsObject = JSValue::decode(object);
     ASSERT_WITH_MESSAGE(jsObject, "Cannot call function with JSValue zero.");
 
-    if (Bun::isOfRetiredTestIsolationRealm(jsObject)) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 
     JSValue restoreAsyncContext;

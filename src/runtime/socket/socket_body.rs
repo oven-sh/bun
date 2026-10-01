@@ -417,6 +417,13 @@ impl PendingSystemError {
 /// `needs_deref` releases the ref the now-detached native socket held. The idle
 /// teardown is gated on the socket still holding the `Handlers` we entered with:
 /// `onConnectError` can reconnect, and we must not tear that connection down.
+/// The ref `connect_finish` took for the native socket.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NativeSocketRef {
+    Held,
+    Released,
+}
+
 struct ConnectErrorTeardown<const SSL: bool> {
     socket: bun_ptr::ThisPtr<NewSocket<SSL>>,
     entered: Rc<Handlers>,
@@ -427,7 +434,7 @@ impl<const SSL: bool> Drop for ConnectErrorTeardown<SSL> {
     fn drop(&mut self) {
         let this = self.socket;
         // `deref` before `mark_inactive`, as the hand-rolled guard did. It
-        // cannot free the socket here: `handle_connect_error`'s `_guard`
+        // cannot free the socket here: `connect_failed`'s `_guard`
         // is declared before this guard, so it outlives it.
         if self.needs_deref {
             this.get().deref();
@@ -1124,16 +1131,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         errno: c_int,
         dns_error: i32,
     ) -> JsResult<()> {
-        let needs_deref = !this.socket.get().is_detached();
-        Self::connect_failed(this, errno, dns_error, needs_deref)
+        let native_ref = if this.socket.get().is_detached() {
+            NativeSocketRef::Released
+        } else {
+            NativeSocketRef::Held
+        };
+        Self::connect_failed(this, errno, dns_error, native_ref)
     }
 
-    /// `needs_deref`: the ref `connect_finish` took for the native socket is outstanding.
     fn connect_failed(
         this: bun_ptr::ThisPtr<Self>,
         errno: c_int,
         dns_error: i32,
-        needs_deref: bool,
+        native_ref: NativeSocketRef,
     ) -> JsResult<()> {
         let handlers = this.get_handlers();
         log!(
@@ -1170,7 +1180,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let cleanup = ConnectErrorTeardown {
             socket: this,
             entered: Rc::clone(&handlers),
-            needs_deref,
+            needs_deref: native_ref == NativeSocketRef::Held,
         };
 
         if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
@@ -1333,7 +1343,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         errno: c_int,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        Self::connect_failed(this, errno, socket.dns_error(), true)
+        Self::connect_failed(this, errno, socket.dns_error(), NativeSocketRef::Held)
     }
 
     pub(crate) fn mark_active(&self) {

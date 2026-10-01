@@ -885,10 +885,10 @@ ALWAYS_INLINE bool isRetiredTestIsolationRealm(const JSC::JSGlobalObject* global
     return globalObject->microtaskRunnability() == JSC::QueuedTaskResult::Discard;
 }
 
-// `callee`: what native code is about to call.
-ALWAYS_INLINE bool isOfRetiredTestIsolationRealm(JSC::JSValue callee)
+// Whether `value` is an object of such a realm; native code does not call into one.
+ALWAYS_INLINE bool isFromRetiredTestIsolationRealm(JSC::JSValue value)
 {
-    JSC::JSObject* object = callee.getObject();
+    JSC::JSObject* object = value.getObject();
     return object && isRetiredTestIsolationRealm(object->globalObject());
 }
 

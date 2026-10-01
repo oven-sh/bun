@@ -343,8 +343,10 @@ void us_socket_group_init(us_socket_group_r group, us_loop_r loop,
  * to free the embedding storage. */
 void us_socket_group_deinit(us_socket_group_r group) nonnull_fn_decl;
 
-/* Close every socket in the group (fires on_close for each). Used by server
- * shutdown. The group itself stays valid. */
+/* Close every socket that is in the group now; each holder hears of it (see
+ * us_socket_vtable_t). What a handler opens into the group meanwhile stays open, so
+ * an owner that frees the group next has made sure none can
+ * (us_socket_group_deinit asserts it). The group itself stays valid. */
 void us_socket_group_close_all(us_socket_group_r group) nonnull_fn_decl;
 /* As above; `also_listeners=0` leaves head_listen_sockets alone (process-exit
  * teardown — listen sockets are owned by a Listener/App that frees them in

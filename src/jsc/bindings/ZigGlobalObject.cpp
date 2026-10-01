@@ -4730,6 +4730,11 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
 }
 
+extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)
+{
+    return Bun::isFromRetiredTestIsolationRealm(JSC::JSValue::decode(encodedValue));
+}
+
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

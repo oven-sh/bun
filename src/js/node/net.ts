@@ -1628,6 +1628,9 @@ const SocketHandlers2 = {
       req.errno = error.errno || uv().UV_ECANCELED;
       return;
     }
+    // Closing the handle cancels the request (ECANCELED). libuv completes it on a later loop turn,
+    // after destroy(err)'s 'error'. Not deferred here: it would land on a connect() made right
+    // after destroy() and fail that one.
     // An attempt that timed out was closed with its `oncomplete` cleared.
     req.oncomplete?.(error.errno, self._handle, req, true, true);
   },

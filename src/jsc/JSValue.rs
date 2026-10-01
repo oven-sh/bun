@@ -352,6 +352,13 @@ impl JSValue {
         }
         JSC__JSValue__isAnyError(self)
     }
+    /// Whether this object's realm was retired by `bun test --isolate` (its file finished).
+    /// Out of line: inlined into [`call`](Self::call), it keeps that from being inlined in turn.
+    #[cold]
+    #[inline(never)]
+    pub fn is_from_retired_test_isolation_realm(self) -> bool {
+        self.is_cell() && Bun__JSValue__isFromRetiredTestIsolationRealm(self)
+    }
     /// `JSValue.isError()` — true iff this is an
     /// `ErrorInstance` cell (does NOT match `Exception`).
     #[inline]
@@ -1714,8 +1721,12 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // A `Bun.ModuleGraph` that was disposed hears nothing more from native code.
-        if global.bun_vm().calls_nobody() {
+        // A `Bun.ModuleGraph` that was disposed hears nothing more from native code, nor does a
+        // test file that finished (only `--isolate` retires a realm).
+        let vm = global.bun_vm();
+        if vm.calls_nobody()
+            || (vm.test_isolation_enabled && self.is_from_retired_test_isolation_realm())
+        {
             return Ok(JSValue::UNDEFINED);
         }
         host_fn::from_js_host_call(global, || {
@@ -2159,6 +2170,7 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__JSValue__protect(this: JSValue);
     safe fn Bun__JSValue__unprotect(this: JSValue);
+    safe fn Bun__JSValue__isFromRetiredTestIsolationRealm(this: JSValue) -> bool;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

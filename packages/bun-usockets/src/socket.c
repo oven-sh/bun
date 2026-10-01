@@ -711,6 +711,10 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
 }
 
 __attribute__((always_inline)) void us_socket_shutdown(struct us_socket_t *s) {
+    /* Nothing to half-close yet, and POLL_TYPE_SOCKET_SHUT_DOWN would pass for a socket that opened. */
+    if (!us_socket_is_established(s)) {
+        return;
+    }
     if (s->ssl) {
         us_internal_ssl_shutdown(s);
         return;

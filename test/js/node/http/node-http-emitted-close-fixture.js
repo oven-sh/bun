@@ -390,33 +390,19 @@ const scenarios = {
       { options: { ServerResponse: ResponseWithAssignSocket }, sentinel: false },
     ),
 
-  // Both requests arrive in one read. Node.js parses the whole read before it runs the
-  // rejection handlers.
-  "an unhandled rejection in a listener that leaves the response open": async () => {
-    const done = Promise.withResolvers();
-    let first;
-    const server = await listen({}, (req, res) => {
-      if (req.url === "/sentinel") return answerSentinel(req, res);
-      events.push(`request ${req.url}`);
-      if (req.url === "/first") {
-        first = res;
-        Promise.reject(new Error("rejected in the listener"));
-        return;
-      }
-      res.end("second");
-      setImmediate(() => {
-        first.end("first");
-        done.resolve();
-      });
-    });
-    const connection = await connect(server);
-    connection.client.write(get("/first") + get("/second"));
-    await done.promise;
-    connection.client.write(get("/sentinel"));
-    await connection.closed;
-    close(server);
-    return connection.received();
-  },
+  // The timer is not a wait: a timer that is due fires after the handlers of the rejection.
+  "an unhandled rejection in a listener that leaves the response open": () =>
+    firstThenSentinel((req, res) => {
+      const timer = Promise.withResolvers();
+      process.nextTick(() => events.push("tick"));
+      setTimeout(() => {
+        events.push("timer");
+        res.end("body");
+        timer.resolve();
+      }, 0);
+      Promise.reject(new Error("rejected in the listener"));
+      return timer.promise;
+    }),
 };
 
 // Winsock takes the whole body in one send() on loopback, so no response is left that drains.

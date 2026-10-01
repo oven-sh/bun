@@ -3507,8 +3507,8 @@ describe("a 'close' event that user code emits", () => {
     ],
     [
       "an unhandled rejection in a listener that leaves the response open",
-      firstThenSecond + sentinel,
-      ["request /first", "request /second", "unhandledRejection: rejected in the listener"],
+      body + sentinel,
+      ["tick", "unhandledRejection: rejected in the listener", "timer"],
     ],
   ];
   // The fixture runs these on TCP only.

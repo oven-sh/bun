@@ -1388,14 +1388,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             // SAFETY: non-null (checked above), alive until the `deref()` below; its state is `Cell`/`JsCell`.
             let nhr = unsafe { &*node_http_response };
-            // Open and current: its promise jobs and ticks run first, so a response that ends in them is never armed.
-            if !nhr
-                .flags
-                .get()
-                .intersects(NhrFlags::REQUEST_HAS_COMPLETED | NhrFlags::UPGRADED)
-                && nhr
-                    .writer()
-                    .is_some_and(|raw| raw.state().is_response_pending())
+            let nhr_flags = nhr.flags.get();
+            // Current and not complete: its promise jobs and ticks run first, so a response that ends in them is never armed.
+            if nhr_flags.contains(NhrFlags::CURRENT)
+                && !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
             {
                 needs_to_drain = false;
                 // SAFETY: `vm` is the process-static VirtualMachine.
@@ -1404,6 +1400,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if global.has_exception() {
                     break 'brk HttpResult::Exception(global.take_error(bun_jsc::JsError::Thrown));
                 }
+                // Like Node, 'unhandledRejection' for what the listener left comes before the timers and the next connection.
+                let _ = global.handle_rejected_promises();
             }
 
             HttpResult::Success

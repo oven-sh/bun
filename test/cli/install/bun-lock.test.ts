@@ -1082,8 +1082,9 @@ it.concurrent("--silent ignores a bun.lock that fails to parse and writes a new 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(out).toBe("");
+    expect(err).toBe("");
     expect(await file(join(packageDir, "bun.lock")).text()).toContain('"no-deps": ["no-deps@1.0.0"');
     expect(exitCode).toBe(0);
     await write(join(packageDir, "bun.lock"), "{ this is not json");
